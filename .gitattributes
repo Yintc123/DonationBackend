@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.md      text diff=markdown
+*.ts      text diff=typescript
+*.tsx     text diff=typescript
+*.js      text
+*.json    text
+*.yml     text
+*.yaml    text
