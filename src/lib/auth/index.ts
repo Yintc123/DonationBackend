@@ -31,12 +31,17 @@ export {
 export {
   signAccessToken,
   signRefreshToken,
+  verifyAccessToken,
+  verifyRefreshToken,
   decodeJwtUnsafe,
   createRefreshStore,
   type IssuedToken,
   type TokenSecrets,
   type RefreshStore,
+  type RefreshConsumeOutcome,
   type DecodedClaims,
+  type VerifiedAccessClaims,
+  type VerifiedRefreshClaims,
 } from './tokens.js'
 export {
   createAuthService,

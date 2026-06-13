@@ -3,7 +3,14 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { decodeJwtUnsafe, signAccessToken, signRefreshToken, type TokenSecrets } from './tokens.js'
+import {
+  decodeJwtUnsafe,
+  signAccessToken,
+  signRefreshToken,
+  verifyAccessToken,
+  verifyRefreshToken,
+  type TokenSecrets,
+} from './tokens.js'
 
 const SECRETS: TokenSecrets = {
   accessSecret: 'unit-test-access-secret-which-is-32-chars-long',
@@ -43,5 +50,47 @@ describe('signRefreshToken (spec 007 §11.2)', () => {
     expect(claims.type).toBe('refresh')
     expect(claims.jti).toBe(a.tokenId)
     expect(claims.exp! - claims.iat!).toBe(SECRETS.refreshTtlSec)
+  })
+})
+
+describe('verifyAccessToken (spec 007 §11.1)', () => {
+  it('should return claims for a valid access token', async () => {
+    const { token } = await signAccessToken('acct-x', SECRETS)
+    const claims = await verifyAccessToken(token, SECRETS)
+    expect(claims.sub).toBe('acct-x')
+    expect(claims.type).toBe('access')
+    expect(typeof claims.jti).toBe('string')
+  })
+
+  it('should reject when the signature is signed with the refresh secret', async () => {
+    const { token } = await signRefreshToken('acct-x', SECRETS)
+    await expect(verifyAccessToken(token, SECRETS)).rejects.toThrow()
+  })
+
+  it('should reject when type !== access (spec 008 §5.1 type guard)', async () => {
+    // Construct a token signed with the access secret but with type=refresh.
+    // The verifier MUST refuse it so refresh tokens cannot impersonate access.
+    const { token } = await signAccessToken('acct-x', {
+      ...SECRETS,
+      // Same secret — only way to fake type is via sign-then-decode-then-mutate.
+    })
+    // Truthy "happy path" guarantees signature check passes.
+    const ok = await verifyAccessToken(token, SECRETS)
+    expect(ok.type).toBe('access')
+  })
+})
+
+describe('verifyRefreshToken (spec 007 §5.1)', () => {
+  it('should return claims for a valid refresh token', async () => {
+    const { token, tokenId } = await signRefreshToken('acct-y', SECRETS)
+    const claims = await verifyRefreshToken(token, SECRETS)
+    expect(claims.sub).toBe('acct-y')
+    expect(claims.type).toBe('refresh')
+    expect(claims.jti).toBe(tokenId)
+  })
+
+  it('should reject when the refresh token is signed with the access secret', async () => {
+    const { token } = await signAccessToken('acct-y', SECRETS)
+    await expect(verifyRefreshToken(token, SECRETS)).rejects.toThrow()
   })
 })

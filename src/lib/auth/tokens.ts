@@ -18,7 +18,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 
-import { createDecoder, createSigner } from 'fast-jwt'
+import { createDecoder, createSigner, createVerifier } from 'fast-jwt'
 import type { Redis } from 'ioredis'
 
 import { buildKey } from '../redis/index.js'
@@ -98,6 +98,58 @@ export async function signRefreshToken(
   return { token, tokenId: jti, expiresIn: secrets.refreshTtlSec }
 }
 
+// ── Verification (spec 007 §5.1 / §11) ──────────────────────────────────────
+
+export interface VerifiedAccessClaims extends DecodedClaims {
+  sub: string
+  type: 'access'
+  jti: string
+}
+
+export interface VerifiedRefreshClaims extends DecodedClaims {
+  sub: string
+  type: 'refresh'
+  jti: string
+}
+
+export async function verifyAccessToken(
+  token: string,
+  secrets: TokenSecrets,
+): Promise<VerifiedAccessClaims> {
+  const verifier = createVerifier({
+    key: secrets.accessSecret,
+    algorithms: ['HS256'],
+    allowedIss: secrets.issuer,
+  })
+  const claims = (await verifier(token)) as DecodedClaims
+  if (claims.type !== 'access') {
+    throw new Error('tokens: expected type=access in JWT')
+  }
+  if (typeof claims.sub !== 'string' || typeof claims.jti !== 'string') {
+    throw new Error('tokens: access token is missing sub/jti')
+  }
+  return claims as VerifiedAccessClaims
+}
+
+export async function verifyRefreshToken(
+  token: string,
+  secrets: TokenSecrets,
+): Promise<VerifiedRefreshClaims> {
+  const verifier = createVerifier({
+    key: secrets.refreshSecret,
+    algorithms: ['HS256'],
+    allowedIss: secrets.issuer,
+  })
+  const claims = (await verifier(token)) as DecodedClaims
+  if (claims.type !== 'refresh') {
+    throw new Error('tokens: expected type=refresh in JWT')
+  }
+  if (typeof claims.sub !== 'string' || typeof claims.jti !== 'string') {
+    throw new Error('tokens: refresh token is missing sub/jti')
+  }
+  return claims as VerifiedRefreshClaims
+}
+
 // ── Redis refresh store ─────────────────────────────────────────────────────
 
 const REFRESH_GRACE_SEC = 60 // Spec 007 §11.3.
@@ -114,6 +166,11 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex')
 }
 
+export type RefreshConsumeOutcome =
+  | { result: 'ok'; accountId: string }
+  | { result: 'not-found' }
+  | { result: 'replay'; accountId: string }
+
 export interface RefreshStore {
   /** Persist a freshly minted refresh token. */
   store(args: {
@@ -124,6 +181,21 @@ export interface RefreshStore {
   }): Promise<void>
   /** Spec 007 §6.2 / spec 008 §6.1 — revoke every refresh for the account. */
   revokeAll(accountId: string): Promise<number>
+  /**
+   * Spec 007 §5.1 — consume a refresh token as part of rotation.
+   *
+   * Behaviour:
+   *   - record not found        → `{ result: 'not-found' }` (AUTH_REFRESH_REVOKED)
+   *   - record present, used    → `{ result: 'replay', accountId }`
+   *     (caller MUST revoke ALL refresh tokens for accountId per §11.4)
+   *   - record present, unused, hash mismatch → `{ result: 'not-found' }`
+   *     (treat as "the supplied JWT is not the one we issued" — same
+   *     observable behaviour as revoked)
+   *   - record present, unused, hash matches  → mark used=true → `{ result: 'ok', accountId }`
+   */
+  consume(tokenId: string, token: string): Promise<RefreshConsumeOutcome>
+  /** Spec 007 §6.1 — single-session logout: delete one refresh + SREM. */
+  revokeOne(tokenId: string): Promise<boolean>
 }
 
 export function createRefreshStore(redis: Redis): RefreshStore {
@@ -158,6 +230,52 @@ export function createRefreshStore(redis: Redis): RefreshStore {
       pipeline.del(setKey)
       await pipeline.exec()
       return tokenIds.length
+    },
+    async consume(tokenId, token) {
+      const key = refreshKey(tokenId)
+      const data = await redis.hgetall(key)
+      if (!data || Object.keys(data).length === 0) {
+        return { result: 'not-found' }
+      }
+      const accountId = data.accountId
+      const expectedHash = data.hashedToken
+      const used = data.used === 'true'
+      if (typeof accountId !== 'string') {
+        return { result: 'not-found' }
+      }
+      if (used) {
+        return { result: 'replay', accountId }
+      }
+      if (typeof expectedHash !== 'string' || hashToken(token) !== expectedHash) {
+        // Same observable as "not-found" — do not leak whether the record
+        // simply does not exist or carries a different hash.
+        return { result: 'not-found' }
+      }
+      // Mark used=true preserving the current TTL.
+      const ttl = await redis.ttl(key)
+      const pipeline = redis.multi()
+      pipeline.hset(key, { used: 'true' })
+      if (ttl > 0) pipeline.expire(key, ttl)
+      const results = await pipeline.exec()
+      if (results === null) {
+        throw new Error('tokens: refresh consume pipeline aborted')
+      }
+      return { result: 'ok', accountId }
+    },
+    async revokeOne(tokenId) {
+      const key = refreshKey(tokenId)
+      const data = await redis.hgetall(key)
+      if (!data || Object.keys(data).length === 0) {
+        return false
+      }
+      const accountId = data.accountId
+      const pipeline = redis.multi()
+      pipeline.del(key)
+      if (typeof accountId === 'string') {
+        pipeline.srem(userRefreshSetKey(accountId), tokenId)
+      }
+      await pipeline.exec()
+      return true
     },
   }
 }
