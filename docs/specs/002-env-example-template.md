@@ -3,11 +3,11 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.1 |
+| 版本 | 0.2 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/.env.example` |
-| 相關 spec | `001-environment-config.md` |
-| 相關 ADR | `docs/decisions/002-backend-framework.md` |
+| 相關 spec | `001-environment-config.md`(v0.2) |
+| 相關 ADR | `docs/decisions/002-backend-framework.md`、`docs/decisions/003-database-postgresql.md` |
 
 ---
 
@@ -68,17 +68,18 @@ KEY=default-value-for-dev
 | Google OAuth | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL` |
 | Redis | `REDIS_URL` |
 
-### 3.2 缺漏 key(待補)
+### 3.2 缺漏 key / 待替換(對照 spec 001 v0.2)
 
-對照 spec 001 §3,以下 key 必須補入:
+| 動作 | Key | Section | 來源 spec | 理由 |
+|---|---|---|---|---|
+| 新增 | `NODE_ENV` | Server | §3.1 | 必填,影響日誌格式與錯誤回應細節 |
+| 新增 | `JWT_EXPIRES_IN` | JWT | §3.4 | 非必填,寫出有助新人理解 token 生命期 |
+| 新增 | `CORS_ORIGIN` | CORS(新區塊) | §3.6 | 必填,backend 只接受 BFF origin |
+| **替換** | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` / `DB_SCHEMA` / `DB_SSL_MODE` / `DB_CONNECTION_LIMIT` / `DB_POOL_TIMEOUT` + 衍生 `DATABASE_URL` | Database | §3.2(v0.2 拆分) | DB 改為多參數,`DATABASE_URL` 經 dotenv-expand 組合 |
 
-| Key | Section | 來源 spec | 理由 |
-|---|---|---|---|
-| `NODE_ENV` | Server | §3.1 | 必填,影響日誌格式與錯誤回應細節 |
-| `JWT_EXPIRES_IN` | JWT | §3.4 | 非必填,但寫出有助於新人理解 token 生命期 |
-| `CORS_ORIGIN` | CORS(新區塊) | §3.6 | 必填,backend 只接受 BFF origin |
+> 「替換」=移除既有 `DATABASE_URL` 單一字串列,改為新格式。
 
-### 3.3 目標檔案內容(草案)
+### 3.3 目標檔案內容(草案 v0.2)
 
 ```bash
 # === Server ===
@@ -91,8 +92,28 @@ HOST=0.0.0.0
 LOG_LEVEL=info
 
 # === Database (Prisma / PostgreSQL) ===
+#
+# Authoritative values are the discrete DB_* vars below.
+# DATABASE_URL is composed via dotenv-expand so Prisma CLI
+# (which only reads DATABASE_URL) keeps working unchanged.
+#
+# If DB_PASSWORD contains any of @ : / ? # it MUST be
+# percent-encoded here (e.g. "@" → "%40"). In stage/prod the
+# composeDatabaseUrl helper handles encoding automatically.
 
-DATABASE_URL="postgresql://user:password@localhost:5432/jkodonation?schema=public"
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=user
+DB_PASSWORD=password
+DB_NAME=jkodonation_dev
+DB_SCHEMA=public
+# Optional: '', 'require', 'verify-ca', 'verify-full' (prod usually 'require')
+DB_SSL_MODE=
+# Optional: leave empty to use Prisma's default
+DB_CONNECTION_LIMIT=
+DB_POOL_TIMEOUT=
+
+DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=${DB_SCHEMA}"
 
 # === JWT ===
 
@@ -119,6 +140,8 @@ CORS_ORIGIN="http://localhost:3000"
 ```
 
 > 此草案經 review 通過後,作為實作目標。
+> 註:`DB_*` 為 authoritative,`DATABASE_URL` 為 dotenv-expand 衍生;順序刻意把派生值放在被引用變數之後,確保展開正確。
+> JWT 區塊待 ADR 004(access + refresh 雙 token)落地後再拆,本版暫保留單一 `JWT_SECRET` / `JWT_EXPIRES_IN`。
 
 ---
 
@@ -193,3 +216,4 @@ PR review 時,reviewer 須確認:
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版;定義格式、列出當前缺漏(`NODE_ENV` / `JWT_EXPIRES_IN` / `CORS_ORIGIN`)、提供目標草案 |
+| 0.2 | 2026-06-13 | 同步 spec 001 v0.2:Database 區塊改為 `DB_*` 9 個拆分參數 + dotenv-expand 衍生 `DATABASE_URL`;備註特殊字元 percent-encoding 規則 |
