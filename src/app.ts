@@ -21,7 +21,7 @@ import { googleAuthPlugin } from './lib/auth-google/index.js'
 import { errorHandlerPlugin } from './lib/errors/index.js'
 import { healthPlugin } from './lib/health/index.js'
 import { httpResponsePlugin } from './lib/http/index.js'
-import { createLogger } from './lib/logger/index.js'
+import { createLogger, loggerPolicyPlugin } from './lib/logger/index.js'
 import { prismaPlugin } from './lib/prisma/index.js'
 import { parseTrustedProxies, rateLimitPlugin } from './lib/rate-limit/index.js'
 import { redisPlugin } from './lib/redis/index.js'
@@ -41,10 +41,19 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   const trustedProxies = parseTrustedProxies(config.RATE_LIMIT_TRUSTED_PROXIES)
   const trustProxy = trustedProxies.length > 0 ? trustedProxies : false
 
-  const app = Fastify({ logger: createLogger(config), trustProxy })
+  // disableRequestLogging: true → Fastify stops emitting its built-in
+  // "incoming request" / "request completed" lines for every route. The
+  // spec-004 loggerPolicyPlugin re-emits them for non-excluded paths
+  // (skips /health/* and OPTIONS — spec 004 §6.2).
+  const app = Fastify({
+    logger: createLogger(config),
+    trustProxy,
+    disableRequestLogging: true,
+  })
 
   app.decorate('config', config)
 
+  await app.register(loggerPolicyPlugin)
   await app.register(errorHandlerPlugin)
 
   await app.register(helmetPlugin)

@@ -10,6 +10,8 @@ import { REDACT_PATHS } from './redact.js'
 import { errSerializer, reqSerializer, resSerializer } from './serializers.js'
 import type { Config } from '../../config/schema.js'
 
+export { loggerPolicyPlugin, shouldSkipRequestLog } from './policy.js'
+
 export function createLogger(config: Config): LoggerOptions {
   const isDev = config.NODE_ENV === 'development'
 
