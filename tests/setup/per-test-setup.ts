@@ -1,12 +1,25 @@
-// Spec 013 §6 + §8 — per-test reset hooks:
-// - truncate all public tables (spec 013 §6.1)
-// - FLUSHDB all Redis tier DBs (spec 013 §6.1)
-// - msw.resetHandlers() (spec 013 §8.3)
-// - vi.useRealTimers() to reset fake timers (spec 013 §8.1)
+// Spec 013 §6.1 — per-test reset hooks.
 //
-// Stub: no-op until helpers in tests/helpers/* are implemented.
+// Implemented:
+//   - FLUSHDB the test Redis instance (spec 006 §14.2)
+//
+// Pending (separate specs):
+//   - truncate Postgres tables (spec 003 + spec 013 §6.1)
+//   - msw.resetHandlers()
+//   - vi.useRealTimers()
+
+import { Redis } from 'ioredis'
 import { beforeEach } from 'vitest'
 
-beforeEach(() => {
-  // No-op.
+beforeEach(async () => {
+  const redisUrl = process.env.REDIS_URL
+  if (!redisUrl) return // global-setup didn't run (e.g. unit project) — skip
+
+  const client = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 })
+  try {
+    await client.connect()
+    await client.flushdb()
+  } finally {
+    await client.quit()
+  }
 })

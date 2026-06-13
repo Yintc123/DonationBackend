@@ -1,13 +1,14 @@
-// Spec 013 §5 — PostgreSQL 16 + Redis 7 testcontainers helper.
+// Spec 013 §5 — testcontainers helper.
 //
-// Real implementation:
-//   - new PostgreSqlContainer('postgres:16').start()
-//   - new GenericContainer('redis:7-alpine').withExposedPorts(6379).start()
-//   - inject DB_HOST / DB_PORT / ... / REDIS_URL into process.env (spec 001)
-//   - compose DATABASE_URL
-//   - execSync('npx prisma migrate deploy')
+// Implemented tiers:
+//   - Redis:    new GenericContainer('redis:7-alpine').withExposedPorts(6379)
 //
-// Stub: throws if called. First integration test will replace this.
+// Stubbed (out of scope of spec 006 task):
+//   - Postgres: returns a sentinel error if a caller actually tries to use it.
+//
+// Lifecycle is owned by tests/setup/global-setup.ts.
+
+import { GenericContainer, type StartedTestContainer } from 'testcontainers'
 
 export interface TestContainers {
   postgres: { connectionUri: string }
@@ -15,10 +16,27 @@ export interface TestContainers {
   stop: () => Promise<void>
 }
 
-export function startContainers(): Promise<TestContainers> {
-  return Promise.reject(
-    new Error(
-      'tests/helpers/container.ts not implemented — see spec 013 §5 for lifecycle and §5.4 Docker prerequisite',
-    ),
-  )
+const POSTGRES_NOT_IMPLEMENTED =
+  'Postgres testcontainer is not wired yet — out of scope for spec 006'
+
+export async function startContainers(): Promise<TestContainers> {
+  const redisContainer: StartedTestContainer = await new GenericContainer('redis:7-alpine')
+    .withExposedPorts(6379)
+    .start()
+
+  const redisHost = redisContainer.getHost()
+  const redisPort = redisContainer.getMappedPort(6379)
+  const redisUrl = `redis://${redisHost}:${redisPort}`
+
+  return {
+    postgres: {
+      get connectionUri(): string {
+        throw new Error(POSTGRES_NOT_IMPLEMENTED)
+      },
+    } as { connectionUri: string },
+    redis: { url: redisUrl },
+    stop: async () => {
+      await redisContainer.stop()
+    },
+  }
 }
