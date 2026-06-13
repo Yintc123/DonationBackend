@@ -142,5 +142,47 @@ describe('http response plugin', () => {
       expect(res.statusCode).toBe(204)
       expect(res.headers['x-request-id']).toBeDefined()
     })
+
+    it('should DROP a non-UUIDv4 inbound id and substitute Fastify request.id (spec 004 §6.3)', async () => {
+      app.get('/r', async (_req, reply) => reply.ok({ id: 'abc' }))
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/r',
+        headers: { 'x-request-id': 'not-a-uuid' },
+      })
+
+      expect(res.headers['x-request-id']).not.toBe('not-a-uuid')
+      expect(typeof res.headers['x-request-id']).toBe('string')
+      expect((res.headers['x-request-id'] as string).length).toBeGreaterThan(0)
+    })
+
+    it('should reject a UUID v1 to prevent caller forging trace prefixes', async () => {
+      app.get('/r', async (_req, reply) => reply.ok({ id: 'abc' }))
+      // v1 UUID: 3rd block starts with `1`, not `4`.
+      const v1 = 'c4b7a5e0-8d9a-1f1f-9b3a-0e2a1b9d7f23'
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/r',
+        headers: { 'x-request-id': v1 },
+      })
+
+      expect(res.headers['x-request-id']).not.toBe(v1)
+    })
+
+    it('should reject a log-injection payload smuggled in the header', async () => {
+      app.get('/r', async (_req, reply) => reply.ok({ id: 'abc' }))
+      const injection = 'real-id\nfake=admin user=root'
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/r',
+        headers: { 'x-request-id': injection },
+      })
+
+      expect(res.headers['x-request-id']).not.toContain('\n')
+      expect(res.headers['x-request-id']).not.toBe(injection)
+    })
   })
 })
