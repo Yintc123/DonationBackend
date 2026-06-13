@@ -45,6 +45,7 @@ const TITLE_BY_CODE: Record<string, string> = {
   CONFLICT: 'Conflict',
   UNPROCESSABLE_ENTITY: 'Unprocessable Entity',
   RATE_LIMITED: 'Too Many Requests',
+  RATE_LIMIT_UNAVAILABLE: 'Service Unavailable',
   INTERNAL_ERROR: 'Internal Server Error',
   SERVICE_UNAVAILABLE: 'Service Unavailable',
   UPSTREAM_FAILURE: 'Upstream Failure',

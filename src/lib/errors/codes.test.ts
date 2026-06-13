@@ -44,4 +44,10 @@ describe('Error code dictionary (spec 005 §4.2)', () => {
     expect(ErrorCodeStatus[ErrorCode.GATEWAY_TIMEOUT]).toBe(504)
     expect(ErrorCodeStatus[ErrorCode.UPSTREAM_TIMEOUT]).toBe(504)
   })
+
+  it('should expose codes listed in spec §4.2.5 (rate limit, spec 010)', () => {
+    // spec 010 §11.2 / spec 005 §4.2.5 — Redis outage path under fail-closed.
+    expect(ErrorCode.RATE_LIMIT_UNAVAILABLE).toBe('RATE_LIMIT_UNAVAILABLE')
+    expect(ErrorCodeStatus[ErrorCode.RATE_LIMIT_UNAVAILABLE]).toBe(503)
+  })
 })

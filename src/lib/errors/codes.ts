@@ -31,6 +31,10 @@ export const ErrorCode = Object.freeze({
   UPSTREAM_FAILURE: 'UPSTREAM_FAILURE',
   UPSTREAM_TIMEOUT: 'UPSTREAM_TIMEOUT',
   GATEWAY_TIMEOUT: 'GATEWAY_TIMEOUT',
+
+  // ── §4.2.5 rate limit (spec 010 §11.2) ─────────────────────────────────
+  // Surfaced when Redis is unreachable and the fail-closed policy fires.
+  RATE_LIMIT_UNAVAILABLE: 'RATE_LIMIT_UNAVAILABLE',
 } as const)
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode]
@@ -54,4 +58,5 @@ export const ErrorCodeStatus: Readonly<Record<ErrorCodeValue, number>> = Object.
   [ErrorCode.UPSTREAM_FAILURE]: 502,
   [ErrorCode.UPSTREAM_TIMEOUT]: 504,
   [ErrorCode.GATEWAY_TIMEOUT]: 504,
+  [ErrorCode.RATE_LIMIT_UNAVAILABLE]: 503,
 })
