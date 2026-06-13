@@ -64,10 +64,32 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+    # NODE_ENV=development lets RATE_LIMIT_TRUSTED_PROXIES stay empty
+    # (spec 001 §4.4 only enforces it in staging/production).
     env:
-      DATABASE_URL: postgresql://test:test@localhost:5432/jkodonation_test
+      NODE_ENV: development
+      PORT: '3001'
+      LOG_LEVEL: warn
+
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_USER: test
+      DB_PASSWORD: test
+      DB_NAME: jkodonation_test
+      DB_SCHEMA: public
+      DATABASE_URL: postgresql://test:test@localhost:5432/jkodonation_test?schema=public
+
       REDIS_URL: redis://localhost:6379
-      JWT_SECRET: ci-test-secret
+
+      JWT_ACCESS_SECRET: ci-test-access-secret-at-least-32-characters
+      JWT_REFRESH_SECRET: ci-test-refresh-secret-at-least-32-characters
+      JWT_ISSUER: http://localhost:3001
+
+      GOOGLE_CLIENT_ID: ci-test-google-client-id
+      GOOGLE_CLIENT_SECRET: ci-test-google-client-secret
+      GOOGLE_CALLBACK_URL: http://localhost:3000/api/auth/google/callback
+
+      CORS_ORIGIN: http://localhost:3000
 
     steps:
       - uses: actions/checkout@v4
@@ -129,9 +151,29 @@ jobs:
           --health-retries 5
 
     env:
-      DATABASE_URL: postgresql://test:test@localhost:5432/jkodonation_e2e
+      NODE_ENV: development
+      PORT: '3001'
+      LOG_LEVEL: warn
+
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_USER: test
+      DB_PASSWORD: test
+      DB_NAME: jkodonation_e2e
+      DB_SCHEMA: public
+      DATABASE_URL: postgresql://test:test@localhost:5432/jkodonation_e2e?schema=public
+
       REDIS_URL: redis://localhost:6379
-      JWT_SECRET: ci-test-secret
+
+      JWT_ACCESS_SECRET: ci-test-access-secret-at-least-32-characters
+      JWT_REFRESH_SECRET: ci-test-refresh-secret-at-least-32-characters
+      JWT_ISSUER: http://localhost:3001
+
+      GOOGLE_CLIENT_ID: ci-test-google-client-id
+      GOOGLE_CLIENT_SECRET: ci-test-google-client-secret
+      GOOGLE_CALLBACK_URL: http://localhost:3000/api/auth/google/callback
+
+      CORS_ORIGIN: http://localhost:3000
 
     steps:
       - uses: actions/checkout@v4
