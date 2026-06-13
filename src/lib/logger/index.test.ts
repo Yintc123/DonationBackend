@@ -136,25 +136,35 @@ describe('createLogger', () => {
           'req.headers.cookie',
           'req.headers["x-api-key"]',
           'req.body.password',
+          'req.body.currentPassword',
+          'req.body.newPassword',
           'req.body.token',
+          'req.body.idToken',
           'req.body.refreshToken',
           'req.body.accessToken',
           'req.body.clientSecret',
-          '*.JWT_SECRET',
+          'req.body.code',
+          '*.JWT_ACCESS_SECRET',
+          '*.JWT_REFRESH_SECRET',
           '*.DB_PASSWORD',
+          '*.DATABASE_URL',
+          '*.REDIS_URL',
           '*.GOOGLE_CLIENT_SECRET',
           '*.password',
         ]),
       )
     })
 
-    it('redacts env-snapshot secret fields via wildcard (spec 004 §11.1)', () => {
+    it('redacts every env-snapshot secret enumerated in Config (spec 004 §11.1)', () => {
       const { logger, lines } = captureLogs(createLogger(baseConfig))
       logger.info(
         {
           config: {
-            JWT_SECRET: 'jwt-leak',
+            JWT_ACCESS_SECRET: 'access-leak',
+            JWT_REFRESH_SECRET: 'refresh-leak',
             DB_PASSWORD: 'db-leak',
+            DATABASE_URL: 'postgresql://u:secret@host/db',
+            REDIS_URL: 'redis://:secret@host:6379',
             GOOGLE_CLIENT_SECRET: 'google-leak',
             password: 'pw-leak',
           },
@@ -163,8 +173,11 @@ describe('createLogger', () => {
       )
       const cfg = lines()[0]?.config as Record<string, string>
       expect(cfg).toEqual({
-        JWT_SECRET: '[Redacted]',
+        JWT_ACCESS_SECRET: '[Redacted]',
+        JWT_REFRESH_SECRET: '[Redacted]',
         DB_PASSWORD: '[Redacted]',
+        DATABASE_URL: '[Redacted]',
+        REDIS_URL: '[Redacted]',
         GOOGLE_CLIENT_SECRET: '[Redacted]',
         password: '[Redacted]',
       })
