@@ -11,6 +11,7 @@ import { registerGoogleAuthRoutes } from '../../routes/auth/google.js'
 import { ttlToSeconds } from '../auth/index.js'
 import type { TokenSecrets } from '../auth/index.js'
 
+import { parseAllowedReturnOrigins } from './return-to.js'
 import { createGoogleAuthService } from './service.js'
 
 export {
@@ -80,6 +81,8 @@ export const googleAuthPlugin = fp(
       googleClientSecret: cfg.GOOGLE_CLIENT_SECRET,
       googleRedirectUri: cfg.GOOGLE_CALLBACK_URL,
       oidcDiscoveryUrl: cfg.OIDC_DISCOVERY_URL,
+      // Spec 007 §13.8 — only redirect back to origins we already CORS-allow.
+      allowedReturnOrigins: parseAllowedReturnOrigins(cfg.CORS_ORIGIN),
     })
     await registerGoogleAuthRoutes(app, { service, tokenSecrets })
   },

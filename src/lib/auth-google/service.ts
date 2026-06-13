@@ -46,6 +46,7 @@ import {
   generateState,
   timingSafeEqualStr,
 } from './pkce.js'
+import { sanitizeReturnTo } from './return-to.js'
 import {
   createOAuthSessionStore,
   type OAuthSessionStore,
@@ -63,6 +64,12 @@ export interface GoogleAuthDeps {
   googleClientSecret: string
   googleRedirectUri: string
   oidcDiscoveryUrl: string
+  /**
+   * Origins (scheme://host[:port]) the BFF is allowed to redirect to via
+   * `returnTo`. Anything else is silently dropped at the trust boundary
+   * (spec 007 §13.8). Empty set means only relative paths are allowed.
+   */
+  allowedReturnOrigins: Set<string>
   /** Test seam: override the upstream HTTP client. */
   fetchImpl?: typeof fetch
   /** Test seam: override the URL Google's `/token` lives at. Falls back to
@@ -180,12 +187,17 @@ export function createGoogleAuthService(deps: GoogleAuthDeps): GoogleAuthService
       const codeVerifier = generateCodeVerifier()
       const challenge = computeCodeChallenge(codeVerifier)
 
+      // Spec §13.8 — sanitize at the trust boundary before we ever persist.
+      const safeReturnTo = sanitizeReturnTo(input.returnTo, {
+        allowedOrigins: deps.allowedReturnOrigins,
+      })
+
       await sessionStore.put(sid, {
         state,
         nonce,
         codeVerifier,
         intent: input.intent,
-        ...(input.returnTo !== undefined ? { returnTo: input.returnTo } : {}),
+        ...(safeReturnTo !== undefined ? { returnTo: safeReturnTo } : {}),
         ...(input.accountId !== undefined ? { accountId: input.accountId } : {}),
       })
 
@@ -314,10 +326,16 @@ export function createGoogleAuthService(deps: GoogleAuthDeps): GoogleAuthService
           accountId = created.id
         }
         const bundle = await issueBundle(accountId)
+        // Defense-in-depth — re-sanitize on the way out too, so a corrupted
+        // / tampered Redis record cannot smuggle a returnTo that bypassed
+        // authorizeInit. Spec §13.8.
+        const safeReturnTo = sanitizeReturnTo(session.returnTo, {
+          allowedOrigins: deps.allowedReturnOrigins,
+        })
         return {
           intent: 'login',
           bundle,
-          ...(session.returnTo !== undefined ? { returnTo: session.returnTo } : {}),
+          ...(safeReturnTo !== undefined ? { returnTo: safeReturnTo } : {}),
         }
       }
 

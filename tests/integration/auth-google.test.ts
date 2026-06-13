@@ -167,6 +167,20 @@ describe('auth-google integration (spec 007)', () => {
       expect(stored.intent).toBe('login')
     })
 
+    it('drops an off-domain returnTo at the trust boundary (spec §13.8)', async () => {
+      app = await buildGoogleApp()
+      const { sid } = await authorizeInit(app, { returnTo: 'https://evil.com/steal' })
+      const stored = await app.redis.hgetall(`jkod:auth:oauth:${sid}`)
+      expect(stored.returnTo).toBeUndefined()
+    })
+
+    it('keeps a relative-path returnTo (spec §13.8)', async () => {
+      app = await buildGoogleApp()
+      const { sid } = await authorizeInit(app, { returnTo: '/dashboard' })
+      const stored = await app.redis.hgetall(`jkod:auth:oauth:${sid}`)
+      expect(stored.returnTo).toBe('/dashboard')
+    })
+
     it('rejects intent=link without an authenticated bearer token (spec §10.6)', async () => {
       app = await buildGoogleApp()
       const res = await app.inject({
