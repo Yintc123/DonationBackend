@@ -1,14 +1,14 @@
 // Spec 008 §3.1 / §3.2 — Argon2id password hashing wrapper.
 //
-// We use the installed `argon2` (pure Node binding) package — the spec
-// prefers `@node-rs/argon2`, but the actual dependency in package.json is
-// `argon2`. This is flagged in the implementation report.
+// Uses `@node-rs/argon2` (Rust binding via napi-rs) per the spec's
+// preferred library: roughly 3x faster than the pure-Node `argon2`
+// package on the same parameters, with no native-build pain.
 //
 // The hash / verify / needsRehash signatures are intentionally narrow so
 // callers cannot leak raw Argon2 options. Policy is sourced from `Config`
 // (PASSWORD_HASH_* + PASSWORD_MIN_LENGTH) at the route / service layer.
 
-import argon2 from 'argon2'
+import { Algorithm, hash as nodeHash, verify as nodeVerify } from '@node-rs/argon2'
 
 export interface PasswordHashOpts {
   /** Argon2id memoryCost in KiB (spec §3.1 — 2026 default 19456). */
@@ -53,8 +53,8 @@ function assertPasswordShape(plain: string, opts: PasswordHashOpts): void {
  */
 export async function hash(plain: string, opts: PasswordHashOpts): Promise<string> {
   assertPasswordShape(plain, opts)
-  return argon2.hash(plain, {
-    type: argon2.argon2id,
+  return nodeHash(plain, {
+    algorithm: Algorithm.Argon2id,
     memoryCost: opts.memoryCost,
     timeCost: opts.timeCost,
     parallelism: opts.parallelism,
@@ -70,17 +70,43 @@ export async function verify(plain: string, digest: string): Promise<boolean> {
   // We intentionally do NOT validate `plain` here: the calling site already
   // bounds-checked on registration; verify() must accept arbitrary input so
   // login timing stays identical regardless of password shape.
-  return argon2.verify(digest, plain)
+  return nodeVerify(digest, plain)
+}
+
+interface ParsedDigestParams {
+  memoryCost: number
+  timeCost: number
+  parallelism: number
+}
+
+/**
+ * Parse the parameter block out of an Argon2 modular-crypt-format digest.
+ * Format: `$argon2id$v=19$m=<mem>,t=<t>,p=<p>$<salt>$<hash>`.
+ * Returns undefined when the digest is not the expected shape — callers
+ * treat undefined as "needs rehash" so we never trust a malformed digest.
+ */
+function parseDigestParams(digest: string): ParsedDigestParams | undefined {
+  const match = /\$argon2id\$v=\d+\$m=(\d+),t=(\d+),p=(\d+)\$/.exec(digest)
+  if (!match) return undefined
+  return {
+    memoryCost: Number(match[1]),
+    timeCost: Number(match[2]),
+    parallelism: Number(match[3]),
+  }
 }
 
 /**
  * Returns true when `digest` was produced with weaker parameters than the
  * current policy. Used by login to drive silent rehash (spec §3.1 / §5.1).
+ * Returns true for any non-argon2id digest so legacy / malformed hashes
+ * get promoted on next login.
  */
 export function needsRehash(digest: string, opts: PasswordHashOpts): boolean {
-  return argon2.needsRehash(digest, {
-    memoryCost: opts.memoryCost,
-    timeCost: opts.timeCost,
-    parallelism: opts.parallelism,
-  })
+  const params = parseDigestParams(digest)
+  if (params === undefined) return true
+  return (
+    params.memoryCost < opts.memoryCost ||
+    params.timeCost < opts.timeCost ||
+    params.parallelism !== opts.parallelism
+  )
 }
