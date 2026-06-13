@@ -23,7 +23,7 @@ import { healthPlugin } from './lib/health/index.js'
 import { httpResponsePlugin } from './lib/http/index.js'
 import { createLogger } from './lib/logger/index.js'
 import { prismaPlugin } from './lib/prisma/index.js'
-import { rateLimitPlugin } from './lib/rate-limit/index.js'
+import { parseTrustedProxies, rateLimitPlugin } from './lib/rate-limit/index.js'
 import { redisPlugin } from './lib/redis/index.js'
 import { corsPlugin, helmetPlugin } from './lib/security/index.js'
 import type { Config } from './config/schema.js'
@@ -35,7 +35,13 @@ declare module 'fastify' {
 }
 
 export async function buildApp(config: Config): Promise<FastifyInstance> {
-  const app = Fastify({ logger: createLogger(config) })
+  // Spec 012 §6.1 — pass the CIDR allowlist (NEVER `true`); parser rejects
+  // wildcards. Empty allowlist falls back to `false` so request.ip stays
+  // as the socket peer, which is the safe default for dev.
+  const trustedProxies = parseTrustedProxies(config.RATE_LIMIT_TRUSTED_PROXIES)
+  const trustProxy = trustedProxies.length > 0 ? trustedProxies : false
+
+  const app = Fastify({ logger: createLogger(config), trustProxy })
 
   app.decorate('config', config)
 
