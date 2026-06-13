@@ -1,0 +1,102 @@
+name: CD
+
+# Triggered after CI completes successfully on main.
+# Using workflow_run keeps CI / CD as separate Actions runs while still
+# guaranteeing CD only fires when lint / typecheck / tests / build all pass.
+#
+# Manual re-run is supported via workflow_dispatch (useful when ECS rollout
+# fails on infra issues and we want to redeploy the same image without
+# pushing a new commit).
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-southeast-2
+  ECR_REPOSITORY: jko_backend
+  ECS_CLUSTER: jko-cluster
+  ECS_SERVICE: jko-backend-service
+  CONTAINER_NAME: jko-backend
+  TASK_DEFINITION: .aws/task-definition.json
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Build & deploy
+    runs-on: ubuntu-latest
+    # Gate: CI run must have succeeded (or this is a manual dispatch).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # workflow_run fires on the default branch, but we want the SHA
+          # the CI run actually validated.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push image
+        id: build
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          IMAGE="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          if aws ecr describe-images \
+               --repository-name "$ECR_REPOSITORY" \
+               --image-ids "imageTag=$IMAGE_TAG" \
+               --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Image $IMAGE already in ECR, skipping build & push (idempotent re-run)"
+          else
+            docker build \
+              --build-arg BUILD_GIT_SHA="$IMAGE_TAG" \
+              --build-arg BUILD_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --build-arg BUILD_VERSION="$IMAGE_TAG" \
+              -t "$IMAGE" .
+            docker push "$IMAGE"
+          fi
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Substitute task definition placeholders
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          EC2_PRIVATE_IP: ${{ vars.EC2_PRIVATE_IP }}
+        run: |
+          sed -i "s|REPLACE_ACCOUNT_ID|${AWS_ACCOUNT_ID}|g" "$TASK_DEFINITION"
+          sed -i "s|REPLACE_EC2_PRIVATE_IP|${EC2_PRIVATE_IP}|g" "$TASK_DEFINITION"
+
+      - name: Render task definition
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.TASK_DEFINITION }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.build.outputs.image }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
