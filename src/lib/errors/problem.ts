@@ -57,6 +57,19 @@ const TITLE_BY_CODE: Record<string, string> = {
   AUTH_ACCOUNT_LOCKED: 'Account Temporarily Locked',
   AUTH_PASSWORD_NOT_SET: 'Password Not Set',
   AUTH_PASSWORD_ALREADY_SET: 'Password Already Set',
+  // Spec 007 §12 — auth (Google OIDC + token rotation / logout).
+  AUTH_OAUTH_SESSION_INVALID: 'OAuth Session Invalid',
+  AUTH_STATE_MISMATCH: 'OAuth State Mismatch',
+  AUTH_OAUTH_EXCHANGE_FAILED: 'OAuth Exchange Failed',
+  AUTH_ID_TOKEN_INVALID: 'Identity Token Invalid',
+  AUTH_EMAIL_UNVERIFIED: 'Email Not Verified',
+  AUTH_EMAIL_OWNED_BY_OTHER_ACCOUNT: 'Email Owned By Another Account',
+  AUTH_GOOGLE_ALREADY_LINKED: 'Google Account Already Linked',
+  AUTH_CREDENTIAL_EXISTS: 'Credential Already Exists',
+  AUTH_LINK_SESSION_MISMATCH: 'Link Session Mismatch',
+  AUTH_TOKEN_EXPIRED: 'Token Expired',
+  AUTH_REFRESH_REVOKED: 'Refresh Token Revoked',
+  AUTH_REFRESH_REPLAY: 'Refresh Token Replay Detected',
 }
 
 function codeToKebab(code: string): string {
