@@ -1,10 +1,11 @@
 // Spec 013 §8.2 — test harness around src/app.ts buildApp().
 // Injects spec 001 §4.3 required env vars (overridable per call) so the real
-// @fastify/env loader runs in tests (per spec 013 §8.2 — do NOT mock loaders).
+// config loader runs in tests (per spec 013 §8.2 — do NOT mock loaders).
 
 import type { FastifyInstance } from 'fastify'
 
 import { buildApp as buildAppReal } from '../../src/app.js'
+import { loadConfig } from '../../src/config/load.js'
 
 const TEST_ENV: Record<string, string> = {
   NODE_ENV: 'development',
@@ -33,7 +34,10 @@ const TEST_ENV: Record<string, string> = {
   CORS_ORIGIN: 'http://localhost:3000',
 }
 
-export function buildApp(envOverrides: Record<string, string> = {}): Promise<FastifyInstance> {
+export async function buildApp(
+  envOverrides: Record<string, string> = {},
+): Promise<FastifyInstance> {
   Object.assign(process.env, TEST_ENV, envOverrides)
-  return buildAppReal()
+  const config = loadConfig({ readDotenv: false })
+  return buildAppReal(config)
 }

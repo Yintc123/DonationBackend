@@ -1,25 +1,24 @@
-// buildApp() factory — produces a fully configured Fastify instance.
+// buildApp() factory — assembles the Fastify instance.
 //
-// Used by:
-//   - src/server.ts        prod entrypoint
-//   - tests/helpers/app.ts integration test harness (spec 013 §8.2)
-//
-// Order of operations:
-//   1. Construct Fastify with logger driven by raw process.env.LOG_LEVEL
-//      (we cannot read app.config yet — @fastify/env has not run).
-//   2. Register @fastify/env → validates env vars per spec 001 §4.3
-//      and decorates app.config.
-//   3. Run postValidate(app.config) for cross-field invariants
-//      (spec 001 §4.4).
-//   4. Register infrastructure plugins (TODO — landed module by module).
-//   5. Register health probes (spec 011 stubs for now; spec 014 §6 binds
-//      them to K8s probes).
+// Lifecycle:
+//   1. Caller supplies a validated Config (see src/config/load.ts).
+//   2. Construct Fastify with the spec-004 logger driven by config.
+//   3. Decorate app.config so plugins (redis, security) can read it.
+//   4. Register security plugins: helmet → cors (spec 012 §4 — helmet
+//      first so its headers also stamp CORS preflight 204 responses).
+//   5. Register HTTP response conventions (spec 009 — reply decorators,
+//      X-Request-Id onSend hook).
+//   6. Register Redis (spec 006) — eager connect, fail-fast.
+//   7. Register health probe stubs (spec 011); real readiness gate
+//      lands with spec 011 implementation.
 
-import fastifyEnv from '@fastify/env'
 import Fastify, { type FastifyInstance } from 'fastify'
 
-import { postValidate } from './config/post-validate.js'
-import { type Config, ConfigSchema } from './config/schema.js'
+import { createLogger } from './lib/logger/index.js'
+import { redisPlugin } from './lib/redis/index.js'
+import { corsPlugin, helmetPlugin } from './lib/security/index.js'
+import { httpResponsePlugin } from './lib/http/index.js'
+import type { Config } from './config/schema.js'
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -27,22 +26,15 @@ declare module 'fastify' {
   }
 }
 
-export async function buildApp(): Promise<FastifyInstance> {
-  const app = Fastify({
-    logger: {
-      level: process.env.LOG_LEVEL ?? 'info',
-    },
-  })
+export async function buildApp(config: Config): Promise<FastifyInstance> {
+  const app = Fastify({ logger: createLogger(config) })
 
-  await app.register(fastifyEnv, {
-    schema: ConfigSchema,
-    // `quiet: true` suppresses dotenv's startup tips. Existing process.env
-    // values are NOT overwritten (dotenv default), which is what tests rely on.
-    dotenv: { quiet: true },
-    confKey: 'config',
-  })
+  app.decorate('config', config)
 
-  postValidate(app.config)
+  await app.register(helmetPlugin)
+  await app.register(corsPlugin)
+  await app.register(httpResponsePlugin)
+  await app.register(redisPlugin)
 
   // Health probes — stubs that always succeed. Real implementations
   // (readiness gate flip on SIGTERM, DB ping, etc.) land with spec 011.

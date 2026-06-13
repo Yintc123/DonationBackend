@@ -1,13 +1,15 @@
-// Production entrypoint — builds the app, listens, and wires graceful
-// shutdown per spec 014 §5.
+// Production entrypoint — loads config, builds the app, listens, and
+// wires graceful shutdown per spec 014 §5.
 
 import { buildApp } from './app.js'
+import { loadConfig } from './config/load.js'
 
 const SHUTDOWN_DRAIN_GRACE_MS = 2_000
 const FORCE_EXIT_MS = 28_000
 
 async function main(): Promise<void> {
-  const app = await buildApp()
+  const config = loadConfig()
+  const app = await buildApp(config)
 
   let shuttingDown = false
   const shutdown = (signal: NodeJS.Signals): void => {
@@ -42,7 +44,7 @@ async function main(): Promise<void> {
   process.on('SIGINT', shutdown)
 
   try {
-    await app.listen({ port: app.config.PORT, host: app.config.HOST })
+    await app.listen({ port: config.PORT, host: config.HOST })
   } catch (err) {
     app.log.error({ err }, 'startup failed')
     process.exit(1)
@@ -50,6 +52,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  console.error('fatal: buildApp failed before logger was ready', err)
+  console.error('fatal: bootstrap failed before logger was ready', err)
   process.exit(1)
 })
