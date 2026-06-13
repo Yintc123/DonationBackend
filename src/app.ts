@@ -17,6 +17,7 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 
 import { authPlugin } from './lib/auth/index.js'
+import { googleAuthPlugin } from './lib/auth-google/index.js'
 import { errorHandlerPlugin } from './lib/errors/index.js'
 import { healthPlugin } from './lib/health/index.js'
 import { httpResponsePlugin } from './lib/http/index.js'
@@ -47,6 +48,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(redisPlugin)
   await app.register(rateLimitPlugin)
   await app.register(authPlugin)
+  await app.register(googleAuthPlugin)
   await app.register(healthPlugin)
 
   return app
