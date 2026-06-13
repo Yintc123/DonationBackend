@@ -3,10 +3,10 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.1 |
+| 版本 | 0.2 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/` |
-| 相關 ADR | `docs/decisions/002-backend-framework.md` |
+| 相關 ADR | `docs/decisions/002-backend-framework.md`、`docs/decisions/003-database-postgresql.md` |
 
 ---
 
@@ -44,14 +44,63 @@
 
 ### 3.2 Database (PostgreSQL via Prisma)
 
+DB 連線採**多參數拆分**設計,理由:
+
+- 易在部署平台 UI 個別設定,不需手動拼字串
+- 各值可獨立驗證(host 格式、port 範圍、密碼長度)
+- 密碼含特殊字元時,不必擔心 URL encoding 在字串中錯位
+- 拆分後的「authoritative source」是各參數,`DATABASE_URL` 為**衍生值**
+
 | Key | 必填 | dev 預設 | stage / prod | 說明 |
 |---|---|---|---|---|
-| `DATABASE_URL` | ✅ | `postgresql://user:password@localhost:5432/jkodonation?schema=public` | 各環境獨立 DB,connection string 由 secret manager 注入 | Prisma 連線字串 |
+| `DB_HOST` | ✅ | `localhost` | 各環境獨立 host | DB 主機 |
+| `DB_PORT` | ✅ | `5432` | `5432`(或平台指定) | DB port |
+| `DB_USER` | ✅ | `user` | 各環境獨立帳號 | 連線帳號 |
+| `DB_PASSWORD` | ✅ | `password` | 各環境獨立、secret manager 注入 | 連線密碼(secret) |
+| `DB_NAME` | ✅ | `jkodonation_dev` | `jkodonation_stage` / `jkodonation_prod` | DB 名稱 |
+| `DB_SCHEMA` | | `public` | `public` | PostgreSQL schema |
+| `DB_SSL_MODE` | | (空) | `require`(預設)/ `verify-full` | TLS 模式 |
+| `DB_CONNECTION_LIMIT` | | (空,Prisma 預設) | 由平台容量決定 | 連線池上限 |
+| `DB_POOL_TIMEOUT` | | (空,Prisma 預設 10) | 由 SLA 決定 | 取得連線 timeout(秒) |
+| `DATABASE_URL` | ✅(衍生) | 由上列組合 | 由上列組合或 secret manager 直接提供 | Prisma CLI / Client 實際讀取的連線字串 |
 
-規則:
-- **三環境必須使用獨立資料庫**,絕不共用
-- connection string 含密碼,屬 secret 等級
+#### 3.2.1 組合機制
+
+Prisma CLI(`prisma migrate`、`prisma generate` 等)只認 `DATABASE_URL`,因此環境中**必須有**組合後的 URL。兩種供應方式:
+
+**(A) dev / 本機:由 `.env` 內 dotenv-expand 組合**
+
+```bash
+# .env
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=user
+DB_PASSWORD=password
+DB_NAME=jkodonation_dev
+DB_SCHEMA=public
+DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=${DB_SCHEMA}"
+```
+
+Prisma 內部採用 dotenv-expand,`${VAR}` 語法原生支援。
+
+**(B) stage / prod:在部署平台 / 啟動腳本層級組合,或直接由 secret manager 注入完整 URL**
+
+擇一即可。若平台只支援個別環境變數,需在啟動 entrypoint(`scripts/start.sh` 或 Dockerfile `CMD`)組合後 export。
+
+#### 3.2.2 App 端使用
+
+- `@fastify/env` 於啟動時**個別驗證**拆分參數的型別與必填(`DB_HOST` 為字串、`DB_PORT` 為 number 等),**不**再驗證 `DATABASE_URL` 字串內容
+- `PrismaClient` 從 `process.env.DATABASE_URL` 取(由 dotenv-expand 或部署平台提供)
+- App 程式碼**禁止**自行拼接 `DATABASE_URL`(避免 encoding 不一致);若必須(例:測試動態建 DB),統一走 `src/lib/db/composeDatabaseUrl.ts`,內部用 `URL` API 處理 percent-encode
+
+#### 3.2.3 規則
+
+- **三環境必須使用獨立資料庫**(`*_dev` / `*_stage` / `*_prod`),絕不共用
+- `DB_PASSWORD` 屬 secret 等級;含 `@` / `:` / `/` / `?` / `#` 等字元時:
+  - dev:`.env` 中需 percent-encode(例:`@` → `%40`)
+  - prod:secret manager 注入時即為原始值,由 `composeDatabaseUrl` 統一編碼
 - 切換環境時 Prisma migration 必須先在 stage 驗證再上 prod
+- `DB_PORT` 用整數型別,schema 限制 `1024 ≤ port ≤ 65535`
 
 ### 3.3 Redis
 
@@ -123,7 +172,8 @@ export const configSchema = {
   type: 'object',
   required: [
     'NODE_ENV', 'PORT',
-    'DATABASE_URL', 'REDIS_URL',
+    'DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DATABASE_URL',
+    'REDIS_URL',
     'JWT_SECRET',
     'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_CALLBACK_URL',
     'CORS_ORIGIN',
@@ -133,7 +183,17 @@ export const configSchema = {
     PORT:         { type: 'number', default: 3001 },
     HOST:         { type: 'string', default: '0.0.0.0' },
     LOG_LEVEL:    { type: 'string', enum: ['fatal','error','warn','info','debug','trace'], default: 'info' },
-    DATABASE_URL: { type: 'string', minLength: 1 },
+    // Database (拆分參數)
+    DB_HOST:      { type: 'string', minLength: 1 },
+    DB_PORT:      { type: 'number', minimum: 1024, maximum: 65535 },
+    DB_USER:      { type: 'string', minLength: 1 },
+    DB_PASSWORD:  { type: 'string', minLength: 1 },
+    DB_NAME:      { type: 'string', minLength: 1 },
+    DB_SCHEMA:    { type: 'string', default: 'public' },
+    DB_SSL_MODE:  { type: 'string', enum: ['', 'require', 'verify-ca', 'verify-full'], default: '' },
+    DB_CONNECTION_LIMIT: { type: 'string', default: '' },
+    DB_POOL_TIMEOUT:     { type: 'string', default: '' },
+    DATABASE_URL: { type: 'string', minLength: 1 },  // 衍生值,經 dotenv-expand 組合
     REDIS_URL:    { type: 'string', minLength: 1 },
     JWT_SECRET:   { type: 'string', minLength: 32 },
     JWT_EXPIRES_IN: { type: 'string', default: '7d' },
@@ -200,18 +260,26 @@ await app.register(fastifyEnv, {
 
 ## 8. `.env.example` 與本 spec 的對應
 
-- 目前 `.env.example` 涵蓋 §3.2 ~ §3.6 大部分 key
-- 待補:`NODE_ENV`、`JWT_EXPIRES_IN`、`CORS_ORIGIN`(本 spec 通過後同步更新)
+詳細格式規範與目標草案見 spec 002。
+
+當前 `.env.example`(commit `1a492a6`)與本 spec v0.2 的差距:
+
+- 缺漏 key:`NODE_ENV`、`JWT_EXPIRES_IN`、`CORS_ORIGIN`
+- 需替換:`DATABASE_URL` 單一字串 → §3.2 拆分後的 9 個 key + 由 dotenv-expand 組合的 `DATABASE_URL`
+
+待 spec 002 v0.2 落地後一併實作。
 
 ## 9. 開放問題
 
 - stage/prod 實際部署平台尚未決定(Vercel / Railway / Fly.io / 自架),會影響 secret 載入細節與 `GOOGLE_CALLBACK_URL` 的網域命名
 - 是否引入 feature flag 機制(目前無此需求,留作未來擴充)
-- token 輪替(rotation)策略:JWT 短期 + refresh token,或單一長期 JWT,待 auth spec 決定
 - 是否需要 per-tenant 設定(目前單租戶,暫不考慮)
+
+> token rotation 策略已由 ADR 004 決定(access + refresh),待後續修訂併入 §3.4。
 
 ## 10. 變更紀錄
 
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
+| 0.2 | 2026-06-13 | §3.2 Database 改為多參數拆分(`DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` / `DB_SCHEMA` / `DB_SSL_MODE` / `DB_CONNECTION_LIMIT` / `DB_POOL_TIMEOUT`),`DATABASE_URL` 改為 dotenv-expand 衍生;§4.3 schema 範例同步;§8 同步缺漏清單 |
