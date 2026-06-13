@@ -3,10 +3,11 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.2 |
+| 版本 | 0.3 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/` |
-| 相關 ADR | `docs/decisions/002-backend-framework.md`、`docs/decisions/003-database-postgresql.md` |
+| 相關 ADR | `docs/decisions/002-backend-framework.md`、`docs/decisions/003-database-postgresql.md`、`docs/decisions/004-auth-token-strategy.md` |
+| 相關 spec | 007/008(JWT、OIDC、Password)、010(Rate limit)、012(CORS、HSTS) |
 
 ---
 
@@ -112,39 +113,79 @@ Prisma 內部採用 dotenv-expand,`${VAR}` 語法原生支援。
 - 三環境獨立 Redis instance,避免 cache 互相污染
 - 若 stage/prod 啟用 ACL,connection string 屬 secret
 
-### 3.4 JWT
+### 3.4 JWT(access + refresh,落實 ADR 004)
 
 | Key | 必填 | dev 預設 | stage / prod | 說明 |
 |---|---|---|---|---|
-| `JWT_SECRET` | ✅ | 隨機 32+ 字元 | 各環境獨立、≥ 32 字元、由 secret manager 注入 | 簽章密鑰 |
-| `JWT_EXPIRES_IN` | | `7d` | `7d` | access token 有效期(`@fastify/jwt` 接受的格式) |
+| `JWT_ACCESS_SECRET` | ✅ | 隨機 32+ 字元 | 各環境獨立、≥ 32 字元、secret manager 注入 | access token 簽章密鑰(HS256) |
+| `JWT_ACCESS_EXPIRES_IN` | | `3h` | `3h` | access token 壽命(ADR 004) |
+| `JWT_REFRESH_SECRET` | ✅ | 隨機 32+ 字元(與 access 不同) | 各環境獨立、≥ 32 字元、與 access 不同密鑰 | refresh token 簽章密鑰 |
+| `JWT_REFRESH_EXPIRES_IN` | | `30d` | `30d` | refresh token 壽命(ADR 004) |
+| `JWT_ISSUER` | ✅ | `http://localhost:3001` | `https://api.<env-domain>` | JWT `iss` claim;對外 host 為佳 |
+| `JWT_AUDIENCE` | | 同 `JWT_ISSUER` | 同 `JWT_ISSUER` | JWT `aud` claim;預設與 `iss` 相同 |
 
 規則:
-- 三環境的 `JWT_SECRET` 必須不同,以免一環境外洩波及全部
+- **三環境 + access/refresh 共 6 把 secret 必須兩兩相異**,降低洩漏擴散
 - 長度下限 32(由 schema `minLength` 強制)
-- 不可寫入 log
+- 不可寫入 log(spec 004 §7.1 redact)
+- access 與 refresh 用**不同密鑰**:即使 access 密鑰外洩,refresh token 仍由獨立密鑰守護
 
-### 3.5 Google OAuth 2.0
+### 3.5 Google OAuth 2.0 / OIDC
 
 | Key | 必填 | dev 預設 | stage / prod | 說明 |
 |---|---|---|---|---|
 | `GOOGLE_CLIENT_ID` | ✅ | dev OAuth client id | 各環境獨立 client | 由 Google Cloud Console 建立 |
 | `GOOGLE_CLIENT_SECRET` | ✅ | dev OAuth client secret | 各環境獨立 client | secret,不可進 git |
-| `GOOGLE_CALLBACK_URL` | ✅ | `http://localhost:3001/auth/google/callback` | `https://api.{env}.<domain>/auth/google/callback` | 必須與 Google Console 註冊的 redirect URI 完全一致 |
+| `GOOGLE_CALLBACK_URL` | ✅ | `http://localhost:3000/api/auth/google/callback` | `https://app.<env-domain>/api/auth/google/callback` | 由 BFF 接收 callback(spec 007 §2.4);註冊在 Google Console |
+| `OIDC_DISCOVERY_URL` | | `https://accounts.google.com/.well-known/openid-configuration` | (同) | OIDC discovery 端點;極少需改 |
 
 規則:
 - **每個環境建立獨立 Google OAuth client**,callback URL 不同
 - dev 的 callback URL 用 `http://localhost:*`,Google Console 允許
 - stage/prod 必須走 `https`
 
-### 3.6 CORS
+### 3.6 Password 與登入鎖定(spec 008)
 
 | Key | 必填 | dev 預設 | stage / prod | 說明 |
 |---|---|---|---|---|
-| `CORS_ORIGIN` | ✅ | `http://localhost:3000` | 對應環境的 BFF URL | 允許的前端 origin,逗號分隔多筆 |
+| `PASSWORD_HASH_MEMORY_COST` | | `19456` | `19456` | Argon2id memory(KiB),OWASP 2025 下限 |
+| `PASSWORD_HASH_TIME_COST` | | `2` | `2` | Argon2id iterations |
+| `PASSWORD_HASH_PARALLELISM` | | `1` | `1` | Argon2id parallelism |
+| `PASSWORD_MIN_LENGTH` | | `8` | `8` | 密碼最短長度(NIST 800-63B 風格) |
+| `LOGIN_LOCK_THRESHOLD` | | `10` | `10` | per-email 連續失敗鎖閾值 |
+| `LOGIN_LOCK_WINDOW_SEC` | | `900` | `900` | 鎖定時間(秒) |
 
 規則:
-- backend 只接受 BFF 來源(不直接面對瀏覽器);wildcard `*` 嚴禁用於 prod
+- Argon2id 參數**寫死於 schema 預設**,變動視為 break-glass;升級時 spec 008 §3.1 silent rehash 自動遷移舊雜湊
+- `PASSWORD_MIN_LENGTH` 不設上限環境變數(spec 008 §3.2 寫死 256)
+
+### 3.7 Rate Limit(spec 010)
+
+| Key | 必填 | dev 預設 | stage / prod | 說明 |
+|---|---|---|---|---|
+| `RATE_LIMIT_GLOBAL_PER_IP_LIMIT` | | `600` | `600` | L1 限制 |
+| `RATE_LIMIT_GLOBAL_PER_IP_WINDOW_SEC` | | `60` | `60` | L1 視窗 |
+| `RATE_LIMIT_DEFAULT_LIMIT` | | `120` | `120` | 路徑未指定時 L2 預設 |
+| `RATE_LIMIT_DEFAULT_WINDOW_SEC` | | `60` | `60` | 同上 |
+| `RATE_LIMIT_FAILURE_MODE` | | `closed` | `closed` | `closed` / `open`;預設失敗關閉 |
+| `RATE_LIMIT_TRUSTED_PROXIES` | ⚠️ | (空) | **必填**(BFF / LB 的 IP/CIDR,逗號分隔) | spec 010 §15.1、spec 012 §6 |
+
+規則:
+- `RATE_LIMIT_TRUSTED_PROXIES` 在 prod / stage 為**強制非空**;空字串導致啟動失敗(防 `X-Forwarded-For` 偽造攻擊)
+- 接受 CIDR(`10.0.0.0/8`)或單一 IP
+
+### 3.8 CORS 與 Security Headers(spec 012)
+
+| Key | 必填 | dev 預設 | stage / prod | 說明 |
+|---|---|---|---|---|
+| `CORS_ORIGIN` | ✅ | `http://localhost:3000` | 對應環境 BFF URL,逗號分隔多筆 | **禁** `*`;空白拒絕 |
+| `CORS_PREFLIGHT_MAX_AGE_SEC` | | `600` | `600` | preflight 快取秒數 |
+| `HSTS_MAX_AGE_SEC` | | `31536000` | `31536000` | HSTS max-age(365d) |
+| `HSTS_INCLUDE_SUBDOMAINS` | | `true` | `true` | HSTS includeSubDomains |
+| `HSTS_PRELOAD` | | `false` | `false` | 是否加 preload(domain 上線且穩定後才開) |
+
+規則:
+- backend 只接受 BFF 來源(不直接面對瀏覽器);wildcard `*` 嚴禁
 - credentials 模式啟用,因此 origin 必須具體列出
 
 ## 4. 設定載入機制
@@ -174,7 +215,7 @@ export const configSchema = {
     'NODE_ENV', 'PORT',
     'DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DATABASE_URL',
     'REDIS_URL',
-    'JWT_SECRET',
+    'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET', 'JWT_ISSUER',
     'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_CALLBACK_URL',
     'CORS_ORIGIN',
   ],
@@ -183,7 +224,8 @@ export const configSchema = {
     PORT:         { type: 'number', default: 3001 },
     HOST:         { type: 'string', default: '0.0.0.0' },
     LOG_LEVEL:    { type: 'string', enum: ['fatal','error','warn','info','debug','trace'], default: 'info' },
-    // Database (拆分參數)
+
+    // === Database(拆分參數)===
     DB_HOST:      { type: 'string', minLength: 1 },
     DB_PORT:      { type: 'number', minimum: 1024, maximum: 65535 },
     DB_USER:      { type: 'string', minLength: 1 },
@@ -194,13 +236,46 @@ export const configSchema = {
     DB_CONNECTION_LIMIT: { type: 'string', default: '' },
     DB_POOL_TIMEOUT:     { type: 'string', default: '' },
     DATABASE_URL: { type: 'string', minLength: 1 },  // 衍生值,經 dotenv-expand 組合
+
+    // === Redis ===
     REDIS_URL:    { type: 'string', minLength: 1 },
-    JWT_SECRET:   { type: 'string', minLength: 32 },
-    JWT_EXPIRES_IN: { type: 'string', default: '7d' },
+
+    // === JWT(ADR 004 雙 token)===
+    JWT_ACCESS_SECRET:    { type: 'string', minLength: 32 },
+    JWT_ACCESS_EXPIRES_IN:  { type: 'string', default: '3h' },
+    JWT_REFRESH_SECRET:   { type: 'string', minLength: 32 },
+    JWT_REFRESH_EXPIRES_IN: { type: 'string', default: '30d' },
+    JWT_ISSUER:           { type: 'string', minLength: 1 },
+    JWT_AUDIENCE:         { type: 'string', default: '' },  // 空 = 沿用 issuer
+
+    // === Google OAuth / OIDC ===
     GOOGLE_CLIENT_ID:     { type: 'string', minLength: 1 },
     GOOGLE_CLIENT_SECRET: { type: 'string', minLength: 1 },
     GOOGLE_CALLBACK_URL:  { type: 'string', format: 'uri' },
-    CORS_ORIGIN:  { type: 'string', minLength: 1 },
+    OIDC_DISCOVERY_URL:   { type: 'string', format: 'uri', default: 'https://accounts.google.com/.well-known/openid-configuration' },
+
+    // === Password(spec 008)===
+    PASSWORD_HASH_MEMORY_COST: { type: 'number', default: 19456 },
+    PASSWORD_HASH_TIME_COST:   { type: 'number', default: 2 },
+    PASSWORD_HASH_PARALLELISM: { type: 'number', default: 1 },
+    PASSWORD_MIN_LENGTH:       { type: 'number', default: 8, minimum: 8, maximum: 256 },
+    LOGIN_LOCK_THRESHOLD:      { type: 'number', default: 10, minimum: 1 },
+    LOGIN_LOCK_WINDOW_SEC:     { type: 'number', default: 900, minimum: 60 },
+
+    // === Rate Limit(spec 010)===
+    RATE_LIMIT_GLOBAL_PER_IP_LIMIT:      { type: 'number', default: 600 },
+    RATE_LIMIT_GLOBAL_PER_IP_WINDOW_SEC: { type: 'number', default: 60 },
+    RATE_LIMIT_DEFAULT_LIMIT:            { type: 'number', default: 120 },
+    RATE_LIMIT_DEFAULT_WINDOW_SEC:       { type: 'number', default: 60 },
+    RATE_LIMIT_FAILURE_MODE:             { type: 'string', enum: ['closed', 'open'], default: 'closed' },
+    RATE_LIMIT_TRUSTED_PROXIES:          { type: 'string', default: '' },  // prod / stage 由 §6.2 額外驗證非空
+
+    // === CORS / Security Headers(spec 012)===
+    CORS_ORIGIN:               { type: 'string', minLength: 1 },
+    CORS_PREFLIGHT_MAX_AGE_SEC:{ type: 'number', default: 600 },
+    HSTS_MAX_AGE_SEC:          { type: 'number', default: 31536000 },
+    HSTS_INCLUDE_SUBDOMAINS:   { type: 'boolean', default: true },
+    HSTS_PRELOAD:              { type: 'boolean', default: false },
   },
 } as const
 
@@ -208,9 +283,25 @@ export const configSchema = {
 await app.register(fastifyEnv, {
   schema: configSchema,
   dotenv: true,         // dev 從 .env 讀
-  confKey: 'config',    // app.config.JWT_SECRET 取用
+  confKey: 'config',    // app.config.JWT_ACCESS_SECRET 取用
 })
 ```
+
+### 4.4 額外語意驗證(JSON Schema 表達不了的)
+
+在 `register` 完成後立刻執行:
+
+```ts
+// src/config/post-validate.ts
+if (config.NODE_ENV !== 'development' && config.RATE_LIMIT_TRUSTED_PROXIES === '') {
+  throw new Error('RATE_LIMIT_TRUSTED_PROXIES must be non-empty in staging/production')
+}
+if (config.JWT_ACCESS_SECRET === config.JWT_REFRESH_SECRET) {
+  throw new Error('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must differ')
+}
+```
+
+理由:JSON Schema 無法表達「在某環境下 X 必填」與「兩欄位必相異」這種跨欄位 invariant。
 
 ## 5. Secrets 處理
 
@@ -234,9 +325,9 @@ await app.register(fastifyEnv, {
 
 | 等級 | 變數 | 處理 |
 |---|---|---|
-| 高敏感 | `JWT_SECRET`, `GOOGLE_CLIENT_SECRET`, `DATABASE_URL` 密碼段 | secret manager,定期輪替 |
-| 中敏感 | `GOOGLE_CLIENT_ID`, `REDIS_URL` 含密碼時 | 環境變數即可 |
-| 低敏感 | `PORT`, `LOG_LEVEL`, `CORS_ORIGIN`, `GOOGLE_CALLBACK_URL` | 環境變數 / 設定檔皆可 |
+| 高敏感 | `JWT_ACCESS_SECRET`、`JWT_REFRESH_SECRET`、`GOOGLE_CLIENT_SECRET`、`DB_PASSWORD` | secret manager,定期輪替 |
+| 中敏感 | `GOOGLE_CLIENT_ID`、`REDIS_URL`(含密碼時)、`DATABASE_URL`(衍生值,組合後屬高敏感) | 環境變數即可 |
+| 低敏感 | `PORT`、`LOG_LEVEL`、`CORS_ORIGIN`、`GOOGLE_CALLBACK_URL`、`JWT_ISSUER`、`PASSWORD_HASH_*`、`RATE_LIMIT_*`、`HSTS_*` | 環境變數 / 設定檔皆可 |
 
 ## 6. 命名與相依
 
@@ -260,12 +351,15 @@ await app.register(fastifyEnv, {
 
 ## 8. `.env.example` 與本 spec 的對應
 
-詳細格式規範與目標草案見 spec 002。
+詳細格式規範與目標草案見 spec 002 v0.3。
 
-當前 `.env.example`(commit `1a492a6`)與本 spec v0.2 的差距:
+當前 `.env.example`(commit `caa7b3d`)與本 spec v0.3 的差距:
 
-- 缺漏 key:`NODE_ENV`、`JWT_EXPIRES_IN`、`CORS_ORIGIN`
-- 需替換:`DATABASE_URL` 單一字串 → §3.2 拆分後的 9 個 key + 由 dotenv-expand 組合的 `DATABASE_URL`
+- JWT 從單一 `JWT_SECRET` / `JWT_EXPIRES_IN` 改為 `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` / `JWT_ACCESS_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` / `JWT_ISSUER` / `JWT_AUDIENCE`(ADR 004)
+- 新增 OIDC discovery:`OIDC_DISCOVERY_URL`
+- 新增 password 區塊 6 key:`PASSWORD_HASH_*` × 3 + `PASSWORD_MIN_LENGTH` + `LOGIN_LOCK_*` × 2
+- 新增 rate-limit 區塊 6 key:`RATE_LIMIT_*`
+- 新增 CORS / HSTS 補充 4 key:`CORS_PREFLIGHT_MAX_AGE_SEC`、`HSTS_*` × 3
 
 待 spec 002 v0.2 落地後一併實作。
 
@@ -275,11 +369,10 @@ await app.register(fastifyEnv, {
 - 是否引入 feature flag 機制(目前無此需求,留作未來擴充)
 - 是否需要 per-tenant 設定(目前單租戶,暫不考慮)
 
-> token rotation 策略已由 ADR 004 決定(access + refresh),待後續修訂併入 §3.4。
-
 ## 10. 變更紀錄
 
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
 | 0.2 | 2026-06-13 | §3.2 Database 改為多參數拆分(`DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` / `DB_SCHEMA` / `DB_SSL_MODE` / `DB_CONNECTION_LIMIT` / `DB_POOL_TIMEOUT`),`DATABASE_URL` 改為 dotenv-expand 衍生;§4.3 schema 範例同步;§8 同步缺漏清單 |
+| 0.3 | 2026-06-13 | §3.4 JWT 拆 access + refresh(ADR 004);§3.5 加 `OIDC_DISCOVERY_URL`;新增 §3.6 Password(Argon2 / login lock);新增 §3.7 Rate Limit;§3.8 CORS 擴含 HSTS;§4.3 schema 全量同步,加入 §4.4 跨欄位語意驗證(`RATE_LIMIT_TRUSTED_PROXIES` 在 prod 必填、access ≠ refresh secret);§5.2 安全等級表重排;§8 對應 `.env.example` 差距更新 |
