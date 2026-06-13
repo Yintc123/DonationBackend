@@ -1,0 +1,30 @@
+# Spec 014 §3.3 — keep build context small + exclude secrets.
+
+# Transient artifacts
+node_modules
+dist
+coverage
+*.tsbuildinfo
+
+# Secrets — must NEVER enter the image (spec 014 §8.1)
+.env
+.env.*
+!.env.example
+
+# Repo metadata + history
+.git
+.github
+.gitignore
+.gitattributes
+
+# Tests + docs — not needed at runtime
+tests
+docs
+README.md
+CLAUDE.md
+
+# Local toolchain / IDE
+.DS_Store
+.vscode
+.idea
+*.log
