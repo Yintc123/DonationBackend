@@ -17,8 +17,10 @@ async function main(): Promise<void> {
     shuttingDown = true
     app.log.info({ signal }, 'shutdown initiated (spec 014 §5)')
 
-    // TODO spec 011: flip readiness gate -> false here so /health/ready
-    // returns 503 during the drain grace window below.
+    // Spec 011 §9 — flip readiness gate so /health/ready returns 503
+    // immediately; K8s removes the pod from service while in-flight
+    // requests finish during the drain grace window below.
+    app.readinessGate.shutDown()
 
     setTimeout(() => {
       app.close().then(
