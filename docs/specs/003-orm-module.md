@@ -3,11 +3,11 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.1 |
+| 版本 | 0.2 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/src/lib/db`、`backend/prisma/` |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`(Fastify)、`docs/decisions/003-database-postgresql.md`(PostgreSQL) |
-| 相關 spec | `001-environment-config.md`(`DATABASE_URL`) |
+| 相關 spec | `001-environment-config.md`(`DATABASE_URL`)、`005-error-handling.md`(交易 throw 後的 rollback 行為) |
 
 ---
 
@@ -35,7 +35,7 @@
 
 ### 2.2 Out of scope
 
-- 具體資料模型(`User`、`Donation`、`Project` 等) — 由後續資料模型 spec 處理
+- 具體資料模型(entity 名、欄位、enum 值、關聯) — 由後續資料模型 spec 處理
 - 索引策略細節 — 屬資料模型 spec 範疇,本檔僅給原則
 - 多租戶 / 多區域分片 — 目前無此需求
 
@@ -97,7 +97,7 @@ export default fp(async (fastify) => {
 })
 ```
 
-使用端:`request.server.prisma.user.findUnique(...)`
+使用端:`request.server.prisma.<modelName>.findUnique(...)`
 
 ### 4.2 規則
 
@@ -120,14 +120,16 @@ export default fp(async (fastify) => {
 
 | 層 | 慣例 | 範例 |
 |---|---|---|
-| Prisma model 名稱 | `PascalCase` 單數 | `model User`、`model Donation` |
-| Prisma 欄位 | `camelCase` | `createdAt`、`userId` |
-| DB 對應 table | `snake_case` 複數(用 `@@map`) | `@@map("users")` |
+| Prisma model 名稱 | `PascalCase` 單數 | `model Foo`、`model BarBaz` |
+| Prisma 欄位 | `camelCase` | `createdAt`、`parentId` |
+| DB 對應 table | `snake_case` 複數(用 `@@map`) | `@@map("foos")` |
 | DB 對應欄位 | `snake_case`(用 `@map`) | `@map("created_at")` |
 | 主鍵 | `uuid()`,欄位名 `id` | `id String @id @default(uuid())` |
 | 時間戳 | `createdAt` / `updatedAt`,皆必填 | `@default(now())` / `@updatedAt` |
-| 金額 | `Decimal` 對應 `numeric(12, 2)` | `amount Decimal @db.Decimal(12, 2)` |
-| Enum | 大寫底線分隔 | `enum DonationStatus { PENDING, PAID, FAILED }` |
+| 貨幣型別 | `Decimal` 對應 `numeric(12, 2)` | `amount Decimal @db.Decimal(12, 2)` — 任何金額欄位通用 |
+| Enum | 大寫底線分隔 | `enum Visibility { PUBLIC, PRIVATE, INTERNAL }` |
+
+> 上表範例**僅示範格式**,不代表已決定的資料模型;實際 model / 欄位 / enum 值由資料模型 spec 擁有。
 
 ### 5.1 Schema 拆檔策略
 
@@ -176,8 +178,8 @@ Fastify route schema (TypeBox)  →  request 型別
 ### 7.1 規則
 
 - Route handler 中**不應出現 `any`**:request body 由 TypeBox 推導、Prisma 結果由 generated type 推導
-- Prisma 結果若要回給 client,**必須**過 response schema(避免不小心洩漏內部欄位,如 `passwordHash`)
-- 共用 DTO 型別放 `src/types/`,從 Prisma type 衍生(`Pick<User, 'id' | 'email'>`)
+- Prisma 結果若要回給 client,**必須**過 response schema(避免不小心洩漏內部欄位,例如密碼雜湊、內部 token 等)
+- 共用 DTO 型別放 `src/types/`,從 Prisma type 衍生(例:`Pick<SomeModel, 'id' | 'name'>`)
 
 ---
 
@@ -211,26 +213,28 @@ Fastify route schema (TypeBox)  →  request 型別
 
 ### 9.1 何時必須用交易
 
-- 跨 model 寫入需同時成功 / 失敗
-  - 例:建立捐款 + 扣抵餘額 + 寫 audit log
-- 讀取 → 計算 → 寫回(需避免 race condition)
-  - 例:更新使用者點數(防止並發 lost update)
+- **跨 model 寫入需同時成功 / 失敗**:多筆相關 INSERT / UPDATE 任一失敗時整批回滾
+- **讀取 → 計算 → 寫回**(需避免 race condition):同時多個 actor 可能更新同一筆 row 時,防止 lost update
+
+> 具體業務場景(何時觸發)由業務 spec 定義;本 spec 僅規範**形式**。
 
 ### 9.2 兩種寫法
 
 ```ts
-// (a) 互動式(可在中間做業務判斷)
+// (a) 互動式(可在中間做條件判斷)
 await fastify.prisma.$transaction(async (tx) => {
-  const user = await tx.user.findUnique({ where: { id } })
-  if (user.balance < amount) throw new BadRequestError(...)
-  await tx.user.update({ where: { id }, data: { balance: { decrement: amount } } })
-  await tx.donation.create({ data: { ... } })
+  const row = await tx.entity.findUnique({ where: { id } })
+  if (!row || !meetsPrecondition(row)) {
+    throw new AppError(/* see spec 005 */)
+  }
+  await tx.entity.update({ where: { id }, data: { /* mutate */ } })
+  await tx.relatedEntity.create({ data: { /* relate to row */ } })
 }, { timeout: 5000 })
 
 // (b) 批次(無相依、純並列原子)
 await fastify.prisma.$transaction([
-  fastify.prisma.foo.create({ ... }),
-  fastify.prisma.bar.create({ ... }),
+  fastify.prisma.foo.create({ /* ... */ }),
+  fastify.prisma.bar.create({ /* ... */ }),
 ])
 ```
 
@@ -280,7 +284,7 @@ export async function setupTestDb() {
 
 ### 10.4 Seed for tests
 
-- 提供 factory(`createUser({ email?: string })`),預設值合理
+- 提供 factory function:每個 model 一個 `make<ModelName>(overrides?)`,回填合理預設、可覆寫
 - **不共用 dev seed**,測試 fixture 獨立
 
 ---
@@ -291,7 +295,7 @@ export async function setupTestDb() {
 
 - 檔案:`prisma/seed.ts`
 - 指令:`npx prisma db seed`(在 `package.json` 加 `prisma.seed` 設定)
-- 內容:最小可用資料(1 個 admin user、2 個 project、1 筆 donation)
+- 內容:**最小 happy-path 資料**——讓 `npm run dev` 起來後即可手動操作主要流程,具體 row 由業務 spec 決定
 - 純 idempotent:upsert,可重複跑
 
 ### 11.2 Test seed
@@ -343,7 +347,7 @@ export async function setupTestDb() {
 ## 14. 開放問題
 
 - **soft delete**:採 `deletedAt` 欄位 + middleware 過濾,還是真刪?待資料模型 spec 決定
-- **Audit log**:是否每張 table 加 `createdBy` / `updatedBy`?(目前單一 user 操作自己的資料,不急)
+- **Audit 欄位**:是否每張 table 加 `createdBy` / `updatedBy`?待業務情境決定,目前不急
 - **多 schema 拆分**:目前單檔,model 數量上來再評估
 - **Read replica**:Prisma 5+ 支援,但本專案讀寫量未到瓶頸,暫不導入
 
@@ -354,3 +358,4 @@ export async function setupTestDb() {
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
+| 0.2 | 2026-06-13 | 移除業務領域詞彙(`User` / `Donation` / `balance` / `point` / `admin user` / `project`),範例改用 `Foo` / `SomeModel` / `entity` / `relatedEntity` 等抽象名;`enum` 範例改為 `Visibility { PUBLIC, PRIVATE, INTERNAL }`;§5 命名表加註腳明示「範例僅示範格式」;§9 交易條件改為形式描述;§11.1 dev seed 內容改為「最小 happy-path」;§14 audit 措辭改通用 |
