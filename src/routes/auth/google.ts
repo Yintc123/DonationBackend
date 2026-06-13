@@ -73,12 +73,20 @@ export async function registerGoogleAuthRoutes(
       if (intent === 'link') {
         const accountId = await requireAccessAccountId(req, tokenSecrets)
         const out = await service.authorizeInit({ intent, accountId })
+        req.log.info(
+          { event: 'auth_authorize_init', intent, accountId, sid: out.sid },
+          'authorize-init',
+        )
         return reply.ok(out)
       }
       const out = await service.authorizeInit({
         intent,
         ...(req.body.returnTo !== undefined ? { returnTo: req.body.returnTo } : {}),
       })
+      req.log.info(
+        { event: 'auth_authorize_init', intent, sid: out.sid },
+        'authorize-init',
+      )
       return reply.ok(out)
     },
   })
@@ -111,11 +119,23 @@ export async function registerGoogleAuthRoutes(
         ...(callerAccountId !== undefined ? { callerAccountId } : {}),
       })
       if (result.intent === 'login') {
+        req.log.info(
+          { event: 'auth_exchange_success', audit: true, intent: 'login' },
+          'google exchange success',
+        )
         return reply.ok({
           ...result.bundle,
           ...(result.returnTo !== undefined ? { returnTo: result.returnTo } : {}),
         })
       }
+      req.log.info(
+        {
+          event: 'auth_account_linked',
+          audit: true,
+          accountId: callerAccountId,
+        },
+        'google credential linked',
+      )
       return reply.noContent()
     },
   })
@@ -164,6 +184,10 @@ export async function registerGoogleAuthRoutes(
       }
       // Spec §5.1 — mint a fresh bundle.
       const bundle = await issueBundle(outcome.accountId)
+      req.log.info(
+        { event: 'auth_refresh_success', accountId: outcome.accountId },
+        'refresh rotation success',
+      )
       return reply.ok(bundle)
     },
   })

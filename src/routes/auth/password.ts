@@ -80,6 +80,13 @@ export async function registerAuthRoutes(
     },
     handler: async (req, reply) => {
       const tokens = await service.registerAccount(req.body)
+      // Spec 004 §9.3.5 — register success is an audit event. The accountId
+      // is derived from the issued access token jti's `sub` claim — pull from
+      // the unsafe decode rather than re-fetching from DB.
+      req.log.info(
+        { event: 'auth_register_password', audit: true },
+        'password account registered',
+      )
       return reply.created(`/auth/accounts/me`, tokens)
     },
   })
@@ -101,6 +108,10 @@ export async function registerAuthRoutes(
     },
     handler: async (req, reply) => {
       const tokens = await service.loginWithPassword(req.body)
+      req.log.info(
+        { event: 'auth_login_password', audit: true },
+        'password login success',
+      )
       return reply.ok(tokens)
     },
   })
@@ -131,6 +142,10 @@ export async function registerAuthRoutes(
         currentPassword: req.body.currentPassword,
         newPassword: req.body.newPassword,
       })
+      req.log.info(
+        { event: 'auth_password_changed', audit: true, accountId },
+        'password changed',
+      )
       return reply.ok(tokens)
     },
   })
@@ -159,6 +174,10 @@ export async function registerAuthRoutes(
         accountId,
         newPassword: req.body.newPassword,
       })
+      req.log.info(
+        { event: 'auth_password_set', audit: true, accountId },
+        'password set',
+      )
       return reply.noContent()
     },
   })
