@@ -32,10 +32,15 @@ docs/
 
 | # | 主題 | 摘要 |
 |---|---|---|
-| 001 | Figma MCP | 採社群 `figma-developer-mcp`,Viewer 權限可讀 |
+| 001 | Figma MCP | 採社群 `figma-developer-mcp`,Viewer 權限可讀(專案層,與 backend 無直接耦合) |
 | 002 | Backend 框架 | Fastify + BFF 分層;JWT stateless |
 | 003 | 資料庫 | PostgreSQL 16(對齊 CI service container) |
 | 004 | Auth token 策略 | Access 3h + Refresh 30d,Redis only(AOF),rotation + replay detection |
+| 005 | BFF session — iron-session | BFF 只 seal `sessionId`;影響 backend 的 trust 邊界(spec 007 §2) |
+| 006 | BFF session — Redis store | BFF Redis-backed session;backend 不感知,但 BFF→backend 的 Bearer JWT 與此 session 綁定 |
+| 007 | ORM — Prisma vs TypeORM | 正式採用 Prisma 5.x;補上 ADR 002/003 的隱含前提(spec 003 落實) |
+
+> ADR 005 / 006 雖屬 BFF(frontend)決策,但 backend 的 BFF 信任假設(spec 007 §2、spec 012 trusted proxy)由其推導,列入此表供查閱。frontend 自有 ADR 序列在 `frontend/docs/decisions/`。
 
 ---
 
@@ -55,12 +60,19 @@ docs/
 | **010** | [Rate-limit](specs/010-rate-limit-module.md) | v0.2 | Sliding window counter(Lua);4 層同時套用(global / route-ip / route-user / purpose);失敗關閉 |
 | **011** | [Health check](specs/011-health-check.md) | v0.1 | K8s liveness / readiness / startup 嚴格區分;cascade-failure 防範;graceful shutdown 用 readiness gate |
 | **012** | [CORS / Security Headers](specs/012-cors-and-security-headers.md) | v0.1 | helmet + 三處升級;**禁 `trustProxy: true`**(`X-Forwarded-For` 偽造攻擊面);HSTS 365d |
+| **013** | [測試基礎建設](specs/013-test-infrastructure.md) | v0.1 | vitest workspace 三 project;testcontainers 共用容器 + truncate 隔離;factory pattern;MSW 攔截外部 HTTP |
+| **014** | [部署 / Container](specs/014-deployment-container.md) | v0.1 | Multi-stage Dockerfile(alpine、non-root);BUILD_* metadata 注入;SIGTERM → readiness gate → drain;K8s 三 probe 接 spec 011 |
 
 ---
 
 ## 4. 依賴關係圖
 
 ```
+  ADR 層 ─────────────────────────────────────────────────────────────
+       002 Fastify    003 PostgreSQL    004 Auth token    007 Prisma
+          │                │                  │              │
+          ▼                ▼                  ▼              ▼
+  Spec 層 ─────────────────────────────────────────────────────────────
                         001 環境設定
                             │
                 ┌───────────┼───────────┐
@@ -80,11 +92,15 @@ docs/
         ▼               008 Auth — 帳密
     009 API Response
         │
-    011 Health Check
+    011 Health Check ◀──── 014 部署 / Container(probe 接線、graceful shutdown)
+        │
+        └───── 013 測試基礎建設(覆蓋所有上層 spec 的測試樣板)
 ```
 
-- 上層引用下層;下層改動時 reviewer 應檢查上層是否需同步
+- ADR 是 spec 的源頭;ADR 改動需檢視所有引用該 ADR 的 spec
+- 上層 spec 引用下層;下層改動時 reviewer 應檢查上層是否需同步
 - 環境設定(001)、Logger(004)、Errors(005)為**橫切**,其他 spec 多會引用
+- 013(測試)與 014(部署)為**運維橫切**:013 覆蓋所有 spec 的測試需求,014 落地 spec 011 的 probe 與 spec 003/006 的 client lifecycle
 
 ---
 
@@ -107,11 +123,11 @@ docs/
 
 ## 6. 進入開發前的必補項
 
-| 缺項 | 影響 |
-|---|---|
-| 資料模型 spec(承 spec 007 §10.7 / spec 003 §2.2) | 無法落具體 schema,所有 auth 與業務實作卡住 |
-| 部署 / Container spec | Dockerfile、graceful shutdown 對齊 spec 011 §9、BUILD_GIT_SHA 注入無共識 |
-| 測試基礎建設 spec | TDD 鐵則已在 `CLAUDE.md`,但 fixture pattern / testcontainers helper / integration setup 無 spec → 風格易飄 |
+| 缺項 | 影響 | 狀態 |
+|---|---|---|
+| 資料模型 spec(承 spec 007 §10.7 / spec 003 §2.2) | 無法落具體 schema,所有 auth 與業務實作卡住 | **業務層,本期不展開**;基礎建設可獨立完成 |
+| 部署 / Container spec | Dockerfile、graceful shutdown 對齊 spec 011 §9、BUILD_GIT_SHA 注入 | ✅ 已補 spec 014 |
+| 測試基礎建設 spec | TDD 鐵則已在 `CLAUDE.md`,但 fixture pattern / testcontainers helper / integration setup 無 spec → 風格易飄 | ✅ 已補 spec 013 |
 
 ---
 

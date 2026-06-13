@@ -351,17 +351,20 @@ if (config.JWT_ACCESS_SECRET === config.JWT_REFRESH_SECRET) {
 
 ## 8. `.env.example` 與本 spec 的對應
 
-詳細格式規範與目標草案見 spec 002 v0.3。
+詳細格式規範見 spec 002 v0.3。
 
-當前 `.env.example`(commit `caa7b3d`)與本 spec v0.3 的差距:
+**狀態:已對齊**(2026-06-13)。當前 `.env.example` 已涵蓋本 spec v0.3 的所有區塊:
 
-- JWT 從單一 `JWT_SECRET` / `JWT_EXPIRES_IN` 改為 `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` / `JWT_ACCESS_EXPIRES_IN` / `JWT_REFRESH_EXPIRES_IN` / `JWT_ISSUER` / `JWT_AUDIENCE`(ADR 004)
-- 新增 OIDC discovery:`OIDC_DISCOVERY_URL`
-- 新增 password 區塊 6 key:`PASSWORD_HASH_*` × 3 + `PASSWORD_MIN_LENGTH` + `LOGIN_LOCK_*` × 2
-- 新增 rate-limit 區塊 6 key:`RATE_LIMIT_*`
-- 新增 CORS / HSTS 補充 4 key:`CORS_PREFLIGHT_MAX_AGE_SEC`、`HSTS_*` × 3
+- ✅ Server(NODE_ENV / PORT / HOST / LOG_LEVEL)
+- ✅ Database 多參數拆分(DB_HOST / PORT / USER / PASSWORD / NAME / SCHEMA / SSL_MODE / CONNECTION_LIMIT / POOL_TIMEOUT)+ dotenv-expand 衍生 `DATABASE_URL`
+- ✅ JWT access + refresh(JWT_ACCESS_SECRET / JWT_ACCESS_EXPIRES_IN / JWT_REFRESH_SECRET / JWT_REFRESH_EXPIRES_IN / JWT_ISSUER / JWT_AUDIENCE)
+- ✅ Google OAuth / OIDC(GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_CALLBACK_URL / OIDC_DISCOVERY_URL)
+- ✅ Password(PASSWORD_HASH_* × 3 / PASSWORD_MIN_LENGTH / LOGIN_LOCK_*)
+- ✅ Redis(REDIS_URL)
+- ✅ Rate Limit(RATE_LIMIT_* × 6)
+- ✅ CORS / HSTS(CORS_ORIGIN / CORS_PREFLIGHT_MAX_AGE_SEC / HSTS_* × 3)
 
-待 spec 002 v0.2 落地後一併實作。
+本 spec 與 `.env.example` 為**雙向綁定**:任一處新增 / 刪除 key,必須同 PR 修正另一處,並由 reviewer 把關。
 
 ## 9. 開放問題
 

@@ -185,21 +185,25 @@ Fastify route schema (TypeBox)  →  request 型別
 
 ## 8. 錯誤處理
 
-### 8.1 Prisma 已知錯誤映射
+> **單一事實來源**:`AppError` 子類別、error code 字串、Prisma → `AppError` 的具體映射程式碼,皆由 **spec 005 擁有**。本節僅從 ORM 視角列出**哪些 Prisma 錯誤值得映射**與**映射發生在哪一層**,類別名稱 / code 字串請以 spec 005 為準。
 
-| Prisma code | 意義 | HTTP | 應用層 error |
+### 8.1 需映射的 Prisma 已知錯誤
+
+| Prisma code | 意義 | 對應 HTTP | 對應 `AppError` 類別 / code |
 |---|---|---|---|
-| `P2002` | unique constraint violation | 409 Conflict | `ConflictError` |
-| `P2025` | record not found | 404 Not Found | `NotFoundError` |
-| `P2003` | foreign key constraint failed | 400 Bad Request | `BadRequestError` |
-| `P2024` | timed out fetching a connection | 503 Service Unavailable | `ServiceUnavailableError` |
-| 其他 known request error | (記 log + 500) | 500 Internal Server Error | `InternalError` |
-| `PrismaClientValidationError` | 開發期 bug | (不應流到 prod) | 500 + 警報 |
+| `P2002` | unique constraint violation | 409 | 見 spec 005 §3.2 `ConflictError` + §4.2.1 `UNIQUE_CONSTRAINT` |
+| `P2025` | record not found | 404 | 見 spec 005 §3.2 `NotFoundError` + §4.2.1 `NOT_FOUND` |
+| `P2003` | foreign key constraint failed | 400 | 見 spec 005 §3.2 `BadRequestError` + §4.2.1 `FK_CONSTRAINT` |
+| `P2024` | timed out fetching a connection | 503 | 見 spec 005 §3.2 `ServiceUnavailableError` |
+| 其他 `PrismaClientKnownRequestError` | 未列出的已知 P-code | — | 回傳 `undefined`,由 spec 005 §11 視為 programmer error 處理 |
+| `PrismaClientValidationError` | 開發期 schema 不符 | — | 同上,programmer error;不應流到 prod |
+
+**規範性映射程式碼**(`mapPrismaError`)定義於 spec 005 §7.2。新增 P-code 對應需在 spec 005 §7.2 + 本表同步更新。
 
 ### 8.2 實作位置
 
-- 集中於 `src/lib/db/errors.ts`:`mapPrismaError(err): AppError`
-- 提供 `withPrismaErrors` wrapper 或 Fastify 全域 error handler 統一轉換
+- 集中於 `src/lib/db/errors.ts`:`mapPrismaError(err): AppError | undefined`(spec 005 §7.2 草案)
+- 由 Fastify 全域 `setErrorHandler` 在 cause chain 中辨識 Prisma error 並呼叫 mapper
 - **不在 route handler 內逐個 `try/catch` 比對 code**,避免重複
 
 ### 8.3 訊息規則
