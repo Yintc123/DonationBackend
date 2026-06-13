@@ -1,0 +1,23 @@
+// Spec 003 (ORM module) + ADR 003 (PostgreSQL) + ADR 007 (Prisma).
+// Infrastructure scaffold: datasource + generator + one scaffold placeholder.
+// Real models land with the data model spec (out of scope for infra phase).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Placeholder so `prisma generate` succeeds during the infrastructure
+// phase (Prisma errors out on zero-model schemas; the parser also rejects
+// model names starting with `_`, so it lives in DB as `_scaffold_placeholder`
+// via @@map). NOT a business entity. Nothing imports it. Delete the moment
+// the first real model lands.
+model ScaffoldPlaceholder {
+  id String @id @default(uuid())
+
+  @@map("_scaffold_placeholder")
+}
