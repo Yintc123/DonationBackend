@@ -14,6 +14,7 @@ backend/
 ├── README.md                # 給人的入口(技術棧、跑起來、AI 聲明)
 └── docs/
     ├── README.md            # 本檔:文件導覽
+    ├── decisions/           # backend 內部 ADR
     └── specs/               # 模組規格書
 ```
 
@@ -41,6 +42,16 @@ docs/
 | 007 | ORM — Prisma vs TypeORM | 正式採用 Prisma 5.x;補上 ADR 002/003 的隱含前提(spec 003 落實) |
 
 > ADR 005 / 006 雖屬 BFF(frontend)決策,但 backend 的 BFF 信任假設(spec 007 §2、spec 012 trusted proxy)由其推導,列入此表供查閱。frontend 自有 ADR 序列在 `frontend/docs/decisions/`。
+
+### Backend-local ADR(`decisions/`)
+
+跟 backend 內部結構 / 資料模型有關、不影響其他子專案的決策放這裡。
+
+| # | 主題 | 摘要 |
+|---|---|---|
+| 001 | [捐款項目對 Charity 關聯](decisions/001-donation-item-relations.md) | 1:N + NOT NULL FK + onDelete Restrict |
+| 002 | [Charity 分類資料模型](decisions/002-charity-category-model.md) | (見檔) |
+| 003 | [Fastify route 組織慣例](decisions/003-fastify-route-organization.md) | business → `src/routes/`、infra plugin → `src/lib/<concern>/plugin.ts`;解釋為何健康檢查 route 不在 routes/ |
 
 ---
 
