@@ -154,6 +154,41 @@ export async function verifyRefreshToken(
 
 const REFRESH_GRACE_SEC = 60 // Spec 007 §11.3.
 
+// Spec 007 §11.4 — atomic consume + replay detection.
+//
+// KEYS[1] = refresh hash key
+// ARGV[1] = expected sha256 hash of the JWT presented by the caller
+// Returns:
+//   { 0 }                      → not-found / hash mismatch
+//   { 1, accountId }           → consumed successfully (marked used)
+//   { 2, accountId }           → replay (record was already used=true)
+//
+// The hash mismatch path returns the SAME tuple as missing so callers
+// cannot use timing to distinguish "no such token" from "wrong token".
+// `redis.call('HSET', ..., 'used', 'true')` is server-local atomic with
+// the preceding HGET so two concurrent consume calls cannot both win.
+const CONSUME_REFRESH_LUA = `
+local data = redis.call('HMGET', KEYS[1], 'accountId', 'hashedToken', 'used')
+local accountId    = data[1]
+local expectedHash = data[2]
+local used         = data[3]
+if not accountId or accountId == false then
+  return { 0 }
+end
+if used == 'true' then
+  return { 2, accountId }
+end
+if not expectedHash or expectedHash ~= ARGV[1] then
+  return { 0 }
+end
+local ttl = redis.call('TTL', KEYS[1])
+redis.call('HSET', KEYS[1], 'used', 'true')
+if ttl and ttl > 0 then
+  redis.call('EXPIRE', KEYS[1], ttl)
+end
+return { 1, accountId }
+`.trim()
+
 function refreshKey(tokenId: string): string {
   return buildKey('auth', ['refresh', tokenId])
 }
@@ -232,35 +267,20 @@ export function createRefreshStore(redis: Redis): RefreshStore {
       return tokenIds.length
     },
     async consume(tokenId, token) {
+      // Spec 007 §11.4 — replay detection must be atomic. A plain
+      // HGETALL → HSET sequence races: two concurrent /auth/refresh
+      // requests both see used=false, both succeed, replay slips through.
+      // CONSUME_REFRESH_LUA does the check-and-mark in one Redis call.
       const key = refreshKey(tokenId)
-      const data = await redis.hgetall(key)
-      if (!data || Object.keys(data).length === 0) {
-        return { result: 'not-found' }
-      }
-      const accountId = data.accountId
-      const expectedHash = data.hashedToken
-      const used = data.used === 'true'
-      if (typeof accountId !== 'string') {
-        return { result: 'not-found' }
-      }
-      if (used) {
-        return { result: 'replay', accountId }
-      }
-      if (typeof expectedHash !== 'string' || hashToken(token) !== expectedHash) {
-        // Same observable as "not-found" — do not leak whether the record
-        // simply does not exist or carries a different hash.
-        return { result: 'not-found' }
-      }
-      // Mark used=true preserving the current TTL.
-      const ttl = await redis.ttl(key)
-      const pipeline = redis.multi()
-      pipeline.hset(key, { used: 'true' })
-      if (ttl > 0) pipeline.expire(key, ttl)
-      const results = await pipeline.exec()
-      if (results === null) {
-        throw new Error('tokens: refresh consume pipeline aborted')
-      }
-      return { result: 'ok', accountId }
+      const hashed = hashToken(token)
+      const result = (await redis.eval(CONSUME_REFRESH_LUA, 1, key, hashed)) as
+        | [0]
+        | [1, string]
+        | [2, string]
+      const flag = result[0]
+      if (flag === 0) return { result: 'not-found' }
+      if (flag === 1) return { result: 'ok', accountId: result[1] }
+      return { result: 'replay', accountId: result[1] }
     },
     async revokeOne(tokenId) {
       const key = refreshKey(tokenId)

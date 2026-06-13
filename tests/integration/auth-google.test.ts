@@ -583,6 +583,32 @@ describe('auth-google integration (spec 007)', () => {
       expect((followUp.json() as ProblemResponse).code).toBe('AUTH_REFRESH_REVOKED')
     })
 
+    it('two concurrent /auth/refresh with the same token: exactly one succeeds (spec §11.4 atomicity)', async () => {
+      app = await buildGoogleApp()
+      const original = await freshTokens(app)
+
+      // Fire two requests in parallel. The atomic Lua consume must serialise
+      // these so exactly one returns 200 and the OTHER must be flagged as
+      // replay (NOT both succeed).
+      const [a, b] = await Promise.all([
+        app.inject({
+          method: 'POST',
+          url: '/auth/refresh',
+          headers: { authorization: `Bearer ${original.refreshToken}` },
+        }),
+        app.inject({
+          method: 'POST',
+          url: '/auth/refresh',
+          headers: { authorization: `Bearer ${original.refreshToken}` },
+        }),
+      ])
+
+      const codes = [a.statusCode, b.statusCode].sort((x, y) => x - y)
+      expect(codes).toEqual([200, 401])
+      const loser = (a.statusCode === 200 ? b : a).json() as ProblemResponse
+      expect(loser.code).toBe('AUTH_REFRESH_REPLAY')
+    })
+
     it('returns 401 AUTH_REFRESH_REVOKED when the refresh JWT is unknown to Redis', async () => {
       app = await buildGoogleApp()
       const original = await freshTokens(app)
