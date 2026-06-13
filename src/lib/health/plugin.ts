@@ -11,29 +11,9 @@
 //     `/health/*` by the spec-004 logger; here we only log state changes).
 //   - Mark the gate `started` on Fastify `onReady` (spec 011 §4.3 / §9.2).
 //
-// DB probe choice — OPTION (A): stub.
-//   Prisma (spec 003) is not wired yet — the Fastify instance does not have
-//   `app.prisma`. Spec 011 §11.1 says the DB probe should run
-//   `prisma.$queryRaw`SELECT 1``, but we cannot do that without the plugin.
-//   Spec 011 §13 (test plan) lists "pause DB container" as integration
-//   coverage owned by spec 003 once it ships.
-//
-//   We therefore:
-//     - report db: "ok" with latency 0 for now,
-//     - leave a clearly marked TODO so the spec-003 PR knows where to wire it.
-//
-//   Why not connect raw `pg`? It would couple this module to a second client
-//   lifecycle, violating spec 003 §4 (single Prisma instance owns DB I/O).
-//
-// TODO(spec 003 §13 / spec 011 §11.1):
-//   When the Prisma plugin lands and decorates `app.prisma`, replace
-//   `probeDb` below with:
-//     await runWithTimeout(
-//       () => app.prisma.$queryRaw`SELECT 1`,
-//       DB_TIMEOUT_MS, 'db',
-//     )
-//   Keep the timeout + ok/fail shape identical so this file's tests do not
-//   change. See spec 011 §7.1 (timeouts) and §4.2 (response shape).
+// Dependencies (must be registered before this plugin in src/app.ts):
+//   - `app.prisma`  — spec 003 (DB probe runs `$queryRaw\`SELECT 1\``)
+//   - `app.redis`   — spec 006 (cache probe runs PING)
 
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify'
 import fp from 'fastify-plugin'
@@ -56,16 +36,18 @@ declare module 'fastify' {
 }
 
 // Spec 011 §7.1 — per-check timeouts.
-//
-// `_DB_TIMEOUT_MS` is exported as documentation for the spec-003 follow-up
-// that will start using it once Prisma is wired (see file header TODO).
-// Prefixed with `_` so lint allows the placeholder until then.
-export const _DB_TIMEOUT_MS = 500
+const DB_TIMEOUT_MS = 500
 const CACHE_TIMEOUT_MS = 200
 
-async function probeDb(_app: FastifyInstance): Promise<ComponentResult> {
-  // STUB until spec 003 lands `app.prisma`. See file header TODO.
-  return Promise.resolve({ status: 'ok', latencyMs: 0 })
+async function probeDb(app: FastifyInstance): Promise<ComponentResult> {
+  const start = Date.now()
+  try {
+    await runWithTimeout(() => app.prisma.$queryRaw`SELECT 1`, DB_TIMEOUT_MS, 'db')
+    return { status: 'ok', latencyMs: Date.now() - start }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { status: 'fail', latencyMs: Date.now() - start, error: message }
+  }
 }
 
 async function probeCache(app: FastifyInstance): Promise<ComponentResult> {

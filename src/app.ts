@@ -20,6 +20,7 @@ import { errorHandlerPlugin } from './lib/errors/index.js'
 import { healthPlugin } from './lib/health/index.js'
 import { httpResponsePlugin } from './lib/http/index.js'
 import { createLogger } from './lib/logger/index.js'
+import { prismaPlugin } from './lib/prisma/index.js'
 import { rateLimitPlugin } from './lib/rate-limit/index.js'
 import { redisPlugin } from './lib/redis/index.js'
 import { corsPlugin, helmetPlugin } from './lib/security/index.js'
@@ -41,6 +42,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(helmetPlugin)
   await app.register(corsPlugin)
   await app.register(httpResponsePlugin)
+  await app.register(prismaPlugin)
   await app.register(redisPlugin)
   await app.register(rateLimitPlugin)
   await app.register(healthPlugin)
