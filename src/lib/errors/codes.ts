@@ -35,6 +35,15 @@ export const ErrorCode = Object.freeze({
   // ── §4.2.5 rate limit (spec 010 §11.2) ─────────────────────────────────
   // Surfaced when Redis is unreachable and the fail-closed policy fires.
   RATE_LIMIT_UNAVAILABLE: 'RATE_LIMIT_UNAVAILABLE',
+
+  // ── §4.2.2 auth (spec 008 §9) ──────────────────────────────────────────
+  // Owned by spec 008 (email + password). Spec 007 will add Google / token
+  // codes in its own PR; we do not pre-empt those here.
+  AUTH_EMAIL_TAKEN: 'AUTH_EMAIL_TAKEN',
+  AUTH_INVALID_CREDENTIALS: 'AUTH_INVALID_CREDENTIALS',
+  AUTH_ACCOUNT_LOCKED: 'AUTH_ACCOUNT_LOCKED',
+  AUTH_PASSWORD_NOT_SET: 'AUTH_PASSWORD_NOT_SET',
+  AUTH_PASSWORD_ALREADY_SET: 'AUTH_PASSWORD_ALREADY_SET',
 } as const)
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode]
@@ -59,4 +68,9 @@ export const ErrorCodeStatus: Readonly<Record<ErrorCodeValue, number>> = Object.
   [ErrorCode.UPSTREAM_TIMEOUT]: 504,
   [ErrorCode.GATEWAY_TIMEOUT]: 504,
   [ErrorCode.RATE_LIMIT_UNAVAILABLE]: 503,
+  [ErrorCode.AUTH_EMAIL_TAKEN]: 409,
+  [ErrorCode.AUTH_INVALID_CREDENTIALS]: 401,
+  [ErrorCode.AUTH_ACCOUNT_LOCKED]: 429,
+  [ErrorCode.AUTH_PASSWORD_NOT_SET]: 409,
+  [ErrorCode.AUTH_PASSWORD_ALREADY_SET]: 409,
 })

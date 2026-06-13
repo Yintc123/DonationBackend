@@ -51,6 +51,12 @@ const TITLE_BY_CODE: Record<string, string> = {
   UPSTREAM_FAILURE: 'Upstream Failure',
   UPSTREAM_TIMEOUT: 'Upstream Timeout',
   GATEWAY_TIMEOUT: 'Gateway Timeout',
+  // Spec 008 §9 — auth (email + password).
+  AUTH_EMAIL_TAKEN: 'Email Already In Use',
+  AUTH_INVALID_CREDENTIALS: 'Invalid Credentials',
+  AUTH_ACCOUNT_LOCKED: 'Account Temporarily Locked',
+  AUTH_PASSWORD_NOT_SET: 'Password Not Set',
+  AUTH_PASSWORD_ALREADY_SET: 'Password Already Set',
 }
 
 function codeToKebab(code: string): string {
