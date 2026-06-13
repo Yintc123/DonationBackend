@@ -3,11 +3,11 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.1 |
+| 版本 | 0.2 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/src/lib/errors`、Fastify 全域 errorHandler、process-level handlers |
 | 相關 ADR | `docs/decisions/002-backend-framework.md` |
-| 相關 spec | `003-orm-module.md`(§8 Prisma error 映射)、`004-logger-module.md`(§8 error logging) |
+| 相關 spec | `003-orm-module.md`(`P2002` 等 Prisma error 映射)、`004-logger-module.md`(error logging)、`007-auth-flow-google-oidc.md` / `008-auth-flow-password.md`(`AUTH_*` codes)、`009-api-response-and-http-status.md`(`IDEMPOTENCY_*` / `UNSUPPORTED_MEDIA_TYPE`)、`010-rate-limit-module.md`(`RATE_LIMIT_UNAVAILABLE`)、`011-health-check.md`(RFC 7807 例外) |
 
 ---
 
@@ -153,17 +153,21 @@ export class NotFoundError extends AppError {
 - 形如 `<DOMAIN>_<NOUN>_<STATE>` 或 `<NOUN>_<VERB>`
 - 通用前綴 reserved:`AUTH_*`、`VALIDATION_*`、`RATE_*`、`UPSTREAM_*`
 
-### 4.2 Infrastructure 層字典(本 spec 擁有)
+### 4.2 Infrastructure 層字典(本 spec 擁有 — 單一事實來源)
+
+本字典為**所有 infrastructure error code 的單一事實來源**。新增 code 必須在對應 spec 的 PR 內同步本表,否則 reviewer 應 block。
+
+#### 4.2.1 通用(本 spec)
 
 | code | HTTP | 語意 |
 |---|---|---|
 | `BAD_REQUEST` | 400 | 通用 |
 | `VALIDATION_FAILED` | 400 | request body / params / query 不符 schema |
 | `UNAUTHORIZED` | 401 | 缺 token / token 無效 / 過期 |
-| `AUTH_TOKEN_EXPIRED` | 401 | token 過期(精確訊號,client 可觸發 refresh) |
 | `FORBIDDEN` | 403 | 權限不足 |
 | `NOT_FOUND` | 404 | 通用 |
 | `METHOD_NOT_ALLOWED` | 405 | route 存在但 method 不允許 |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | Content-Type 不支援(spec 009 §9) |
 | `CONFLICT` | 409 | 通用 |
 | `UNPROCESSABLE_ENTITY` | 422 | 業務規則拒絕(具體 code 由業務 spec 細化) |
 | `RATE_LIMITED` | 429 | rate limit |
@@ -171,14 +175,63 @@ export class NotFoundError extends AppError {
 | `SERVICE_UNAVAILABLE` | 503 | 啟動中 / 暫停服務 |
 | `UPSTREAM_FAILURE` | 502 | 下游 5xx |
 | `UPSTREAM_TIMEOUT` | 504 | 下游 timeout |
-| `GATEWAY_TIMEOUT` | 504 | alias of `UPSTREAM_TIMEOUT`(避免重複,擇一) |
+
+#### 4.2.2 Auth — Google + Identity(spec 007 擁有)
+
+| code | HTTP | 語意 |
+|---|---|---|
+| `AUTH_TOKEN_EXPIRED` | 401 | token 過期(精確訊號,client 可觸發 refresh) |
+| `AUTH_OAUTH_SESSION_INVALID` | 401 | OAuth `sid` 不存在 / 過期 |
+| `AUTH_STATE_MISMATCH` | 401 | state 不符 |
+| `AUTH_OAUTH_EXCHANGE_FAILED` | 401 | Google `/token` 4xx |
+| `AUTH_ID_TOKEN_INVALID` | 401 | ID token 驗證失敗(簽章 / iss / aud / exp / nonce) |
+| `AUTH_EMAIL_UNVERIFIED` | 401 | Google `email_verified=false` |
+| `AUTH_EMAIL_OWNED_BY_OTHER_ACCOUNT` | 409 | Google email 已被其他 Account 佔用,需手動連結 |
+| `AUTH_GOOGLE_ALREADY_LINKED` | 409 | Link intent 時 Google sub 已連結到其他 Account |
+| `AUTH_CREDENTIAL_EXISTS` | 409 | Link intent 時當前 Account 已有 Google credential |
+| `AUTH_LINK_SESSION_MISMATCH` | 401 | Link intent 時 JWT 與 OAuth session 的 accountId 不一致 |
+| `AUTH_REFRESH_REVOKED` | 401 | Refresh token 已撤銷 |
+| `AUTH_REFRESH_REPLAY` | 401 | Refresh token replay 偵測 |
+
+#### 4.2.3 Auth — Email + Password(spec 008 擁有)
+
+| code | HTTP | 語意 |
+|---|---|---|
+| `AUTH_INVALID_CREDENTIALS` | 401 | 登入失敗(任何原因,enumeration resistance) |
+| `AUTH_EMAIL_TAKEN` | 409 | 註冊時 email 已存在 |
+| `AUTH_ACCOUNT_LOCKED` | 429 | per-email 連續失敗鎖定 |
+| `AUTH_PASSWORD_NOT_SET` | 409 | 變更密碼時 Account 無 PasswordCredential |
+| `AUTH_PASSWORD_ALREADY_SET` | 409 | 設定密碼時已有 PasswordCredential |
+
+#### 4.2.4 API Response — Idempotency(spec 009 擁有)
+
+| code | HTTP | 語意 |
+|---|---|---|
+| `IDEMPOTENCY_KEY_INVALID` | 400 | `Idempotency-Key` 非 UUID / ULID |
+| `IDEMPOTENCY_KEY_CONFLICT` | 422 | 同 key 對應不同 endpoint / body |
+
+#### 4.2.5 Rate Limit(spec 010 擁有)
+
+| code | HTTP | 語意 |
+|---|---|---|
+| `RATE_LIMIT_UNAVAILABLE` | 503 | Redis 不可用,rate-limit 失敗關閉 |
 
 ### 4.3 業務層字典
 
 由業務 spec 各自擴充(例:`<resource>_*`、`<flow>_*`);每次新增需在該 spec 的 error code 章節登錄。本 spec 提供 lint 規則:
 
-- **禁止跨層複用**(業務 error 不可佔用 `AUTH_*` / `UPSTREAM_*` 前綴)
+- **禁止跨層複用**(業務 error 不可佔用 `AUTH_*` / `UPSTREAM_*` / `IDEMPOTENCY_*` / `RATE_*` 前綴)
 - 新 code **不可變更**已釋出版本的語意(僅可新增、棄用走 deprecation 流程)
+- 同 4.4 治理流程
+
+### 4.4 字典治理
+
+- **新增 code**:擁有該業務 / 模組的 spec 在自己的 PR 中**必須同時**:
+  - 在自己 spec 內 error 表加入該 code
+  - 在本 §4.2 對應子表加入該 code
+  - reviewer 確認無重名(跨子表也不行)
+- **棄用**:標 `~~~ DEPRECATED ~~~`,保留至少一版後刪
+- **HTTP status 對應一旦發布即不可變**(改變會破壞 client 解析)
 
 ---
 
@@ -241,6 +294,15 @@ export default fp(async (fastify) => {
 ## 6. 對外回應格式(RFC 7807)
 
 採 **RFC 7807 Problem Details for HTTP APIs**(`application/problem+json`)。
+
+### 6.0 例外:Health Probe 端點
+
+`GET /health/live` / `/health/ready` / `/health/startup` / `/health` / `/health/db` / `/health/cache`(spec 011 §3)**不**走 RFC 7807,改回 spec 011 §4 / §5 定義的 health JSON shape。理由:
+
+- K8s probe 機制不解析 `application/problem+json`,只看 HTTP status code
+- health endpoint 的主資料是「component status」,error 為附屬
+
+由 errorHandler 在格式化前判斷 `request.routerPath?.startsWith('/health/')`,命中時改走 health response writer。其他原則(status code、不洩漏細節、reqId 追蹤)仍適用。
 
 ### 6.1 格式
 
@@ -513,3 +575,4 @@ process.on('uncaughtException', (err) => {
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
+| 0.2 | 2026-06-13 | §4.2 error code 字典聚合為單一事實來源,涵蓋 spec 007/008/009/010 散落的 20+ 個 code,分 5 個子表(通用 / Auth-Google / Auth-Password / Idempotency / Rate-Limit);新增 §4.4 字典治理(新增 / 棄用、HTTP status 一旦發布不可變);§6.0 新增 health probe 端點的 RFC 7807 例外(對齊 spec 011 §5.2)— K8s probe 不解析 problem+json,health 端點改回 spec 011 §4/§5 JSON shape |
