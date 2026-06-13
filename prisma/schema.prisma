@@ -1,8 +1,9 @@
 // Spec 003 (ORM) + ADR 003 (PostgreSQL) + ADR 007 (Prisma)
 // + spec 007 §10 (Account ↔ Credential identity model).
 //
-// Minimum model needed for spec 008 (password flow). GoogleCredential
-// lands with spec 007 — same Account, second Credential row.
+// Account has 0..1 PasswordCredential (spec 008) AND 0..1
+// GoogleCredential (spec 007). At least one credential should
+// always be present after registration (linking flow guarantees this).
 
 generator client {
   provider = "prisma-client-js"
@@ -22,6 +23,7 @@ model Account {
   updatedAt DateTime @updatedAt
 
   passwordCredential PasswordCredential?
+  googleCredential   GoogleCredential?
 
   @@map("accounts")
 }
@@ -40,4 +42,20 @@ model PasswordCredential {
   account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@map("password_credentials")
+}
+
+// Spec 007 §10.1 — one GoogleCredential per Account; externalId is the
+// Google `sub` claim and must be globally unique so a single Google
+// identity cannot link to multiple Accounts (§10.1 / §10.5).
+model GoogleCredential {
+  id         String   @id @default(uuid())
+  accountId  String   @unique
+  externalId String   @unique
+  email      String
+  linkedAt   DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("google_credentials")
 }

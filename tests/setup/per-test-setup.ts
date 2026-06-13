@@ -10,7 +10,7 @@ import { PrismaClient } from '@prisma/client'
 import { Redis } from 'ioredis'
 import { afterAll, beforeEach, inject } from 'vitest'
 
-const TRUNCATE_TABLES = ['password_credentials', 'accounts']
+const TRUNCATE_TABLES = ['google_credentials', 'password_credentials', 'accounts']
 
 let prisma: PrismaClient | undefined
 
