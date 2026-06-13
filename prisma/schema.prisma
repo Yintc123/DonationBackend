@@ -1,6 +1,8 @@
-// Spec 003 (ORM module) + ADR 003 (PostgreSQL) + ADR 007 (Prisma).
-// Infrastructure scaffold: datasource + generator + one scaffold placeholder.
-// Real models land with the data model spec (out of scope for infra phase).
+// Spec 003 (ORM) + ADR 003 (PostgreSQL) + ADR 007 (Prisma)
+// + spec 007 §10 (Account ↔ Credential identity model).
+//
+// Minimum model needed for spec 008 (password flow). GoogleCredential
+// lands with spec 007 — same Account, second Credential row.
 
 generator client {
   provider = "prisma-client-js"
@@ -11,13 +13,31 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Placeholder so `prisma generate` succeeds during the infrastructure
-// phase (Prisma errors out on zero-model schemas; the parser also rejects
-// model names starting with `_`, so it lives in DB as `_scaffold_placeholder`
-// via @@map). NOT a business entity. Nothing imports it. Delete the moment
-// the first real model lands.
-model ScaffoldPlaceholder {
-  id String @id @default(uuid())
+// Spec 007 §10.1 — the canonical "person" in the service.
+// Email is unique and serves as the human-facing identifier.
+model Account {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@map("_scaffold_placeholder")
+  passwordCredential PasswordCredential?
+
+  @@map("accounts")
+}
+
+// Spec 008 §4 / spec 007 §10.1 — one PasswordCredential per Account.
+// hashAlgo lets us silently rehash on login when params upgrade
+// (spec 008 §3.1).
+model PasswordCredential {
+  id             String   @id @default(uuid())
+  accountId      String   @unique
+  hashedPassword String
+  hashAlgo       String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("password_credentials")
 }
