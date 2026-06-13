@@ -14,6 +14,7 @@
 
 import Fastify, { type FastifyInstance } from 'fastify'
 
+import { errorHandlerPlugin } from './lib/errors/index.js'
 import { createLogger } from './lib/logger/index.js'
 import { redisPlugin } from './lib/redis/index.js'
 import { corsPlugin, helmetPlugin } from './lib/security/index.js'
@@ -30,6 +31,10 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   const app = Fastify({ logger: createLogger(config) })
 
   app.decorate('config', config)
+
+  // Error handler must be set BEFORE plugins that may throw, so its
+  // setErrorHandler is in place by the time those plugins register hooks.
+  await app.register(errorHandlerPlugin)
 
   await app.register(helmetPlugin)
   await app.register(corsPlugin)
