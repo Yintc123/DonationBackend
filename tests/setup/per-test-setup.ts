@@ -2,24 +2,46 @@
 //
 // Implemented:
 //   - FLUSHDB the test Redis instance (spec 006 §14.2)
+//   - TRUNCATE Postgres tables (spec 003 + spec 013 §6.1)
 //
-// Pending (separate specs):
-//   - truncate Postgres tables (spec 003 + spec 013 §6.1)
-//   - msw.resetHandlers()
-//   - vi.useRealTimers()
+// Connection info comes from globalSetup via inject() (see global-setup.ts).
 
+import { PrismaClient } from '@prisma/client'
 import { Redis } from 'ioredis'
-import { beforeEach } from 'vitest'
+import { afterAll, beforeEach, inject } from 'vitest'
+
+const TRUNCATE_TABLES = ['password_credentials', 'accounts']
+
+let prisma: PrismaClient | undefined
+
+function getPrisma(dbUrl: string): PrismaClient {
+  if (!prisma) {
+    prisma = new PrismaClient({ datasourceUrl: dbUrl })
+  }
+  return prisma
+}
 
 beforeEach(async () => {
-  const redisUrl = process.env.REDIS_URL
-  if (!redisUrl) return // global-setup didn't run (e.g. unit project) — skip
-
-  const client = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 })
-  try {
-    await client.connect()
-    await client.flushdb()
-  } finally {
-    await client.quit()
+  const redisUrl = inject('TEST_REDIS_URL')
+  if (redisUrl) {
+    const client = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 })
+    try {
+      await client.connect()
+      await client.flushdb()
+    } finally {
+      await client.quit()
+    }
   }
+
+  const dbUrl = inject('TEST_DATABASE_URL')
+  if (dbUrl) {
+    const p = getPrisma(dbUrl)
+    const list = TRUNCATE_TABLES.map((t) => `"${t}"`).join(', ')
+    await p.$executeRawUnsafe(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`)
+  }
+})
+
+afterAll(async () => {
+  await prisma?.$disconnect()
+  prisma = undefined
 })

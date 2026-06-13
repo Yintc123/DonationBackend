@@ -2,41 +2,62 @@
 //
 // Implemented tiers:
 //   - Redis:    new GenericContainer('redis:7-alpine').withExposedPorts(6379)
-//
-// Stubbed (out of scope of spec 006 task):
-//   - Postgres: returns a sentinel error if a caller actually tries to use it.
+//   - Postgres: PostgreSqlContainer('postgres:16-alpine')
 //
 // Lifecycle is owned by tests/setup/global-setup.ts.
 
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql'
 import { GenericContainer, type StartedTestContainer } from 'testcontainers'
 
+export interface PostgresInfo {
+  connectionUri: string
+  host: string
+  port: number
+  user: string
+  password: string
+  database: string
+}
+
 export interface TestContainers {
-  postgres: { connectionUri: string }
+  postgres: PostgresInfo
   redis: { url: string }
   stop: () => Promise<void>
 }
 
-const POSTGRES_NOT_IMPLEMENTED =
-  'Postgres testcontainer is not wired yet — out of scope for spec 006'
-
 export async function startContainers(): Promise<TestContainers> {
-  const redisContainer: StartedTestContainer = await new GenericContainer('redis:7-alpine')
-    .withExposedPorts(6379)
-    .start()
+  const [redisContainer, pgContainer] = await Promise.all([
+    new GenericContainer('redis:7-alpine').withExposedPorts(6379).start(),
+    new PostgreSqlContainer('postgres:16-alpine').start(),
+  ])
 
-  const redisHost = redisContainer.getHost()
-  const redisPort = redisContainer.getMappedPort(6379)
-  const redisUrl = `redis://${redisHost}:${redisPort}`
+  const redisInfo = buildRedisInfo(redisContainer)
+  const postgresInfo = buildPostgresInfo(pgContainer)
 
   return {
-    postgres: {
-      get connectionUri(): string {
-        throw new Error(POSTGRES_NOT_IMPLEMENTED)
-      },
-    } as { connectionUri: string },
-    redis: { url: redisUrl },
+    postgres: postgresInfo,
+    redis: redisInfo,
     stop: async () => {
-      await redisContainer.stop()
+      await Promise.all([redisContainer.stop(), pgContainer.stop()])
     },
+  }
+}
+
+function buildRedisInfo(c: StartedTestContainer): { url: string } {
+  return { url: `redis://${c.getHost()}:${c.getMappedPort(6379).toString()}` }
+}
+
+function buildPostgresInfo(c: StartedPostgreSqlContainer): PostgresInfo {
+  const host = c.getHost()
+  const port = c.getMappedPort(5432)
+  const user = c.getUsername()
+  const password = c.getPassword()
+  const database = c.getDatabase()
+  return {
+    host,
+    port,
+    user,
+    password,
+    database,
+    connectionUri: `postgresql://${user}:${password}@${host}:${port.toString()}/${database}?schema=public`,
   }
 }
