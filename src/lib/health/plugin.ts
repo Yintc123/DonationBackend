@@ -38,6 +38,11 @@ declare module 'fastify' {
 // Spec 011 §7.1 — per-check timeouts.
 const DB_TIMEOUT_MS = 500
 const CACHE_TIMEOUT_MS = 200
+// Spec 011 §7.2 — coalesce probes within a short window so K8s polling
+// (typically 5s × multiple probes × multiple components) does not become
+// a constant SELECT 1 / PING load on the backing stores. A 1000 ms TTL is
+// short enough that a real outage propagates inside one K8s poll cycle.
+const PROBE_CACHE_TTL_MS = 1_000
 
 async function probeDb(app: FastifyInstance): Promise<ComponentResult> {
   const start = Date.now()
@@ -61,9 +66,57 @@ async function probeCache(app: FastifyInstance): Promise<ComponentResult> {
   }
 }
 
+interface CacheEntry<T> {
+  expiresAt: number
+  inflight: Promise<T> | undefined
+  value: T | undefined
+}
+
+/**
+ * Coalesces concurrent calls and caches the resolved value for `ttlMs`.
+ * Errors are NOT cached — a failed probe re-runs on the next call so a
+ * transient hiccup doesn't pin readiness to fail for a full TTL window.
+ */
+function memoizeProbe<T>(
+  fn: () => Promise<T>,
+  ttlMs: number,
+  now: () => number,
+): () => Promise<T> {
+  const entry: CacheEntry<T> = { expiresAt: 0, inflight: undefined, value: undefined }
+  return async () => {
+    const ts = now()
+    if (entry.value !== undefined && ts < entry.expiresAt) {
+      return entry.value
+    }
+    if (entry.inflight !== undefined) {
+      return entry.inflight
+    }
+    entry.inflight = (async () => {
+      try {
+        const v = await fn()
+        entry.value = v
+        entry.expiresAt = now() + ttlMs
+        return v
+      } finally {
+        entry.inflight = undefined
+      }
+    })()
+    return entry.inflight
+  }
+}
+
 const healthPluginAsync: FastifyPluginAsync = async (app: FastifyInstance) => {
   const gate = createReadinessGate()
   app.decorate('readinessGate', gate)
+
+  // Spec 011 §7.2 — each probe is memoized for PROBE_CACHE_TTL_MS so the
+  // cluster's polling load on Postgres/Redis stays bounded.
+  const cachedProbeDb = memoizeProbe(() => probeDb(app), PROBE_CACHE_TTL_MS, Date.now)
+  const cachedProbeCache = memoizeProbe(
+    () => probeCache(app),
+    PROBE_CACHE_TTL_MS,
+    Date.now,
+  )
 
   // Spec 011 §11.3 — child logger tagged module=health. Only state
   // transitions emit log lines (no per-probe spam).
@@ -93,7 +146,7 @@ const healthPluginAsync: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.get('/health/ready', async (_req, reply) => {
     // Even if a dep probe blows up, do not throw — readiness must always
     // return a structured 200/503 body (spec 011 §5.1).
-    const [db, cache] = await Promise.all([probeDb(app), probeCache(app)])
+    const [db, cache] = await Promise.all([cachedProbeDb(), cachedProbeCache()])
     const components: ComponentResults = { db, cache }
     const out = aggregateReadiness({
       shuttingDown: gate.isShuttingDown(),
