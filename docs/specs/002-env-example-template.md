@@ -3,11 +3,11 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.2 |
+| 版本 | 0.3 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/.env.example` |
-| 相關 spec | `001-environment-config.md`(v0.2) |
-| 相關 ADR | `docs/decisions/002-backend-framework.md`、`docs/decisions/003-database-postgresql.md` |
+| 相關 spec | `001-environment-config.md`(v0.3) |
+| 相關 ADR | `docs/decisions/002-backend-framework.md`、`docs/decisions/003-database-postgresql.md`、`docs/decisions/004-auth-token-strategy.md` |
 
 ---
 
@@ -58,28 +58,28 @@ KEY=default-value-for-dev
 
 ## 3. 當前狀態 vs 目標狀態
 
-### 3.1 當前 `.env.example`(commit `1a492a6`)
+### 3.1 當前 `.env.example`(commit `caa7b3d`)
 
 | Section | Keys |
 |---|---|
-| Server | `PORT`, `HOST`, `LOG_LEVEL` |
-| Database | `DATABASE_URL` |
-| JWT | `JWT_SECRET` |
-| Google OAuth | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL` |
+| Server | `NODE_ENV`, `PORT`, `HOST`, `LOG_LEVEL` |
+| Database | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` / `DB_SCHEMA` / `DB_SSL_MODE` / `DB_CONNECTION_LIMIT` / `DB_POOL_TIMEOUT` / 衍生 `DATABASE_URL` |
+| JWT | `JWT_SECRET`、`JWT_EXPIRES_IN` |
+| Google OAuth | `GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET`、`GOOGLE_CALLBACK_URL` |
 | Redis | `REDIS_URL` |
+| CORS | `CORS_ORIGIN` |
 
-### 3.2 缺漏 key / 待替換(對照 spec 001 v0.2)
+### 3.2 對照 spec 001 v0.3 的差距
 
-| 動作 | Key | Section | 來源 spec | 理由 |
-|---|---|---|---|---|
-| 新增 | `NODE_ENV` | Server | §3.1 | 必填,影響日誌格式與錯誤回應細節 |
-| 新增 | `JWT_EXPIRES_IN` | JWT | §3.4 | 非必填,寫出有助新人理解 token 生命期 |
-| 新增 | `CORS_ORIGIN` | CORS(新區塊) | §3.6 | 必填,backend 只接受 BFF origin |
-| **替換** | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` / `DB_SCHEMA` / `DB_SSL_MODE` / `DB_CONNECTION_LIMIT` / `DB_POOL_TIMEOUT` + 衍生 `DATABASE_URL` | Database | §3.2(v0.2 拆分) | DB 改為多參數,`DATABASE_URL` 經 dotenv-expand 組合 |
+| 動作 | Key(s) | Section | 來源 spec |
+|---|---|---|---|
+| **替換** | `JWT_SECRET` / `JWT_EXPIRES_IN` → `JWT_ACCESS_SECRET` / `JWT_ACCESS_EXPIRES_IN` / `JWT_REFRESH_SECRET` / `JWT_REFRESH_EXPIRES_IN` / `JWT_ISSUER` / `JWT_AUDIENCE` | JWT | spec 001 §3.4(ADR 004 落實) |
+| 新增 | `OIDC_DISCOVERY_URL` | Google OAuth | spec 001 §3.5 |
+| 新增(新區塊) | `PASSWORD_HASH_MEMORY_COST` / `PASSWORD_HASH_TIME_COST` / `PASSWORD_HASH_PARALLELISM` / `PASSWORD_MIN_LENGTH` / `LOGIN_LOCK_THRESHOLD` / `LOGIN_LOCK_WINDOW_SEC` | Password(新) | spec 001 §3.6 |
+| 新增(新區塊) | `RATE_LIMIT_GLOBAL_PER_IP_LIMIT` / `RATE_LIMIT_GLOBAL_PER_IP_WINDOW_SEC` / `RATE_LIMIT_DEFAULT_LIMIT` / `RATE_LIMIT_DEFAULT_WINDOW_SEC` / `RATE_LIMIT_FAILURE_MODE` / `RATE_LIMIT_TRUSTED_PROXIES` | Rate Limit(新) | spec 001 §3.7 |
+| 新增 | `CORS_PREFLIGHT_MAX_AGE_SEC` / `HSTS_MAX_AGE_SEC` / `HSTS_INCLUDE_SUBDOMAINS` / `HSTS_PRELOAD` | CORS / Security(擴充) | spec 001 §3.8 |
 
-> 「替換」=移除既有 `DATABASE_URL` 單一字串列,改為新格式。
-
-### 3.3 目標檔案內容(草案 v0.2)
+### 3.3 目標檔案內容(草案 v0.3)
 
 ```bash
 # === Server ===
@@ -98,7 +98,7 @@ LOG_LEVEL=info
 # (which only reads DATABASE_URL) keeps working unchanged.
 #
 # If DB_PASSWORD contains any of @ : / ? # it MUST be
-# percent-encoded here (e.g. "@" → "%40"). In stage/prod the
+# percent-encoded here (e.g. "@" -> "%40"). In stage/prod the
 # composeDatabaseUrl helper handles encoding automatically.
 
 DB_HOST=localhost
@@ -115,33 +115,81 @@ DB_POOL_TIMEOUT=
 
 DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=${DB_SCHEMA}"
 
-# === JWT ===
+# === JWT (access + refresh per ADR 004) ===
+#
+# Both secrets MUST be at least 32 characters AND differ from
+# each other. Rotate per environment.
 
-# Must be >= 32 characters; rotate per environment
-JWT_SECRET="please-change-me-to-a-long-random-string"
-# Access token lifetime, accepts ms / @fastify/jwt format (optional)
-JWT_EXPIRES_IN=7d
+JWT_ACCESS_SECRET="please-change-me-to-a-long-random-access-secret"
+JWT_ACCESS_EXPIRES_IN=3h
+JWT_REFRESH_SECRET="please-change-me-to-a-different-long-refresh-secret"
+JWT_REFRESH_EXPIRES_IN=30d
+# JWT issuer/audience for iss/aud claims
+JWT_ISSUER="http://localhost:3001"
+# Optional: defaults to JWT_ISSUER when empty
+JWT_AUDIENCE=
 
-# === Google OAuth 2.0 ===
+# === Google OAuth 2.0 / OIDC ===
 
 GOOGLE_CLIENT_ID=""
 GOOGLE_CLIENT_SECRET=""
-# Must match the redirect URI registered in Google Cloud Console
-GOOGLE_CALLBACK_URL="http://localhost:3001/auth/google/callback"
+# Must match the redirect URI registered in Google Cloud Console.
+# Note: per spec 007 §2.4 the callback is hosted by the BFF,
+# not by the backend. Backend forwards it to Google during
+# the token exchange step.
+GOOGLE_CALLBACK_URL="http://localhost:3000/api/auth/google/callback"
+# Rarely needs changing
+OIDC_DISCOVERY_URL="https://accounts.google.com/.well-known/openid-configuration"
+
+# === Password (Argon2id, spec 008) ===
+#
+# Defaults follow OWASP 2025 baseline. Increase memory_cost
+# first if hashing is too fast on your hardware; tune time_cost
+# second. Login re-hashes existing accounts silently when these
+# values change (spec 008 §3.1).
+
+PASSWORD_HASH_MEMORY_COST=19456
+PASSWORD_HASH_TIME_COST=2
+PASSWORD_HASH_PARALLELISM=1
+PASSWORD_MIN_LENGTH=8
+
+# Login lockout
+LOGIN_LOCK_THRESHOLD=10
+LOGIN_LOCK_WINDOW_SEC=900
 
 # === Redis ===
 
 REDIS_URL="redis://localhost:6379"
 
-# === CORS ===
+# === Rate Limit (spec 010) ===
+
+RATE_LIMIT_GLOBAL_PER_IP_LIMIT=600
+RATE_LIMIT_GLOBAL_PER_IP_WINDOW_SEC=60
+RATE_LIMIT_DEFAULT_LIMIT=120
+RATE_LIMIT_DEFAULT_WINDOW_SEC=60
+# 'closed' (recommended) | 'open' — behaviour when Redis is unreachable
+RATE_LIMIT_FAILURE_MODE=closed
+# Comma-separated IPs/CIDRs of trusted BFF / load balancer.
+# REQUIRED in staging/production — empty there fails fast at
+# startup (per spec 001 §4.4 cross-field validation) to prevent
+# X-Forwarded-For spoofing.
+RATE_LIMIT_TRUSTED_PROXIES=
+
+# === CORS / Security Headers (spec 012) ===
 
 # Comma-separated list of allowed BFF origins (no wildcards in prod)
 CORS_ORIGIN="http://localhost:3000"
+CORS_PREFLIGHT_MAX_AGE_SEC=600
+
+# HSTS (max-age = 365 days). Preload disabled by default; only
+# enable after domain has been live on HTTPS for ~1 month.
+HSTS_MAX_AGE_SEC=31536000
+HSTS_INCLUDE_SUBDOMAINS=true
+HSTS_PRELOAD=false
 ```
 
 > 此草案經 review 通過後,作為實作目標。
 > 註:`DB_*` 為 authoritative,`DATABASE_URL` 為 dotenv-expand 衍生;順序刻意把派生值放在被引用變數之後,確保展開正確。
-> JWT 區塊待 ADR 004(access + refresh 雙 token)落地後再拆,本版暫保留單一 `JWT_SECRET` / `JWT_EXPIRES_IN`。
 
 ---
 
@@ -217,3 +265,4 @@ PR review 時,reviewer 須確認:
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版;定義格式、列出當前缺漏(`NODE_ENV` / `JWT_EXPIRES_IN` / `CORS_ORIGIN`)、提供目標草案 |
 | 0.2 | 2026-06-13 | 同步 spec 001 v0.2:Database 區塊改為 `DB_*` 9 個拆分參數 + dotenv-expand 衍生 `DATABASE_URL`;備註特殊字元 percent-encoding 規則 |
+| 0.3 | 2026-06-13 | 同步 spec 001 v0.3:JWT 拆 access + refresh(ADR 004);新增 OIDC discovery;新增 Password / Login lock 區塊(Argon2);新增 Rate Limit 區塊(`RATE_LIMIT_TRUSTED_PROXIES` 提醒 prod 必填);CORS 擴充 HSTS;§3.1 反映當前實際 `.env.example` 狀態(commit `caa7b3d`);§3.2 改為「差距對照」表;§3.3 草案完整重寫 |
