@@ -1,13 +1,13 @@
-# Spec 007:Auth Flow(Google OAuth 2.0 + OIDC)
+# Spec 007:Auth Flow — Identity 模型 + Google OAuth 2.0 / OIDC
 
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.1 |
+| 版本 | 0.2 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/src/routes/auth/*`、`backend/src/lib/auth/*` |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`(BFF 邊界)、`docs/decisions/004-auth-token-strategy.md`(access + refresh) |
-| 相關 spec | `001-environment-config.md`、`004-logger-module.md`、`005-error-handling.md`、`006-redis-module.md`(`auth` tier) |
+| 相關 spec | `001-environment-config.md`、`004-logger-module.md`、`005-error-handling.md`、`006-redis-module.md`(`auth` tier)、`008-auth-flow-password.md`(帳號密碼登入,共用本檔 §10 身分模型) |
 
 ---
 
@@ -15,18 +15,21 @@
 
 ### 1.1 目的
 
-定義 backend 的使用者驗證流程,涵蓋:
+定義 backend 的使用者驗證基礎與 Google OIDC 登入流程,涵蓋:
 
+- **Identity 模型**:Account ↔ Credential 抽象,供 Google 與帳密(spec 008)共用
 - 使用 **Google OAuth 2.0 + OIDC** 取得使用者身分
 - **Authorization Code with PKCE** 防範授權碼攔截
 - **state / nonce** 防範 CSRF 與 replay
-- 驗證 Google **ID Token** 並對應至本服務的 user account
+- 驗證 Google **ID Token** 並對應至 Account
 - 落實 ADR 004 的雙 token 策略(access 3h + refresh 30d)、rotation、replay detection
 - 登出與全裝置登出
+- **手動連結**(已登入者將 Google 加為額外 credential)
 
 ### 1.2 In scope
 
-- Google as the only IdP(OIDC discovery、JWKS、ID Token 驗證)
+- Identity 模型(本檔 §10),供本檔與 spec 008 共用
+- Google as IdP(OIDC discovery、JWKS、ID Token 驗證)
 - Backend 對外端點(BFF → backend 的 JSON API)
 - OAuth session 短暫狀態管理(Redis `auth` tier)
 - Token 發放、refresh、撤銷
@@ -34,13 +37,13 @@
 
 ### 1.3 Out of scope(後續或不做)
 
-- 其他 provider(Facebook、Apple、GitHub) — 目前無需求
-- 帳號 / 密碼登入 — 不支援
+- 其他 OAuth provider(Facebook、Apple、GitHub) — 目前無需求,但 §10 識別模型已預留擴充
+- 帳號密碼登入細節 — 由 **spec 008** 處理(共用 §10 身分模型)
+- **Email 驗證流程** — 本期不做。Google 端的 `email_verified` 仍須為 true(§13.5);帳密註冊不寄驗證信
+- **自動 account linking** — 不做。Google sign-in 若 email 已被其他 account 佔用,回 409 要求使用者手動連結(§10.5)
 - 多因素(MFA / TOTP) — 後續評估
-- 帳號合併 / 變更 IdP — 後續評估
 - BFF 內部 session cookie 細節 — 由前端 spec 處理
 - 細粒度權限 / RBAC — 後續業務 spec
-- Account linking(同 email 不同 provider 合併) — 不支援(暫鎖一個 provider per user)
 
 ---
 
@@ -193,7 +196,7 @@ Backend 處理(若任一步失敗,見 §12):
 5. 取回 `id_token`(以及 `access_token` / `expires_in` / 可能 `refresh_token`——後兩者丟棄)
 6. 驗證 `id_token`(§8)
 7. 取得 `sub` / `email` / `email_verified`
-8. Upsert user account(§10)
+8. 對應 Account(§10.3):查 GoogleCredential → 有則登入;無則檢查 email 是否被佔用,被佔用 → 409;否則建立 Account + GoogleCredential
 9. 簽發自家 access + refresh(§11)
 10. 將 refresh 存 Redis `auth` tier(§11.3、spec 006 §15.1)
 11. 回應:
@@ -314,19 +317,21 @@ Backend:
 
 | 項目 | 內容 |
 |---|---|
-| 認證 | 不需要 |
-| Body | `{ "returnTo"?: string }` |
+| 認證 | 不需要(`intent=login`,預設);`intent=link` 時必須帶 `Authorization: Bearer <access-jwt>` |
+| Query | `?intent=login` 或 `?intent=link`(預設 `login`) |
+| Body | `{ "returnTo"?: string }`(僅 `login`) |
 | 200 Response | `{ "sid": "<uuid>", "authUrl": "<google url>" }` |
-| Errors | 500 (`INTERNAL_ERROR`) |
+| Errors | 401 (`UNAUTHORIZED`,僅 `link`)、500 (`INTERNAL_ERROR`) |
 
 ### 7.2 `POST /auth/google/exchange`
 
 | 項目 | 內容 |
 |---|---|
-| 認證 | 不需要 |
+| 認證 | 不需要(預設,`login` intent);`link` intent 時 sid 對應的 session 內已綁定 accountId,exchange 仍需 `Authorization: Bearer <access-jwt>` 並驗證 jwt.accountId 與 session.accountId 一致 |
 | Body | `{ "sid": "<uuid>", "code": "<string>", "state": "<string>" }` |
-| 200 Response | `{ accessToken, accessExpiresIn, refreshToken, refreshExpiresIn, tokenType: "Bearer", returnTo? }` |
-| Errors | 401 (`AUTH_OAUTH_SESSION_INVALID`、`AUTH_STATE_MISMATCH`、`AUTH_ID_TOKEN_INVALID`)、400 (`VALIDATION_FAILED`)、502 (`UPSTREAM_FAILURE`)、504 (`UPSTREAM_TIMEOUT`) |
+| 200 Response(`login`) | `{ accessToken, accessExpiresIn, refreshToken, refreshExpiresIn, tokenType: "Bearer", returnTo? }` |
+| 204 Response(`link`) | (no body) — 不換發 token |
+| Errors | 401 (`AUTH_OAUTH_SESSION_INVALID`、`AUTH_STATE_MISMATCH`、`AUTH_ID_TOKEN_INVALID`、`AUTH_EMAIL_UNVERIFIED`)、409 (`AUTH_EMAIL_OWNED_BY_OTHER_ACCOUNT`、`AUTH_GOOGLE_ALREADY_LINKED`、`AUTH_CREDENTIAL_EXISTS`)、400 (`VALIDATION_FAILED`)、502 (`UPSTREAM_FAILURE`)、504 (`UPSTREAM_TIMEOUT`) |
 
 ### 7.3 `POST /auth/refresh`
 
@@ -334,7 +339,7 @@ Backend:
 |---|---|
 | 認證 | `Authorization: Bearer <refresh-jwt>` |
 | Body | (空) |
-| 200 Response | 同 §7.2 |
+| 200 Response | 同 §7.2(login) |
 | Errors | 401 (`AUTH_TOKEN_EXPIRED`、`AUTH_REFRESH_REVOKED`、`AUTH_REFRESH_REPLAY`、`UNAUTHORIZED`) |
 
 ### 7.4 `POST /auth/logout`
@@ -354,6 +359,8 @@ Backend:
 | Body | (空) |
 | 204 Response | (no body) |
 | Errors | 同 §7.4 |
+
+> 帳密相關端點(`/auth/register`、`/auth/login`、`/auth/password/change`) 由 spec 008 定義。
 
 ---
 
@@ -429,35 +436,118 @@ const { payload } = await jwtVerify(idToken, JWKS, {
 
 ---
 
-## 10. User 對應與首次註冊
+## 10. Identity 模型(共用基礎)
 
-### 10.1 識別欄位
+本節定義本服務的身分識別抽象,供本 spec(Google)與 spec 008(帳密)共用。具體欄位與資料表結構由資料模型 spec 擁有,**本節只規範形式**。
 
-- 主鍵:`(provider, externalId)` 唯一,本期 `provider='google'`、`externalId=<google sub>`
-- 次要:`email`(Google 已驗證,但**不**作為主鍵,避免使用者改 email 後失聯)
-- 其他 profile 欄位(`name`、`picture`)依資料模型 spec 決定是否儲存
-
-### 10.2 流程
+### 10.1 兩層結構:Account ↔ Credential
 
 ```
-look up by (provider='google', externalId=sub)
-  found     → return user
-  not found → create user with { provider, externalId, email, ... }
-              log audit event auth_user_created
-              return user
+Account 1 ─────── N Credential
+       │
+       │ id, email (unique), createdAt, ...
+       │
+       └── Credential (one row per authentication method)
+           ├── PasswordCredential   (spec 008):  { accountId, hashedPassword, hashAlgo, updatedAt }
+           └── GoogleCredential     (本 spec):    { accountId, externalId (= google sub), email, linkedAt }
 ```
 
-### 10.3 規則
+- **Account**:服務內的「人」,唯一識別碼是 `id`(UUID)
+- **Credential**:一次認證手段;一個 account 可有 0 或多筆 credential
+- **`Account.email`** 為 unique,作為主要對外識別與帳密登入主鍵
+- **Credential 由 `provider` 區分**(`'google'` / `'password'`),同一 account 同一 provider **最多一筆**(unique constraint on `(accountId, provider)`)
+- **Google `sub`** 全域 unique(unique constraint on `(provider='google', externalId)`),確保同一 Google 帳號不能連結到多個 Account
 
-- **首次登入即等同註冊**,不分流程(無「先註冊再登入」步驟)
-- email 衝突處理:若新使用者的 email 已被其他 `(provider, externalId)` 佔用 → 拒絕,回 409 (`AUTH_EMAIL_TAKEN`),提示使用者已用其他帳號登入
-  - 此規則防範同 email 多 provider 帳號;若日後支援 account linking,改規則
-- **不在本 spec 內**定義 user table 細節,由資料模型 spec 處理
+> 上述名稱僅示範形式;table / column 命名由資料模型 spec 決定。
 
-### 10.4 並發控制
+### 10.2 識別流程通則
 
-- 兩個 request 同時為同一 Google `sub` 註冊 → 用 DB unique constraint 防止重複,失敗側 retry 走 found 分支
-- 不在 Redis lock,因為 DB unique 已足夠
+| 流程 | 對應規則 |
+|---|---|
+| **Google sign-in** | 查 `(provider='google', externalId=sub)`;見 §10.3 |
+| **帳密 sign-in** | 查 `Account.email` 後比對 PasswordCredential(spec 008) |
+| **建立新 account** | 兩種來源(Google 首登 / 帳密註冊)皆走 §10.4 規則,擇一發起 |
+| **手動連結** | 已登入 account 將另一 provider 的 credential 加入;見 §10.6 |
+
+### 10.3 Google sign-in 對應流程
+
+```
+GoogleCred = lookup Credential by (provider='google', externalId=sub)
+
+if GoogleCred exists:
+  return GoogleCred.account                            ← 既有 user 登入
+
+else:
+  if Account exists with email = <google email>:
+    → 409 AUTH_EMAIL_OWNED_BY_OTHER_ACCOUNT            ← 拒絕,提示手動連結(§10.6)
+
+  else:
+    create Account { email: <google email>, ... }
+    create GoogleCredential { accountId, externalId: sub, email: <google email>, linkedAt: now }
+    log audit event 'auth_account_created'
+    return Account                                     ← 首次登入即註冊
+```
+
+### 10.4 建立新 Account 的規則
+
+- 任何來源建立 Account 都必須:
+  - 由 DB unique constraint 保護 `Account.email` 唯一
+  - 在同一 transaction 內建立 Account + 對應 Credential(防止「Account 建好但 Credential 寫失敗」的孤兒)
+  - 寫 audit log `auth_account_created`(內含 `accountId`、`provider`、`reqId`)
+- 並發控制:兩個 request 同時對同一 email / 同一 Google sub 註冊 → 由 DB unique constraint 防止;失敗側可選擇 retry 走 §10.3 found 分支
+
+### 10.5 Account Linking 政策(嚴格手動連結)
+
+本服務**不**自動連結 account。具體規則:
+
+| 情境 | 行為 |
+|---|---|
+| Google sign-in,sub 未連結、email 已被其他 Account 佔用 | **409 `AUTH_EMAIL_OWNED_BY_OTHER_ACCOUNT`**,訊息提示「請以原有方式登入後到設定頁連結 Google」 |
+| 帳密註冊,email 已被其他 Account 佔用(無論該 Account 是 Google-only 或已有密碼) | **409 `AUTH_EMAIL_TAKEN`**(細節見 spec 008) |
+| 已登入 Account 想加 Google 為 credential | 走 §10.6 link 流程 |
+| 已登入 Account 想設定密碼 | 走 spec 008 §「設定密碼」流程 |
+
+理由:
+
+- 自動連結會引入「先佔位」攻擊面(他人用受害者 email 註冊未認證帳號,合法使用者用 Google 登入時被連到攻擊者準備好的 Account)
+- 我們本期**不做 email 驗證**,自動連結更不安全
+- 「需先登入再 link」的 UX 雖然多一步,但安全性最強且實作最簡單
+
+### 10.6 手動連結 Google(已登入)
+
+#### 流程
+
+```
+[client]   POST /auth/google/authorize-init?intent=link
+           Authorization: Bearer <access-jwt>
+[backend]  驗 access JWT,取 accountId
+           產生 sid / state / nonce / code_verifier(同 §4)
+           額外存 { accountId, intent: 'link' } 在 OAuth session 中
+           回 { sid, authUrl }
+
+[client]   完成 Google flow,取得 code
+
+[client]   POST /auth/google/exchange   (Bearer access-jwt 仍需要)
+           body { sid, code, state }
+[backend]  驗 access JWT、驗 sid/state、交換 code、驗 ID token(同 §4 / §8)
+           比對 session.accountId === jwt.accountId(防 token swap)
+           檢查:
+             - 該 Google sub 是否已連結至其他 Account → 409 AUTH_GOOGLE_ALREADY_LINKED
+             - 當前 Account 是否已有 google credential → 409 AUTH_CREDENTIAL_EXISTS
+           建立 GoogleCredential { accountId, externalId: sub, email, linkedAt: now }
+           log audit event 'auth_account_linked'
+           回 204
+```
+
+#### 規則
+
+- **必須是已登入 session**(`Authorization: Bearer <access-jwt>` 必填);未登入呼叫 link 流程 → 401
+- 不換發 token(已經在登入狀態,credential 變動不影響當前 session)
+- Unlink(解除連結)目前**不提供**;若使用者誤連結需聯絡支援(後續再評估自助 unlink 流程)
+
+### 10.7 與資料模型 spec 的職責邊界
+
+本 §10 描述**形式**(兩層結構 + unique constraint 部位 + 識別流程);**實際**的 column 名、type、index 設計、soft-delete 政策、外鍵 ON DELETE 行為,由資料模型 spec 擁有。本 spec 與 spec 008 引用本節的形式描述。
 
 ---
 
@@ -536,7 +626,10 @@ jkod:auth:blacklist:{jti}          STRING "1"
 | Google `/token` 5xx / timeout | 502 / 504 | `UPSTREAM_FAILURE` / `UPSTREAM_TIMEOUT` | "Identity provider unavailable" |
 | ID Token 簽章 / iss / aud / exp / nonce 失敗 | 401 | `AUTH_ID_TOKEN_INVALID` | "Identity token invalid" |
 | `email_verified !== true` | 401 | `AUTH_EMAIL_UNVERIFIED` | "Email is not verified" |
-| email 已被佔用(其他 user) | 409 | `AUTH_EMAIL_TAKEN` | "Email already in use by another account" |
+| Login intent:Google email 已被其他 Account 佔用(無對應 GoogleCredential) | 409 | `AUTH_EMAIL_OWNED_BY_OTHER_ACCOUNT` | "Email belongs to another account. Sign in with that account first, then link Google in settings." |
+| Link intent:Google sub 已被連結到其他 Account | 409 | `AUTH_GOOGLE_ALREADY_LINKED` | "This Google account is already linked elsewhere" |
+| Link intent:當前 Account 已有 Google credential | 409 | `AUTH_CREDENTIAL_EXISTS` | "Google is already linked to this account" |
+| Link intent:JWT accountId 與 session.accountId 不符 | 401 | `AUTH_LINK_SESSION_MISMATCH` | "Link session mismatch" |
 | Refresh token 簽章 / 過期 | 401 | `AUTH_TOKEN_EXPIRED` / `UNAUTHORIZED` | "Token expired" / "Unauthorized" |
 | Refresh token 已撤銷 | 401 | `AUTH_REFRESH_REVOKED` | "Refresh token revoked" |
 | Refresh token replay | 401 | `AUTH_REFRESH_REPLAY` | "Refresh token reuse detected; please sign in again" |
@@ -630,8 +723,13 @@ jkod:auth:blacklist:{jti}          STRING "1"
 | event | 觸發點 | level | audit |
 |---|---|---|---|
 | `auth_authorize_init` | `/authorize-init` 成功 | info | — |
-| `auth_exchange_success` | `/exchange` 完成、token 簽發 | info | ✅ |
-| `auth_user_created` | 首次登入新建 user account | info | ✅ |
+| `auth_exchange_success` | `/exchange` 登入完成、token 簽發 | info | ✅ |
+| `auth_account_created` | 任一來源建立新 Account(Google 首登 / 帳密註冊) | info | ✅ |
+| `auth_account_linked` | 已登入者新增 credential(本 spec 為 Google) | info | ✅ |
+| `auth_email_owned_by_other_account` | Google sign-in 時 email 已被佔用,擋 409 | warn | ✅ |
+| `auth_google_already_linked` | Link intent 時 Google sub 已連結到其他 Account | warn | ✅ |
+| `auth_credential_exists` | Link intent 時當前 Account 已有 google credential | warn | — |
+| `auth_link_session_mismatch` | Link intent 時 JWT 與 session 的 accountId 不一致 | warn | ✅ |
 | `auth_refresh_success` | refresh rotation 完成 | info | — |
 | `auth_refresh_replay` | 偵測到 refresh replay | warn | ✅ |
 | `auth_logout` | 單 session 登出 | info | ✅ |
@@ -641,6 +739,8 @@ jkod:auth:blacklist:{jti}          STRING "1"
 | `auth_id_token_invalid` | ID token 驗證失敗 | warn | — |
 | `auth_email_unverified` | Google 回傳 email_verified=false | warn | — |
 | `auth_upstream_failure` | Google `/token` 5xx | error | — |
+
+> 帳密相關 event(`auth_login_password_*` / `auth_register_password` 等)由 spec 008 擁有。
 
 ### 15.2 規則
 
@@ -679,12 +779,13 @@ jkod:auth:blacklist:{jti}          STRING "1"
 
 ## 17. 開放問題
 
-- **JWT `kid` 與多 secret rotation**:目前 access / refresh 各一把 secret;若日後做 secret rotation,需在 JWT 加 `kid` 並維護新舊 secret window。先記，不做
+- **JWT `kid` 與多 secret rotation**:目前 access / refresh 各一把 secret;若日後做 secret rotation,需在 JWT 加 `kid` 並維護新舊 secret window。先記,不做
 - **`access_type=offline` 取 Google refresh token**:目前不需要(§3.4);若日後要做「以使用者身分呼叫 Google API」再評估
-- **Account linking**(同 email 不同 provider 合併):目前直接 409;若日後支援其他 provider,需設計合併流程
+- **Unlink Google credential**:目前手動連結後不提供自助 unlink;誤連結需聯絡支援。若 UX 反饋強烈,再加 `DELETE /auth/google/link`(要求重新驗證密碼或 OIDC 確認後才放行,避免帳號丟失)
 - **行動 App / SPA 直連 backend**(無 BFF):本 spec 假設一定有 BFF。若行動端要直連,PKCE 流程一致,但 client_secret 變成 public client,需另外規劃
 - **Logout 同步登出 Google**(OIDC RP-initiated logout):本 spec 不做(§6.3);若 UX 反饋需要,再評估
 - **JWT 改 RS256 並對外揭露 JWKS**:本 spec 用 HS256(內部驗證即可);若日後 BFF / 行動端要自驗 token,改 RS256 並提供 `/.well-known/jwks.json`
+- **Email 驗證**:本期不做;若引入,需新增寄信模組、驗證 token store(Redis `auth` tier 已預留)、Account.emailVerified 旗標、未驗證帳號的存取限制策略
 
 ---
 
@@ -693,3 +794,4 @@ jkod:auth:blacklist:{jti}          STRING "1"
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
+| 0.2 | 2026-06-13 | 引入 Account ↔ Credential identity 模型(§10),供 spec 008(帳密)共用;Google sign-in 邏輯改為查 GoogleCredential,email 衝突走嚴格手動連結(無自動連結);新增 §10.5 連結政策、§10.6 手動連結 Google 流程(`intent=link`);§7 端點規格擴充 intent 區分;§12 新增 4 個錯誤碼(`AUTH_EMAIL_OWNED_BY_OTHER_ACCOUNT` / `AUTH_GOOGLE_ALREADY_LINKED` / `AUTH_CREDENTIAL_EXISTS` / `AUTH_LINK_SESSION_MISMATCH`);§15 新增 6 個 event;§17 更新開放問題(account linking 變成 unlink、email 驗證留作未來);移除「帳密不支援」「account linking 不支援」字眼(已分別由 spec 008 與 §10.6 涵蓋) |
