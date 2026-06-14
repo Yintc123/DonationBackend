@@ -10,7 +10,20 @@ import { PrismaClient } from '@prisma/client'
 import { Redis } from 'ioredis'
 import { afterAll, beforeEach, inject } from 'vitest'
 
-const TRUNCATE_TABLES = ['google_credentials', 'password_credentials', 'accounts']
+// FK-safe order is enforced by RESTART IDENTITY CASCADE below — list order
+// here is just for readability.
+const TRUNCATE_TABLES = [
+  // Auth domain (spec 007 / 008)
+  'google_credentials',
+  'password_credentials',
+  'accounts',
+  // Donation domain (spec 015 v0.9)
+  'sale_items',
+  'donation_projects',
+  'charity_categories',
+  'charities',
+  'categories',
+]
 
 let prisma: PrismaClient | undefined
 

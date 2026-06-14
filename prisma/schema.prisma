@@ -59,3 +59,166 @@ model GoogleCredential {
 
   @@map("google_credentials")
 }
+
+// =============================================================================
+// Spec 015 v0.9 — Donation domain
+//
+// Charity (主表) 1 ── N DonationProject  (FK NOT NULL, onDelete: Restrict)
+//                1 ── N SaleItem         (FK NOT NULL, onDelete: Restrict)
+//                M ── N Category         (透過 CharityOnCategory join,Charity Cascade / Category Restrict)
+//
+// Lifecycle 欄位由 backend ADR 006 統一定錨:
+//   displayOrder / archivedAt / deletedAt / publishStartAt / publishEndAt
+// 三主 entity 都有;Category 只有 archivedAt / deletedAt;CharityOnCategory 無。
+// 公開 list / detail query 必須走 service-layer `whereLive(now)` helper,
+// Project / SaleItem 額外 cascade parent Charity 的 whereLive(子表自動隨
+// 合作合約過期而消失,續約自動恢復)。
+//
+// 多語系:中文主語 NOT NULL,英文 suffix columns nullable(ADR 004)。
+// 圖片:DB 存 S3 key,API 層用 `objectUrl(key)` 拼 URL(spec 018)。
+// =============================================================================
+
+model Charity {
+  id              String   @id @default(uuid())
+  // 多語系欄位(ADR 004 — Pattern A suffix columns)
+  name            String   @db.VarChar(120)
+  description     String   @db.VarChar(500)
+  nameEn          String?  @db.VarChar(120)
+  descriptionEn   String?  @db.VarChar(500)
+  // 圖片(spec 018 §5.1 key pattern;API 層 objectUrl() 拼 URL)
+  logoKey         String?  @db.VarChar(512)
+  // 補件揭露欄位(IMG_4876)
+  contactPhone    String?  @db.VarChar(40)
+  contactEmail    String?  @db.VarChar(254)
+  officialWebsite String?  @db.VarChar(2048)
+  approvalNo      String?  @db.VarChar(80)
+  // Lifecycle 欄位(ADR 006)
+  displayOrder    Int      @default(0)
+  archivedAt      DateTime?
+  deletedAt       DateTime?
+  publishStartAt  DateTime?
+  publishEndAt    DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  donationProjects DonationProject[]
+  saleItems        SaleItem[]
+  categories       CharityOnCategory[]
+
+  // Public list 主路徑(whereLive 通過後 ORDER BY displayOrder, createdAt, id)
+  @@index([displayOrder, createdAt(sort: Desc), id(sort: Desc)])
+  // 排程下架 sweep / 過期 query
+  @@index([publishEndAt])
+  // Admin 全量(允許看 archived / deleted)
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@map("charities")
+}
+
+model DonationProject {
+  id                  String   @id @default(uuid())
+  charityId           String
+  // 多語系欄位
+  name                String   @db.VarChar(120)
+  description         String   @db.VarChar(500)
+  nameEn              String?  @db.VarChar(120)
+  descriptionEn       String?  @db.VarChar(500)
+  // 圖片
+  logoKey             String?  @db.VarChar(512)
+  coverImageKey       String?  @db.VarChar(512)
+  // 詳情頁長文 + 字號
+  content             String   @db.Text
+  contentEn           String?  @db.Text
+  raisingApprovalNo   String?  @db.VarChar(80)
+  reliefApprovalNo    String?  @db.VarChar(80)
+  // Lifecycle
+  displayOrder        Int      @default(0)
+  archivedAt          DateTime?
+  deletedAt           DateTime?
+  publishStartAt      DateTime?
+  publishEndAt        DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  charity Charity @relation(fields: [charityId], references: [id], onDelete: Restrict)
+
+  // FK lookup(`include: { charity: true }` 用)
+  @@index([charityId])
+  // Public list 主路徑(whereLive + parent whereLive 後排序)
+  @@index([charityId, displayOrder, createdAt(sort: Desc), id(sort: Desc)])
+  // 排程下架 sweep
+  @@index([publishEndAt])
+  // Admin 全量
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@map("donation_projects")
+}
+
+model SaleItem {
+  id                  String   @id @default(uuid())
+  charityId           String
+  // 多語系欄位
+  name                String   @db.VarChar(120)
+  description         String   @db.VarChar(500)
+  nameEn              String?  @db.VarChar(120)
+  descriptionEn       String?  @db.VarChar(500)
+  // 圖片
+  logoKey             String?  @db.VarChar(512)
+  coverImageKey       String?  @db.VarChar(512)
+  // 義賣商品專屬
+  priceTwd            Int
+  content             String   @db.Text
+  contentEn           String?  @db.Text
+  raisingApprovalNo   String?  @db.VarChar(80)
+  reliefApprovalNo    String?  @db.VarChar(80)
+  // Lifecycle
+  displayOrder        Int      @default(0)
+  archivedAt          DateTime?
+  deletedAt           DateTime?
+  publishStartAt      DateTime?
+  publishEndAt        DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  charity Charity @relation(fields: [charityId], references: [id], onDelete: Restrict)
+
+  @@index([charityId])
+  @@index([charityId, displayOrder, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([publishEndAt])
+  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@map("sale_items")
+}
+
+// 分類字典表(spec 015 §7.1 16 筆固定;不加 publish 時間 — 字典表無合作期限)
+model Category {
+  id             String   @id @default(uuid())
+  key            String   @unique @db.VarChar(40)
+  displayName    String   @db.VarChar(80)
+  displayNameEn  String?  @db.VarChar(80)
+  displayOrder   Int      @default(0)
+  archivedAt     DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  charities CharityOnCategory[]
+
+  @@index([displayOrder])
+  @@map("categories")
+}
+
+// Charity ↔ Category 的 M:N join 表
+// onDelete 不對稱:
+//   - charityId → charities Cascade(Charity 刪除時 join 列無意義,自動清掉)
+//   - categoryId → categories Restrict(字典項被使用中不能直接刪,強制管理員先解除掛載)
+// 不加 lifecycle 欄位 — 刪 join 列即 unassign,真要 audit 另開 table
+model CharityOnCategory {
+  charityId  String
+  categoryId String
+  assignedAt DateTime @default(now())
+
+  charity  Charity  @relation(fields: [charityId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@id([charityId, categoryId])
+  @@index([categoryId])
+  @@map("charity_categories")
+}

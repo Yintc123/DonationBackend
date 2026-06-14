@@ -27,6 +27,10 @@ import { parseTrustedProxies, rateLimitPlugin } from './lib/rate-limit/index.js'
 import { redisPlugin } from './lib/redis/index.js'
 import { s3Plugin } from './lib/s3/index.js'
 import { corsPlugin, helmetPlugin } from './lib/security/index.js'
+import { registerCategoryRoutes } from './routes/v1/donation/categories/index.js'
+import { registerCharityRoutes } from './routes/v1/donation/charities/index.js'
+import { registerDonationProjectRoutes } from './routes/v1/donation/donation-projects/index.js'
+import { registerSaleItemRoutes } from './routes/v1/donation/sale-items/index.js'
 import { registerPresignUploadRoute } from './routes/v1/donation/uploads/presign.js'
 import type { Config } from './config/schema.js'
 
@@ -73,6 +77,11 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(s3Plugin)
   await app.register(healthPlugin)
   await app.register(registerPresignUploadRoute)
+  // Donation public read endpoints (spec 016 / spec 017).
+  await app.register(registerCategoryRoutes)
+  await app.register(registerCharityRoutes)
+  await app.register(registerDonationProjectRoutes)
+  await app.register(registerSaleItemRoutes)
 
   return app
 }
