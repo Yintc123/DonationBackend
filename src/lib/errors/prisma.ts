@@ -16,6 +16,7 @@ import {
   NotFoundError,
   ServiceUnavailableError,
 } from './AppError.js'
+import { ErrorCode } from './codes.js'
 
 export function mapPrismaError(err: unknown): AppError | undefined {
   if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return undefined
@@ -26,7 +27,7 @@ export function mapPrismaError(err: unknown): AppError | undefined {
       const target = err.meta?.target
       return new ConflictError({
         message: 'Unique constraint violated',
-        code: 'UNIQUE_CONSTRAINT',
+        code: ErrorCode.UNIQUE_CONSTRAINT,
         details: target !== undefined ? { fields: target } : undefined,
         cause: err,
       })
@@ -36,7 +37,7 @@ export function mapPrismaError(err: unknown): AppError | undefined {
     case 'P2003':
       return new BadRequestError({
         message: 'Foreign key constraint failed',
-        code: 'FK_CONSTRAINT',
+        code: ErrorCode.FK_CONSTRAINT,
         cause: err,
       })
     case 'P2024':

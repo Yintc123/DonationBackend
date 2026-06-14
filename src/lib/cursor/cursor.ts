@@ -8,7 +8,7 @@
 // data, just a tiebreaker. Tampering at worst skews pagination order, which
 // the client already controls anyway.
 
-import { BadRequestError } from '../errors/index.js'
+import { BadRequestError, ErrorCode } from '../errors/index.js'
 
 export interface CursorPayload {
   lastDisplayOrder: number
@@ -22,7 +22,7 @@ const ISO_8601_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2
 
 function invalid(): never {
   throw new BadRequestError({
-    code: 'PAGINATION_CURSOR_INVALID',
+    code: ErrorCode.PAGINATION_CURSOR_INVALID,
     message: 'pagination cursor is malformed',
   })
 }

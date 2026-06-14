@@ -36,6 +36,20 @@ export const ErrorCode = Object.freeze({
   // Surfaced when Redis is unreachable and the fail-closed policy fires.
   RATE_LIMIT_UNAVAILABLE: 'RATE_LIMIT_UNAVAILABLE',
 
+  // ── §4.2.* pagination (spec 009 §5 / spec 016 §5.1) ───────────────────
+  // Emitted by src/lib/cursor/ when a base64url cursor body fails any
+  // structural check (alphabet, decode, JSON parse, required fields,
+  // type / UUID / ISO-8601 shape).
+  PAGINATION_CURSOR_INVALID: 'PAGINATION_CURSOR_INVALID',
+
+  // ── §4.2.* persistence (spec 003 / mapPrismaError) ────────────────────
+  // Emitted by src/lib/errors/prisma.ts on Prisma known-request errors.
+  // UNIQUE_CONSTRAINT carries the violated columns in details.fields;
+  // FK_CONSTRAINT covers both forward (insert pointing at missing row) and
+  // reverse (delete blocked by Restrict) FK failures.
+  UNIQUE_CONSTRAINT: 'UNIQUE_CONSTRAINT',
+  FK_CONSTRAINT: 'FK_CONSTRAINT',
+
   // ── §4.2.2 auth (spec 008 §9) ──────────────────────────────────────────
   // Owned by spec 008 (email + password).
   AUTH_EMAIL_TAKEN: 'AUTH_EMAIL_TAKEN',
@@ -105,6 +119,9 @@ export const ErrorCodeStatus: Readonly<Record<ErrorCodeValue, number>> = Object.
   [ErrorCode.UPSTREAM_TIMEOUT]: 504,
   [ErrorCode.GATEWAY_TIMEOUT]: 504,
   [ErrorCode.RATE_LIMIT_UNAVAILABLE]: 503,
+  [ErrorCode.PAGINATION_CURSOR_INVALID]: 400,
+  [ErrorCode.UNIQUE_CONSTRAINT]: 409,
+  [ErrorCode.FK_CONSTRAINT]: 400,
   [ErrorCode.AUTH_EMAIL_TAKEN]: 409,
   [ErrorCode.AUTH_INVALID_CREDENTIALS]: 401,
   [ErrorCode.AUTH_ACCOUNT_LOCKED]: 429,

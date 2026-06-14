@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.11 |
+| 版本 | 0.12 |
 | 日期 | 2026-06-14 |
 | 適用範圍 | `backend/src/routes/v1/donation/charities/*`、`backend/src/routes/v1/donation/donation-projects/*`、`backend/src/routes/v1/donation/sale-items/*`、`backend/src/routes/v1/donation/categories/*`、`backend/src/domain/donation-item/*`、`backend/src/domain/category/*`、`backend/src/schemas/donation-item/*`、`backend/src/schemas/category/*` |
 | 相關 ADR | `../../docs/decisions/002-backend-framework.md`(專案級 — Fastify schema-driven)、`../../docs/decisions/007-orm-prisma.md`(專案級)、`../decisions/001-donation-item-relations.md`(backend 級 — `?charityId=` 過濾)、`../decisions/002-charity-category-model.md`(backend 級 — `?category=<key>` 過濾、`/v1/donation/categories` 端點、子表繼承查詢)、`../decisions/004-i18n-storage-model.md`(backend 級 — `Accept-Language` request header + fallback 語意)、`../decisions/006-lifecycle-fields-and-cascading-visibility.md`(backend 級 — **v0.11 起所有 public list query 必須走 `whereLive` + Project / SaleItem cascade parent Charity 的 `whereLive`**)|
@@ -102,7 +102,8 @@ Accept-Language: zh-TW           # 或 en,缺則預設 zh-TW
 | `category` | 否 | — | `CategoryKey`(16 個白名單之一,spec 015 §7.1)| 分類過濾;**用 application-level key 而非 UUID**(backend ADR 002 v0.2 §結果)。Charity 直接 JOIN `charity_categories` + `categories` 拿 key;Project / SaleItem 透過主表 JOIN(§4.6 子表繼承) |
 | `cursor` | 否 | — | opaque base64url 字串 | 由 server 上一頁 `pageInfo.nextCursor` 提供 |
 | `limit` | 否 | `10` | `1` ~ `50` | 每頁筆數;預設 `10` 對齊 brief v0.3「每 tab 一開始抓 10 筆」;spec 009 §5.2 上限 100,本端點再收緊到 50 |
-| `sort` | 否 | `createdAt:desc` | 白名單:`createdAt:desc` / `createdAt:asc` / `name:asc` | 非白名單值 → 400 |
+
+> **v0.12 — 移除 `sort` 參數**:v0.11 §4.5 已凍結排序為 `display_order ASC, created_at DESC, id DESC`(backend ADR 006 §4 強制),route handler 不可覆寫。原 v0.10 之前的 `?sort=createdAt:asc` 等變體**不再支援**。需要排序變化時走 spec + ADR 流程。
 
 `/v1/donation/donation-projects` 與 `/v1/donation/sale-items` 額外可接受:
 
@@ -302,14 +303,14 @@ LIMIT $limit
 
 | Status | code | 觸發 |
 |---|---|---|
-| 400 | `VALIDATION_ERROR` | `q` 超長 / 含禁止字元;`limit` 超出 1~50;`sort` 非白名單;`charityId` 非 uuid |
+| 400 | `VALIDATION_FAILED` | `q` 超長 / 含禁止字元;`limit` 超出 1~50;`charityId` 非 uuid |
 | 400 | `CATEGORY_UNKNOWN` | `category` 不在 16 個白名單內(typo / stale URL / 攻擊)— 由 TypeBox `Type.Union(...literals)` 在 route 層直接擋下,**不**進 service |
 | 400 | `PAGINATION_CURSOR_INVALID` | cursor 解碼失敗 |
 | 404 | `CHARITY_NOT_FOUND` | `GET /v1/donation/charities/:id` |
 | 404 | `DONATION_PROJECT_NOT_FOUND` | `GET /v1/donation/donation-projects/:id` |
 | 404 | `SALE_ITEM_NOT_FOUND` | `GET /v1/donation/sale-items/:id` |
 | 429 | `RATE_LIMITED` | 觸發 §10 限流 |
-| 500 | `INTERNAL` | DB 失敗等 |
+| 500 | `INTERNAL_ERROR` | DB 失敗等 |
 
 ### 5.2 邊界回應
 
@@ -400,7 +401,7 @@ Shape 詳見 spec 017。重點差異(對 list item 而言):
 
 ### 7.3 規則
 
-- `:id` 非 uuid 格式 → 400 `VALIDATION_ERROR`
+- `:id` 非 uuid 格式 → 400 `VALIDATION_FAILED`
 - 不存在 → 404,code 依 entity 對應(§5.1)
 - ETag:`"<sha256(id + updatedAt)前 16 字元>"`,搭配 `Cache-Control: private, max-age=0, must-revalidate`(spec 009 §8)
 - `If-None-Match` 命中 → 304(spec 009 §3.1)
@@ -667,3 +668,4 @@ function buildListService<T>(delegate: PrismaDelegate<T>) { ... }
 | 0.9 | 2026-06-14 | **議題 A 收尾**:filter 參數 `?categoryId=<uuid>` → `?category=<key>`(對齊 brief v0.6 URL sync;backend ADR 002 v0.2)。(1) §4.2 query param 改 `category: CategoryKey`(16 literal union);(2) §4.6 SQL JOIN `categories.key`(unique index);(3) §5.1 新增 `CATEGORY_UNKNOWN` 400 — wildcard typo 直接 reject;(4) §5.2 邊界拆「合法 key 無命中 → 200」與「拼錯 → 400」;(5) §6.3 categories response 標註 `key` 為 filter 用值;(6) §12 schema 用 `Type.Union(literals)` 替換 uuid format;(7) §13 補白名單檢查、拼錯、無命中、子表繼承四條 test;(8) §14 補多選 / 動態化升級觸發 |
 | 0.10 | 2026-06-14 | 圖片改 server 端拼 URL(spec 018 v0.2 / spec 015 v0.8):DB 存 `logoKey` / `coverImageKey`,response 仍維持 `logoUrl` / `coverImageUrl`(完整 URL,由 `objectUrl(key)` 拼)。**response shape 對 client 不變**,僅 service 層多一次 URL builder 呼叫。§2 新增設計原則 7。換 CDN / bucket = 改 env,不必 backfill DB |
 | 0.11 | 2026-06-14 | Entity lifecycle + cascading visibility 落實到 list query(**backend ADR 006 / spec 015 v0.9**):(1) §2 設計原則 8 — 所有公開 list 必須走 `whereLive(now)` helper,Project / SaleItem cascade parent Charity 的 `whereLive`(`whereLiveWithParent`);(2) §4.5 預設排序改 `display_order ASC, created_at DESC, id DESC`,cursor payload 改三段(`lastDisplayOrder` / `lastCreatedAt` / `lastId`);(3) §4.6 三段 SQL 範例補 `whereLive` 四條件,Project / SaleItem SQL 加 JOIN charities + parent whereLive,Category JOIN 也加 `cat.deleted_at IS NULL AND cat.archived_at IS NULL`;(4) cursor 內 `lastId` row 被 soft delete → 不回錯;display_order 被 admin 改動 → 順序可能稍跳,可接受。下游 spec 017 v0.5 同步 |
+| 0.12 | 2026-06-14 | 文件對齊修正(無 contract 改動):(1) §4.2 移除 `sort` 參數 — v0.11 §4.5 已凍結排序為 `display_order ASC, created_at DESC, id DESC`(ADR 006 §4 強制),Query 參數表與 §4.5 規則對齊;(2) §5.1 / §7 `VALIDATION_ERROR` → `VALIDATION_FAILED`(spec 005 §4.2 字典為 code 命名權威,本 spec 過去版本拼成 `_ERROR` 是 drift);(3) §5.1 `INTERNAL` → `INTERNAL_ERROR`(同 spec 005);(4) 程式碼端同時把 `PAGINATION_CURSOR_INVALID` / `UNIQUE_CONSTRAINT` / `FK_CONSTRAINT` 三個原本以 string literal 拋出的 code 註冊進 `src/lib/errors/codes.ts`(spec 005 §4.4 governance) |
