@@ -1,6 +1,6 @@
-name: CI
+name: Pipeline
 
-# CI + CD merged into a single workflow per ADR 010 (revised).
+# Backend CI + CD as a single workflow per ADR 010 (revised).
 #
 # Previous approach used two workflows (ci.yml + deploy.yml) linked via
 # workflow_run, but GitHub's workflow_run event had reliability issues
@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: pipeline-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
