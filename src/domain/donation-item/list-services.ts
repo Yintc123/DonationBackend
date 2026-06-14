@@ -27,6 +27,7 @@ import { pickLocalised } from '../../lib/i18n/index.js'
 import { whereLive, whereLiveWithParent } from '../lifecycle/index.js'
 
 import { cursorWhere, DEFAULT_LIMIT, inflateCategories } from './list-helpers.js'
+import { normalizeQuery } from './normalize-query.js'
 
 type ObjectUrl = (key: string) => string
 
@@ -92,7 +93,8 @@ export async function listCharities(deps: {
   const baseWhere = whereLive(deps.now)
 
   const filters: Record<string, unknown>[] = [baseWhere]
-  if (deps.input.q) filters.push(localeFieldFilter(deps.locale, deps.input.q))
+  const q = normalizeQuery(deps.input.q)
+  if (q) filters.push(localeFieldFilter(deps.locale, q))
   if (deps.input.category) {
     filters.push({
       categories: { some: { category: { key: deps.input.category } } },
@@ -146,7 +148,8 @@ export async function listDonationProjects(deps: {
   const baseWhere = whereLiveWithParent(deps.now)
 
   const filters: Record<string, unknown>[] = [baseWhere]
-  if (deps.input.q) filters.push(localeFieldFilter(deps.locale, deps.input.q))
+  const q = normalizeQuery(deps.input.q)
+  if (q) filters.push(localeFieldFilter(deps.locale, q))
   if (deps.input.charityId) filters.push({ charityId: deps.input.charityId })
   if (deps.input.category) {
     // Inherited from parent charity (spec 015 §7.4 子表繼承).
@@ -213,7 +216,8 @@ export async function listSaleItems(deps: {
   const baseWhere = whereLiveWithParent(deps.now)
 
   const filters: Record<string, unknown>[] = [baseWhere]
-  if (deps.input.q) filters.push(localeFieldFilter(deps.locale, deps.input.q))
+  const q = normalizeQuery(deps.input.q)
+  if (q) filters.push(localeFieldFilter(deps.locale, q))
   if (deps.input.charityId) filters.push({ charityId: deps.input.charityId })
   if (deps.input.category) {
     filters.push({

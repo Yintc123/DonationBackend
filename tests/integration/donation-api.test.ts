@@ -137,6 +137,41 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
     expect(body.items.map((i) => i.name)).toEqual(['流浪動物保護協會'])
   })
 
+  it('q is NFC-normalised before search (spec 016 §4.2 v0.13 — B2)', async () => {
+    // Store the row using the precomposed (NFC) form …
+    await seedCharity({
+      name: '原始中文',
+      nameEn: 'café society',
+      description: '中文描述',
+      descriptionEn: 'a café society description',
+    })
+    // … and search with a client that sent the decomposed (NFD) form.
+    // Without normalisation, ILIKE wouldn't match.
+    const decomposedQ = 'café' // c + a + f + e + COMBINING ACUTE ACCENT
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/donation/charities',
+      query: { q: decomposedQ },
+      headers: { 'accept-language': 'en' },
+    })
+    const body = res.json() as JsonBody
+    expect(body.items).toHaveLength(1)
+    expect(body.items[0]?.name).toBe('café society')
+  })
+
+  it('q with only whitespace is treated as no filter (spec 016 §5.2)', async () => {
+    await seedCharity({ name: 'visible A' })
+    await seedCharity({ name: 'visible B' })
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/donation/charities',
+      query: { q: '   ' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as JsonBody
+    expect(body.items.map((i) => i.name).sort()).toEqual(['visible A', 'visible B'])
+  })
+
   it('Accept-Language: en uses English name+description for both response and search', async () => {
     await seedCharity({
       name: '原始中文',
