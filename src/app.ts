@@ -22,6 +22,7 @@ import { errorHandlerPlugin } from './lib/errors/index.js'
 import { healthPlugin } from './lib/health/index.js'
 import { httpResponsePlugin } from './lib/http/index.js'
 import { createLogger, loggerPolicyPlugin } from './lib/logger/index.js'
+import { openapiPlugin } from './lib/openapi/index.js'
 import { prismaPlugin } from './lib/prisma/index.js'
 import { parseTrustedProxies, rateLimitPlugin } from './lib/rate-limit/index.js'
 import { redisPlugin } from './lib/redis/index.js'
@@ -65,6 +66,10 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(helmetPlugin)
   await app.register(corsPlugin)
   await app.register(httpResponsePlugin)
+  // Spec 016 §12.1 (B5) — OpenAPI / Swagger UI for dev introspection.
+  // Registered BEFORE the routes so it can walk and document them.
+  // No-op in production (the plugin self-skips on NODE_ENV).
+  await app.register(openapiPlugin)
   await app.register(prismaPlugin)
   await app.register(redisPlugin)
   await app.register(rateLimitPlugin)
