@@ -122,7 +122,7 @@ describe('memoizeProbe (spec 011 §7.2 / spec 018 §10.2.1)', () => {
   })
 
   it('coalesces concurrent calls into a single underlying invocation', async () => {
-    let resolveFn: (v: Result) => void = () => {}
+    let resolveFn: ((v: Result) => void) | undefined
     const fn = vi.fn().mockImplementation(
       () =>
         new Promise<Result>((resolve) => {
@@ -133,6 +133,8 @@ describe('memoizeProbe (spec 011 §7.2 / spec 018 §10.2.1)', () => {
     const p1 = probe()
     const p2 = probe()
     const p3 = probe()
+    // fn() ran synchronously inside the inflight async IIFE, so resolveFn is set.
+    if (!resolveFn) throw new Error('resolveFn not captured — memoize broke its async contract')
     resolveFn(ok('shared'))
     await Promise.all([p1, p2, p3])
     expect(fn).toHaveBeenCalledTimes(1)

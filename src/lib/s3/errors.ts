@@ -6,12 +6,8 @@
 
 import { S3ServiceException } from '@aws-sdk/client-s3'
 
-import {
-  AppError,
-  ErrorCode,
-  InternalError,
-  ServiceUnavailableError,
-} from '../errors/index.js'
+import { ErrorCode, InternalError, ServiceUnavailableError } from '../errors/index.js'
+import type { AppError } from '../errors/index.js'
 
 export function mapS3Error(err: unknown): AppError {
   if (err instanceof S3ServiceException) {
