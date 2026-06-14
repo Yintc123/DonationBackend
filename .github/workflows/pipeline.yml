@@ -324,17 +324,26 @@ jobs:
           echo "arn=$TASK_DEF_ARN" >> "$GITHUB_OUTPUT"
 
       # ───────────────────────────────────────────────────────────────────
-      # Run Prisma `migrate deploy` as a one-shot Fargate task BEFORE the
-      # rolling deploy. The task reuses backend's image (prisma CLI is in
-      # production dependencies — see ADR 010 §4) but overrides the
-      # container command to run migrations against the EC2 Postgres over
-      # the VPC private network.
+      # Run Prisma `migrate deploy` + `db seed` as a one-shot Fargate task
+      # BEFORE the rolling deploy. The task reuses backend's image (prisma
+      # + tsx CLIs are in production dependencies — see ADR 010 §4) but
+      # overrides the container command to run migrations + seed against
+      # the EC2 Postgres over the VPC private network.
       #
-      # If migration fails (non-zero exit), the job aborts here and the
-      # ECS service stays on the old task definition. Application code is
-      # never deployed against a DB it hasn't migrated to.
+      # `&&` between the two commands preserves the abort-on-failure
+      # contract from ADR 010 §4: if migrate OR seed exits non-zero, sh
+      # exits non-zero, the wait/describe-tasks step below exits 1, and
+      # UpdateService is skipped. Application code is never deployed
+      # against a DB it hasn't migrated AND repopulated.
+      #
+      # NOTE: the seed wipes/repopulates donation domain tables on every
+      # deploy (deleteMany pattern in prisma/seed.ts). This is intentional
+      # for the interview-demo environment — there's no admin backoffice
+      # creating real charity data that would be lost. Revisit when a
+      # production admin flow lands (move seed out of deploy, run once
+      # via workflow_dispatch).
       # ───────────────────────────────────────────────────────────────────
-      - name: Run Prisma migrate (one-shot ECS task)
+      - name: Run Prisma migrate + seed (one-shot ECS task)
         id: migrate
         env:
           TASK_DEF_ARN: ${{ steps.register.outputs.arn }}
@@ -355,7 +364,7 @@ jobs:
                 "command": [
                   "sh",
                   "-c",
-                  "export DATABASE_URL=\"postgresql://\$DB_USER:\$DB_PASSWORD@\$DB_HOST:\$DB_PORT/\$DB_NAME?schema=\$DB_SCHEMA\" && npx prisma migrate deploy"
+                  "export DATABASE_URL=\"postgresql://\$DB_USER:\$DB_PASSWORD@\$DB_HOST:\$DB_PORT/\$DB_NAME?schema=\$DB_SCHEMA\" && npx prisma migrate deploy && npx prisma db seed"
                 ]
               }
             ]
@@ -403,7 +412,7 @@ jobs:
           echo "Migration stop reason: $REASON"
 
           if [ "$EXIT_CODE" != "0" ]; then
-            echo "::error::Prisma migration failed (exit=$EXIT_CODE, reason=$REASON). See /ecs/jko-backend log group for details."
+            echo "::error::Prisma migrate + seed failed (exit=$EXIT_CODE, reason=$REASON). See /ecs/jko-backend log group for details — note migrate and seed share one exit code, distinguish via log lines (`Applied N migrations` vs `→ seeding 16 categories`)."
             exit 1
           fi
 
