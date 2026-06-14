@@ -18,11 +18,17 @@ describe('healthPlugin (integration, spec 011 §13.2)', () => {
 
   // ── /health/live ────────────────────────────────────────────────────────
 
-  it('GET /health/live → 200 { status: "alive" } (spec 011 §4.1)', async () => {
+  it('GET /health/live → 200 { status: "alive", build } (spec 011 §4.1 + spec 014 §4.2)', async () => {
     app = await buildApp()
     const res = await app.inject({ method: 'GET', url: '/health/live' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ status: 'alive' })
+    const body = res.json() as { status: string; build: { gitSha: string; timestamp: string; version: string } }
+    expect(body.status).toBe('alive')
+    expect(body.build).toEqual({
+      gitSha: expect.any(String),
+      timestamp: expect.any(String),
+      version: expect.any(String),
+    })
   })
 
   it('GET /health/live stays 200 even after the gate is shutDown (spec 011 §9.4)', async () => {
@@ -30,7 +36,7 @@ describe('healthPlugin (integration, spec 011 §13.2)', () => {
     app.readinessGate.shutDown()
     const res = await app.inject({ method: 'GET', url: '/health/live' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ status: 'alive' })
+    expect((res.json() as { status: string }).status).toBe('alive')
   })
 
   it('GET /health/live stays 200 even if Redis PING throws (spec 011 §4.1 / §6.1)', async () => {
@@ -40,8 +46,24 @@ describe('healthPlugin (integration, spec 011 §13.2)', () => {
       Promise.reject(new Error('simulated cache outage'))) as typeof originalPing
     const res = await app.inject({ method: 'GET', url: '/health/live' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ status: 'alive' })
+    expect((res.json() as { status: string }).status).toBe('alive')
     app.redis.ping = originalPing
+  })
+
+  it('GET /health/live build block reflects BUILD_* env when injected (spec 014 §4.2)', async () => {
+    app = await buildApp({
+      BUILD_GIT_SHA: 'deadbeef',
+      BUILD_TIMESTAMP: '2026-06-14T00:00:00Z',
+      BUILD_VERSION: '0.99.0-test',
+    })
+    const res = await app.inject({ method: 'GET', url: '/health/live' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { build: { gitSha: string; timestamp: string; version: string } }
+    expect(body.build).toEqual({
+      gitSha: 'deadbeef',
+      timestamp: '2026-06-14T00:00:00Z',
+      version: '0.99.0-test',
+    })
   })
 
   // ── /health/ready ───────────────────────────────────────────────────────

@@ -33,13 +33,41 @@ export type ComponentResults = Record<ComponentName, ComponentResult>
 
 // ── Liveness ──────────────────────────────────────────────────────────────
 
-export interface LivenessBody {
-  status: 'alive'
+export interface BuildInfo {
+  gitSha: string
+  timestamp: string
+  version: string
 }
 
-/** Spec 011 §4.1 — liveness body. Constant; no inputs. */
-export function buildLivenessBody(): LivenessBody {
-  return { status: 'alive' }
+export interface LivenessBody {
+  status: 'alive'
+  build: BuildInfo
+}
+
+/**
+ * Spec 014 §4.2 — the three image-build identifiers are injected at
+ * `docker build` time and surfaced here so ops can verify which commit /
+ * tag a running pod is on without shelling in or reading deploy logs.
+ *
+ * Defaults to `'unknown'` when an env var is missing — covers `npm run dev`
+ * locally and any test that boots the app without docker-build metadata.
+ */
+export function buildBuildInfo(env: NodeJS.ProcessEnv = process.env): BuildInfo {
+  return {
+    gitSha: env.BUILD_GIT_SHA ?? 'unknown',
+    timestamp: env.BUILD_TIMESTAMP ?? 'unknown',
+    version: env.BUILD_VERSION ?? 'unknown',
+  }
+}
+
+/**
+ * Spec 011 §4.1 — liveness body.
+ *
+ * The `build` block was added per spec 014 §4.2 so the response doubles as
+ * "what's running here?" introspection.
+ */
+export function buildLivenessBody(build: BuildInfo = buildBuildInfo()): LivenessBody {
+  return { status: 'alive', build }
 }
 
 // ── Readiness ─────────────────────────────────────────────────────────────

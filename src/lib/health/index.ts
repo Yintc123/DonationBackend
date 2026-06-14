@@ -11,12 +11,15 @@ export { healthPlugin } from './plugin.js'
 export { createReadinessGate, type ReadinessGate } from './gate.js'
 export {
   aggregateReadiness,
+  buildBuildInfo,
   buildLivenessBody,
   buildStartupBody,
   memoizeProbe,
   runWithTimeout,
+  type BuildInfo,
   type ComponentName,
   type ComponentResult,
   type ComponentResults,
+  type LivenessBody,
   type ProbeStatus,
 } from './probes.js'

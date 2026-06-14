@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   aggregateReadiness,
+  buildBuildInfo,
   buildLivenessBody,
   buildStartupBody,
   memoizeProbe,
@@ -70,8 +71,42 @@ describe('aggregateReadiness (spec 011 §4.2 / §5)', () => {
 })
 
 describe('buildLivenessBody (spec 011 §4.1)', () => {
-  it('returns the canonical alive body', () => {
-    expect(buildLivenessBody()).toEqual({ status: 'alive' })
+  it('returns status=alive plus a build block (spec 014 §4.2)', () => {
+    expect(buildLivenessBody({ gitSha: 'abc', timestamp: 't', version: 'v' })).toEqual({
+      status: 'alive',
+      build: { gitSha: 'abc', timestamp: 't', version: 'v' },
+    })
+  })
+
+  it('reads BUILD_* env defaults to "unknown" when the env var is missing', () => {
+    expect(buildLivenessBody(undefined).build).toEqual({
+      gitSha: expect.any(String),
+      timestamp: expect.any(String),
+      version: expect.any(String),
+    })
+  })
+})
+
+describe('buildBuildInfo (spec 014 §4.2)', () => {
+  it('maps BUILD_GIT_SHA / BUILD_TIMESTAMP / BUILD_VERSION env to camelCase', () => {
+    const info = buildBuildInfo({
+      BUILD_GIT_SHA: 'deadbeef',
+      BUILD_TIMESTAMP: '2026-06-14T00:00:00Z',
+      BUILD_VERSION: '0.1.0',
+    } as NodeJS.ProcessEnv)
+    expect(info).toEqual({
+      gitSha: 'deadbeef',
+      timestamp: '2026-06-14T00:00:00Z',
+      version: '0.1.0',
+    })
+  })
+
+  it('defaults each field to "unknown" when its env var is missing', () => {
+    expect(buildBuildInfo({} as NodeJS.ProcessEnv)).toEqual({
+      gitSha: 'unknown',
+      timestamp: 'unknown',
+      version: 'unknown',
+    })
   })
 })
 
