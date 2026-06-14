@@ -294,9 +294,11 @@ jobs:
         env:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           EC2_PRIVATE_IP: ${{ vars.EC2_PRIVATE_IP }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
         run: |
           sed -i "s|REPLACE_ACCOUNT_ID|${AWS_ACCOUNT_ID}|g" "$TASK_DEFINITION"
           sed -i "s|REPLACE_EC2_PRIVATE_IP|${EC2_PRIVATE_IP}|g" "$TASK_DEFINITION"
+          sed -i "s|REPLACE_S3_BUCKET|${S3_BUCKET}|g" "$TASK_DEFINITION"
 
       - name: Render task definition (inject image)
         id: render
