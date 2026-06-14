@@ -59,6 +59,12 @@ COPY --from=deps-prod /app/node_modules ./node_modules
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 
 COPY --from=build /app/dist ./dist
+# `prisma db seed` (one-shot ECS task per ADR 010 §0.2) runs prisma/seed.ts
+# via tsx, and the seed imports from ../src/config|lib|domain/*.js. Those
+# resolve to /app/src/* at runtime — not dist/ — so the source tree must
+# ship alongside dist/. The application itself runs `node dist/server.js`
+# and never touches /app/src; this copy exists solely for the seed step.
+COPY --from=build /app/src ./src
 
 # Build metadata — injected by build pipeline (spec 014 §4.2).
 ARG BUILD_GIT_SHA=unknown

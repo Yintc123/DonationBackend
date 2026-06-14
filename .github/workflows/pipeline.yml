@@ -412,7 +412,7 @@ jobs:
           echo "Migration stop reason: $REASON"
 
           if [ "$EXIT_CODE" != "0" ]; then
-            echo "::error::Prisma migrate + seed failed (exit=$EXIT_CODE, reason=$REASON). See /ecs/jko-backend log group for details — note migrate and seed share one exit code, distinguish via log lines (`Applied N migrations` vs `→ seeding 16 categories`)."
+            echo "::error::Prisma migrate + seed failed (exit=$EXIT_CODE, reason=$REASON). See /ecs/jko-backend log group for details — migrate and seed share one exit code, distinguish via log lines ('Applied N migrations' vs 'seeding 16 categories')."
             exit 1
           fi
 
