@@ -109,6 +109,36 @@ const TEMPLATES: readonly ProjectTemplate[] = [
     description: '陪伴返鄉青年從 idea 走到 minimum viable business。',
     content: '為期 6 個月的孵化期,提供導師、空間、與第一筆 5 萬元種子資金。',
   },
+  // ── +4 templates (2026-06-14):16 templates × 3 cycles + 3 cascade extras = 51 rows.
+  {
+    name: '身障音樂治療教室建置計畫',
+    description: '為發展遲緩兒童建立 5 間音樂治療教室。',
+    nameEn: 'Music Therapy Classroom Build Program',
+    descriptionEn: 'Building 5 music therapy classrooms for developmentally delayed children.',
+    content: '與專業音樂治療師合作設計教室空間,採購樂器、隔音材料,並訓練 20 名社工。',
+    contentEn: 'Co-designed with music therapists; equipment, soundproofing, training for 20 social workers.',
+    hasCover: true,
+  },
+  {
+    name: '多元家庭法律諮詢專案',
+    description: '為 LGBTQ+ 家庭提供免費法律諮詢與訴訟支援。',
+    content: '與律師事務所合作建立 pro bono 法律支援網,涵蓋婚姻、收養、繼承等議題。',
+  },
+  {
+    name: '海岸珊瑚礁復育試點計畫',
+    description: '在墾丁與綠島建立珊瑚復育示範區。',
+    nameEn: 'Coral Reef Restoration Pilot',
+    descriptionEn: 'Coral restoration demonstration zones in Kenting and Green Island.',
+    content: '與海洋生物學家合作,在 5 公頃海域進行珊瑚移植與監測。',
+    contentEn: 'Partnering with marine biologists to transplant and monitor corals across a 5-hectare zone.',
+    hasCover: true,
+  },
+  {
+    name: '罕病家庭喘息照顧服務',
+    description: '為罕病病童家長提供每月 24 小時的喘息照顧。',
+    content: '訓練合格照顧員到府接手照顧,讓主要照顧者可以休息、處理個人事務。',
+    raisingApprovalNo: '勸募立案核准字號 衛部救字第1151450000號',
+  },
 ] as const
 
 interface ScheduleOverride {

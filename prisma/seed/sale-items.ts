@@ -123,6 +123,40 @@ const TEMPLATES: readonly ItemTemplate[] = [
     priceTwd: 990,
     hasCover: true,
   },
+  // ── +4 templates (2026-06-14):16 templates × 3 cycles + 3 cascade extras = 51 rows.
+  {
+    name: '身障烘焙坊 — 手作餅乾禮盒',
+    description: '由身障者組成的烘焙坊製作,純手工餅乾。',
+    nameEn: 'Disability Bakery — Handmade Cookie Gift Box',
+    descriptionEn: 'Handmade cookies produced by a bakery staffed by people with disabilities.',
+    content: '每盒收益的 80% 投入身障者就業培訓。',
+    contentEn: '80% of each sale supports disability employment training.',
+    priceTwd: 680,
+    hasCover: true,
+  },
+  {
+    name: '多元家庭驕傲遊行紀念布章',
+    description: '每年一款設計的限定布章,可縫於背包或外套。',
+    content: '收益投入多元家庭法律支援基金。',
+    priceTwd: 250,
+    hasCover: true,
+  },
+  {
+    name: '海洋保育珊瑚陶杯(藍 / 綠)',
+    description: '陶藝家手作,圖案為復育珊瑚。',
+    nameEn: 'Ocean Conservation Coral Ceramic Mug (Blue / Green)',
+    descriptionEn: 'Hand-crafted by ceramic artist; design features restored coral.',
+    content: '單杯收益的 60% 投入珊瑚復育計畫。',
+    contentEn: '60% of each sale supports coral restoration.',
+    priceTwd: 880,
+    hasCover: true,
+  },
+  {
+    name: '罕病兒童手繪明信片(10 入)',
+    description: '由罕病病童繪製的明信片組,每張背面有小故事。',
+    content: '購買即支持罕病家庭喘息照顧基金。',
+    priceTwd: 350,
+  },
 ] as const
 
 interface ScheduleOverride {

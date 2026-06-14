@@ -100,9 +100,27 @@ async function main(): Promise<void> {
     await seedSaleItems(prisma, charities, uploadAsset)
 
     // Post-condition checks (spec 015 §6.4 — verify constraints).
+    // `completeCharities` enforces the 9-field bar set on 2026-06-14: every
+    // UI / i18n / IMG_4876 compliance field non-null AND no lifecycle dates.
+    // If this drops below 30 the seed surface has lost coverage and the demo
+    // detail page will start showing holes.
+    const completeCharities = await prisma.charity.count({
+      where: {
+        nameEn: { not: null },
+        descriptionEn: { not: null },
+        logoKey: { not: null },
+        contactPhone: { not: null },
+        contactEmail: { not: null },
+        officialWebsite: { not: null },
+        approvalNo: { not: null },
+        archivedAt: null,
+        deletedAt: null,
+      },
+    })
     const counts = {
       categories: await prisma.category.count(),
       charities: await prisma.charity.count(),
+      completeCharities,
       donationProjects: await prisma.donationProject.count(),
       saleItems: await prisma.saleItem.count(),
       charityCategories: await prisma.charityOnCategory.count(),
@@ -110,10 +128,12 @@ async function main(): Promise<void> {
     console.log('→ counts:', counts)
 
     if (counts.categories !== 16) throw new Error('seed post-condition: need 16 categories')
-    if (counts.charities < 20) throw new Error('seed post-condition: need ≥ 20 charities')
-    if (counts.donationProjects < 30)
-      throw new Error('seed post-condition: need ≥ 30 donation projects')
-    if (counts.saleItems < 30) throw new Error('seed post-condition: need ≥ 30 sale items')
+    if (counts.charities < 30) throw new Error('seed post-condition: need ≥ 30 charities')
+    if (counts.completeCharities < 30)
+      throw new Error('seed post-condition: need ≥ 30 fully-populated charities')
+    if (counts.donationProjects < 49)
+      throw new Error('seed post-condition: need ≥ 49 donation projects')
+    if (counts.saleItems < 49) throw new Error('seed post-condition: need ≥ 49 sale items')
 
     console.log('✓ seed complete')
   } finally {
