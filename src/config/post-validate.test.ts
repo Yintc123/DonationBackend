@@ -18,7 +18,9 @@ const baseConfig: Config = {
   DB_CONNECTION_LIMIT: '',
   DB_POOL_TIMEOUT: '',
   DATABASE_URL: 'postgresql://u:p@localhost:5432/d',
-  REDIS_URL: 'redis://localhost:6379',
+  REDIS_HOST: 'localhost',
+  REDIS_PORT: 6379,
+  REDIS_PASSWORD: '',
   JWT_ACCESS_SECRET: 'a-access-secret-at-least-32-characters!',
   JWT_ACCESS_EXPIRES_IN: '3h',
   JWT_REFRESH_SECRET: 'a-refresh-secret-at-least-32-characters',
@@ -46,6 +48,15 @@ const baseConfig: Config = {
   HSTS_MAX_AGE_SEC: 31536000,
   HSTS_INCLUDE_SUBDOMAINS: true,
   HSTS_PRELOAD: false,
+  S3_BUCKET: 'jko-donation-test-assets',
+  S3_REGION: 'ap-northeast-1',
+  S3_ENDPOINT: '',
+  S3_FORCE_PATH_STYLE: 'false',
+  S3_PUBLIC_URL_BASE: '',
+  S3_PRESIGN_TTL_SECONDS: 300,
+  S3_MAX_UPLOAD_BYTES: 5_242_880,
+  AWS_ACCESS_KEY_ID: '',
+  AWS_SECRET_ACCESS_KEY: '',
 }
 
 describe('postValidate', () => {
@@ -92,5 +103,88 @@ describe('postValidate', () => {
         JWT_REFRESH_SECRET: secret,
       }),
     ).toThrow(/must differ/)
+  })
+
+  // ── AWS credentials guard (spec 018 §4.1 / ADR 008) ──────────────────────
+
+  it('allows AWS credentials in development (LocalStack / IAM user path)', () => {
+    expect(() =>
+      postValidate({
+        ...baseConfig,
+        NODE_ENV: 'development',
+        AWS_ACCESS_KEY_ID: 'AKIATEST',
+        AWS_SECRET_ACCESS_KEY: 'secret/value',
+      }),
+    ).not.toThrow()
+  })
+
+  it('allows BOTH empty AWS credentials in production (ECS task role path)', () => {
+    expect(() =>
+      postValidate({
+        ...baseConfig,
+        NODE_ENV: 'production',
+        RATE_LIMIT_TRUSTED_PROXIES: '10.0.0.0/8',
+        AWS_ACCESS_KEY_ID: '',
+        AWS_SECRET_ACCESS_KEY: '',
+      }),
+    ).not.toThrow()
+  })
+
+  it('rejects AWS credentials in staging — must use the task role', () => {
+    expect(() =>
+      postValidate({
+        ...baseConfig,
+        NODE_ENV: 'staging',
+        RATE_LIMIT_TRUSTED_PROXIES: '10.0.0.0/8',
+        AWS_ACCESS_KEY_ID: 'AKIATEST',
+        AWS_SECRET_ACCESS_KEY: 'secret/value',
+      }),
+    ).toThrow(/AWS_ACCESS_KEY_ID.*must be empty.*task role/)
+  })
+
+  it('rejects AWS credentials in production — must use the task role', () => {
+    expect(() =>
+      postValidate({
+        ...baseConfig,
+        NODE_ENV: 'production',
+        RATE_LIMIT_TRUSTED_PROXIES: '10.0.0.0/8',
+        AWS_ACCESS_KEY_ID: 'AKIATEST',
+        AWS_SECRET_ACCESS_KEY: 'secret/value',
+      }),
+    ).toThrow(/AWS_ACCESS_KEY_ID.*must be empty.*task role/)
+  })
+
+  it('rejects production when only AWS_ACCESS_KEY_ID is set (prod guard catches asymmetric leak)', () => {
+    expect(() =>
+      postValidate({
+        ...baseConfig,
+        NODE_ENV: 'production',
+        RATE_LIMIT_TRUSTED_PROXIES: '10.0.0.0/8',
+        AWS_ACCESS_KEY_ID: 'AKIATEST',
+        AWS_SECRET_ACCESS_KEY: '',
+      }),
+    ).toThrow(/must be empty.*staging\/production/)
+  })
+
+  it('rejects asymmetric AWS credentials in development (id without secret)', () => {
+    expect(() =>
+      postValidate({
+        ...baseConfig,
+        NODE_ENV: 'development',
+        AWS_ACCESS_KEY_ID: 'AKIATEST',
+        AWS_SECRET_ACCESS_KEY: '',
+      }),
+    ).toThrow(/both be set or both be empty/)
+  })
+
+  it('rejects asymmetric AWS credentials in development (secret without id)', () => {
+    expect(() =>
+      postValidate({
+        ...baseConfig,
+        NODE_ENV: 'development',
+        AWS_ACCESS_KEY_ID: '',
+        AWS_SECRET_ACCESS_KEY: 'secret/value',
+      }),
+    ).toThrow(/both be set or both be empty/)
   })
 })

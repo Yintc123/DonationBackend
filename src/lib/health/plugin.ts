@@ -3,8 +3,10 @@
 // Responsibilities:
 //   - Decorate `app.readinessGate` so `src/server.ts`'s SIGTERM handler can
 //     call `app.readinessGate.shutDown()` to begin the drain (spec 011 §9.1).
-//   - Register GET /health/{live,ready,startup} with the contract defined in
-//     spec 011 §4.
+//   - Register GET /health/{live,ready,startup,storage} — this plugin owns
+//     the entire `/health/*` URL prefix so monitoring teams have a single
+//     stop for every probe surface. Per-domain plugins (s3Plugin etc.) only
+//     expose a `*HealthProbe` decorator; we register the route here.
 //   - Wire the gate transitions to a child logger tagged `module: 'health'`
 //     so K8s polling does NOT spam the log — only the 0→1 transitions emit
 //     a log line (spec 011 §11.3 — request/response autolog is excluded for
@@ -12,8 +14,11 @@
 //   - Mark the gate `started` on Fastify `onReady` (spec 011 §4.3 / §9.2).
 //
 // Dependencies (must be registered before this plugin in src/app.ts):
-//   - `app.prisma`  — spec 003 (DB probe runs `$queryRaw\`SELECT 1\``)
-//   - `app.redis`   — spec 006 (cache probe runs PING)
+//   - `app.prisma`         — spec 003 (DB probe runs `$queryRaw\`SELECT 1\``)
+//   - `app.redis`          — spec 006 (cache probe runs PING)
+//   - `app.s3HealthProbe`  — spec 018 (storage probe runs HeadBucket); the
+//     decorator is OPTIONAL — if absent, /health/storage is simply not
+//     registered, so this plugin can run in a no-S3 deployment.
 
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify'
 import fp from 'fastify-plugin'
@@ -23,6 +28,7 @@ import {
   aggregateReadiness,
   buildLivenessBody,
   buildStartupBody,
+  memoizeProbe,
   runWithTimeout,
   type ComponentResult,
   type ComponentResults,
@@ -66,57 +72,16 @@ async function probeCache(app: FastifyInstance): Promise<ComponentResult> {
   }
 }
 
-interface CacheEntry<T> {
-  expiresAt: number
-  inflight: Promise<T> | undefined
-  value: T | undefined
-}
-
-/**
- * Coalesces concurrent calls and caches the resolved value for `ttlMs`.
- * Errors are NOT cached — a failed probe re-runs on the next call so a
- * transient hiccup doesn't pin readiness to fail for a full TTL window.
- */
-function memoizeProbe<T>(
-  fn: () => Promise<T>,
-  ttlMs: number,
-  now: () => number,
-): () => Promise<T> {
-  const entry: CacheEntry<T> = { expiresAt: 0, inflight: undefined, value: undefined }
-  return async () => {
-    const ts = now()
-    if (entry.value !== undefined && ts < entry.expiresAt) {
-      return entry.value
-    }
-    if (entry.inflight !== undefined) {
-      return entry.inflight
-    }
-    entry.inflight = (async () => {
-      try {
-        const v = await fn()
-        entry.value = v
-        entry.expiresAt = now() + ttlMs
-        return v
-      } finally {
-        entry.inflight = undefined
-      }
-    })()
-    return entry.inflight
-  }
-}
-
 const healthPluginAsync: FastifyPluginAsync = async (app: FastifyInstance) => {
   const gate = createReadinessGate()
   app.decorate('readinessGate', gate)
 
   // Spec 011 §7.2 — each probe is memoized for PROBE_CACHE_TTL_MS so the
-  // cluster's polling load on Postgres/Redis stays bounded.
-  const cachedProbeDb = memoizeProbe(() => probeDb(app), PROBE_CACHE_TTL_MS, Date.now)
-  const cachedProbeCache = memoizeProbe(
-    () => probeCache(app),
-    PROBE_CACHE_TTL_MS,
-    Date.now,
-  )
+  // cluster's polling load on Postgres/Redis stays bounded. memoizeProbe
+  // caches success only — a transient failure re-probes on the next call
+  // (see lib/health/probes.ts for the contract).
+  const cachedProbeDb = memoizeProbe(() => probeDb(app), PROBE_CACHE_TTL_MS)
+  const cachedProbeCache = memoizeProbe(() => probeCache(app), PROBE_CACHE_TTL_MS)
 
   // Spec 011 §11.3 — child logger tagged module=health. Only state
   // transitions emit log lines (no per-probe spam).
@@ -179,6 +144,32 @@ const healthPluginAsync: FastifyPluginAsync = async (app: FastifyInstance) => {
     })
     return reply.code(out.httpStatus).send(out.body)
   })
+
+  // Spec 018 §10 — storage diagnostic, decoupled from readiness so a
+  // transient S3 outage does NOT cordon the pod (list / detail endpoints
+  // still serve; image <img src> load failures are a client concern).
+  // We only register if s3Plugin is present; if not we silently skip so
+  // this plugin remains useful in no-S3 deployments / unit-style tests.
+  if (app.hasDecorator('s3HealthProbe')) {
+    const storageLog = app.log.child({ module: 'storage' })
+    app.get(
+      '/health/storage',
+      { config: { rateLimit: false } },
+      async (_req, reply) => {
+        const r = await app.s3HealthProbe()
+        if (r.status === 'ok') {
+          return reply.code(200).send({ status: 'ok', bucket: app.s3Config.bucket })
+        }
+        // Spec 018 §10.2 / §14.2 — never echo raw SDK / network detail to
+        // clients; that's for the log only.
+        storageLog.warn(
+          { event: 'storage_health_failed', latencyMs: r.latencyMs, error: r.error },
+          'storage probe failed',
+        )
+        return reply.code(503).send({ status: 'unhealthy', reason: 'S3 unreachable' })
+      },
+    )
+  }
 }
 
 export const healthPlugin = fp(healthPluginAsync, {

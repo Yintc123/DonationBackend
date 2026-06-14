@@ -13,8 +13,10 @@ export {
   aggregateReadiness,
   buildLivenessBody,
   buildStartupBody,
+  memoizeProbe,
   runWithTimeout,
   type ComponentName,
   type ComponentResult,
   type ComponentResults,
+  type ProbeStatus,
 } from './probes.js'

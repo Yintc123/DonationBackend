@@ -25,7 +25,9 @@ import { createLogger, loggerPolicyPlugin } from './lib/logger/index.js'
 import { prismaPlugin } from './lib/prisma/index.js'
 import { parseTrustedProxies, rateLimitPlugin } from './lib/rate-limit/index.js'
 import { redisPlugin } from './lib/redis/index.js'
+import { s3Plugin } from './lib/s3/index.js'
 import { corsPlugin, helmetPlugin } from './lib/security/index.js'
+import { registerPresignUploadRoute } from './routes/v1/donation/uploads/presign.js'
 import type { Config } from './config/schema.js'
 
 declare module 'fastify' {
@@ -64,7 +66,13 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(rateLimitPlugin)
   await app.register(authPlugin)
   await app.register(googleAuthPlugin)
+  // Spec 018 §3 — s3Plugin owns app.s3 / s3Config / s3HealthProbe. Placed
+  // AFTER rate-limit so the presign route inherits the global preHandler,
+  // and BEFORE healthPlugin because healthPlugin registers /health/storage
+  // by detecting the s3HealthProbe decorator (spec 018 §10 / spec 011 §3).
+  await app.register(s3Plugin)
   await app.register(healthPlugin)
+  await app.register(registerPresignUploadRoute)
 
   return app
 }

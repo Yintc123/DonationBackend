@@ -179,6 +179,25 @@ export class UnprocessableEntityError extends AppError {
   }
 }
 
+export interface UnsupportedMediaTypeOptions {
+  message?: string
+  code?: string
+  details?: ErrorDetails
+  cause?: unknown
+}
+
+export class UnsupportedMediaTypeError extends AppError {
+  constructor(opts: UnsupportedMediaTypeOptions = {}) {
+    super({
+      message: opts.message ?? 'Unsupported media type',
+      statusCode: 415,
+      code: opts.code ?? ErrorCode.UNSUPPORTED_MEDIA_TYPE,
+      details: opts.details,
+      cause: opts.cause,
+    })
+  }
+}
+
 export interface TooManyRequestsOptions {
   retryAfter?: number
   message?: string

@@ -79,6 +79,30 @@ describe('healthPlugin (integration, spec 011 §13.2)', () => {
     app.redis.ping = originalPing
   })
 
+  // Regression — memoizeProbe MUST NOT cache fail results (spec 011 §7.2).
+  // Before the consolidation, a 1ms failure pinned readiness to 503 for the
+  // full 1s TTL window. Now the second consecutive request must reflect the
+  // recovered state.
+  it('GET /health/ready recovers immediately after a transient cache failure (fail not cached)', async () => {
+    app = await buildApp()
+    const originalPing = app.redis.ping.bind(app.redis)
+    let calls = 0
+    app.redis.ping = (() => {
+      calls += 1
+      if (calls === 1) return Promise.reject(new Error('simulated transient blip'))
+      return originalPing()
+    }) as typeof originalPing
+
+    const failed = await app.inject({ method: 'GET', url: '/health/ready' })
+    expect(failed.statusCode).toBe(503)
+
+    const recovered = await app.inject({ method: 'GET', url: '/health/ready' })
+    expect(recovered.statusCode).toBe(200)
+    expect(calls).toBeGreaterThanOrEqual(2)
+
+    app.redis.ping = originalPing
+  })
+
   // The "JWT secrets identical" startup-fail check still belongs here —
   // it exercises the config loader, not the plugin chain.
   it('startup fails when JWT secrets are identical', async () => {

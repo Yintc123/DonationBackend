@@ -13,8 +13,16 @@
 
 export type ComponentName = 'db' | 'cache'
 
-export interface ComponentResult {
+/**
+ * Contract for any value passing through {@link memoizeProbe}. The `status`
+ * discriminator drives the cache policy: only `'ok'` results cache (see the
+ * function's docs for rationale).
+ */
+export interface ProbeStatus {
   status: 'ok' | 'fail'
+}
+
+export interface ComponentResult extends ProbeStatus {
   /** Wall time spent on the probe, regardless of outcome. */
   latencyMs: number
   /** Optional internal error message — NEVER echoed in the readiness body. */
@@ -149,5 +157,52 @@ export async function runWithTimeout<T>(
     ])
   } finally {
     if (timer) clearTimeout(timer)
+  }
+}
+
+// ── Probe memoiser ────────────────────────────────────────────────────────
+
+/**
+ * Spec 011 §7.2 / spec 018 §10.2.1 — coalesce concurrent probe calls and
+ * cache the resolved value for `ttlMs`.
+ *
+ * Cache policy — **only `status === 'ok'` results cache**. A failure result
+ * (returned `{status: 'fail'}` OR thrown) is NOT cached, so a transient
+ * hiccup re-probes on the very next call rather than pinning readiness to
+ * fail for a full TTL window. K8s readiness polling is in the 1–10s range;
+ * during a real outage a per-call re-probe is bounded (`SELECT 1` / `PING` /
+ * `HeadBucket` are each trivially cheap).
+ *
+ * Generic constraint `T extends ProbeStatus` keeps the cache contract
+ * explicit at call sites — adding a new probe forces the author to think
+ * about ok / fail semantics rather than receiving silent caching.
+ */
+export function memoizeProbe<T extends ProbeStatus>(
+  fn: () => Promise<T>,
+  ttlMs: number,
+  now: () => number = Date.now,
+): () => Promise<T> {
+  let expiresAt = 0
+  let inflight: Promise<T> | undefined
+  let value: T | undefined
+  return async () => {
+    const ts = now()
+    if (value !== undefined && value.status === 'ok' && ts < expiresAt) {
+      return value
+    }
+    if (inflight !== undefined) return inflight
+    inflight = (async () => {
+      try {
+        const v = await fn()
+        value = v
+        if (v.status === 'ok') {
+          expiresAt = now() + ttlMs
+        }
+        return v
+      } finally {
+        inflight = undefined
+      }
+    })()
+    return inflight
   }
 }

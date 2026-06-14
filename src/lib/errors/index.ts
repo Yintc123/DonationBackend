@@ -15,6 +15,7 @@ export {
   TooManyRequestsError,
   UnauthorizedError,
   UnprocessableEntityError,
+  UnsupportedMediaTypeError,
   ValidationError,
   type AppErrorOptions,
   type ErrorDetails,

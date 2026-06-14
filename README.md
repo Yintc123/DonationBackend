@@ -40,7 +40,7 @@ npm run start    # node dist/server.js
 - `DATABASE_URL` — Prisma 連線字串
 - `JWT_SECRET` — JWT 簽章密鑰
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — Google OAuth 憑證
-- `REDIS_URL` — Redis 連線字串
+- `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` — Redis 連線參數(password 在 dev 留空)
 
 ## AI 使用聲明
 

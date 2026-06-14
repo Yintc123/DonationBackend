@@ -58,6 +58,29 @@ export const ErrorCode = Object.freeze({
   AUTH_TOKEN_EXPIRED: 'AUTH_TOKEN_EXPIRED',
   AUTH_REFRESH_REVOKED: 'AUTH_REFRESH_REVOKED',
   AUTH_REFRESH_REPLAY: 'AUTH_REFRESH_REPLAY',
+
+  // ── §4.2.* storage infra (spec 018 §11.1) ──────────────────────────────
+  S3_BUCKET_MISCONFIGURED: 'S3_BUCKET_MISCONFIGURED',
+  S3_ACCESS_DENIED: 'S3_ACCESS_DENIED',
+  S3_TIMEOUT: 'S3_TIMEOUT',
+  S3_UNREACHABLE: 'S3_UNREACHABLE',
+  S3_UNKNOWN: 'S3_UNKNOWN',
+
+  // ── §4.2.* donation domain (PLACEHOLDER — spec 015 owns these) ─────────
+  // These codes were added by spec 018's presign endpoint (§7.4.1) ahead of
+  // spec 015's donation domain landing. They properly belong to spec 015
+  // (the owning spec of the Charity / DonationProject / SaleItem entities),
+  // not to the storage module that merely references them.
+  //
+  // Governance debt — when spec 015 PR lands:
+  //   1. Move this block under "§4.2.X donation (spec 015)" in this file
+  //   2. Add the §error subsection to spec 015 (per spec 005 §4.4)
+  //   3. Update spec 018 cross-ref pointer from §7.4.1 to spec 015's §error
+  //
+  // The codes themselves stay the same; only the spec ownership tag moves.
+  CHARITY_NOT_FOUND: 'CHARITY_NOT_FOUND',
+  DONATION_PROJECT_NOT_FOUND: 'DONATION_PROJECT_NOT_FOUND',
+  SALE_ITEM_NOT_FOUND: 'SALE_ITEM_NOT_FOUND',
 } as const)
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode]
@@ -99,4 +122,12 @@ export const ErrorCodeStatus: Readonly<Record<ErrorCodeValue, number>> = Object.
   [ErrorCode.AUTH_TOKEN_EXPIRED]: 401,
   [ErrorCode.AUTH_REFRESH_REVOKED]: 401,
   [ErrorCode.AUTH_REFRESH_REPLAY]: 401,
+  [ErrorCode.CHARITY_NOT_FOUND]: 404,
+  [ErrorCode.DONATION_PROJECT_NOT_FOUND]: 404,
+  [ErrorCode.SALE_ITEM_NOT_FOUND]: 404,
+  [ErrorCode.S3_BUCKET_MISCONFIGURED]: 500,
+  [ErrorCode.S3_ACCESS_DENIED]: 500,
+  [ErrorCode.S3_TIMEOUT]: 503,
+  [ErrorCode.S3_UNREACHABLE]: 503,
+  [ErrorCode.S3_UNKNOWN]: 500,
 })

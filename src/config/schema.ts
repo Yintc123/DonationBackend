@@ -49,7 +49,14 @@ export const ConfigSchema = Type.Object({
   DATABASE_URL: Type.String({ minLength: 1 }),
 
   // === Redis (spec 001 §3.3) ===
-  REDIS_URL: Type.String({ minLength: 1 }),
+  // Symmetric with DB_* — discrete host/port/password. We pass these to
+  // ioredis as `{ host, port, password }` rather than composing a URL string,
+  // so passwords containing URL-unsafe characters don't need percent-encoding.
+  REDIS_HOST: Type.String({ minLength: 1 }),
+  REDIS_PORT: Type.Number({ default: 6379, minimum: 1, maximum: 65535 }),
+  // Empty string ⇒ unauthenticated Redis (LocalStack / dev). In staging /
+  // prod this must be set.
+  REDIS_PASSWORD: Type.String({ default: '' }),
 
   // === JWT (spec 001 §3.4 / ADR 004) ===
   JWT_ACCESS_SECRET: Type.String({ minLength: 32 }),
@@ -91,6 +98,21 @@ export const ConfigSchema = Type.Object({
   HSTS_MAX_AGE_SEC: Type.Number({ default: 31536000 }),
   HSTS_INCLUDE_SUBDOMAINS: Type.Boolean({ default: true }),
   HSTS_PRELOAD: Type.Boolean({ default: false }),
+
+  // === S3 Storage (spec 018 §4) ===
+  S3_BUCKET: Type.String({ minLength: 1 }),
+  S3_REGION: Type.String({ minLength: 1 }),
+  S3_ENDPOINT: Type.String({ default: '' }),
+  // Strict 'true' parsing — spec 018 §4 row note. Default 'false'.
+  S3_FORCE_PATH_STYLE: Type.String({ default: 'false' }),
+  S3_PUBLIC_URL_BASE: Type.String({ default: '' }),
+  S3_PRESIGN_TTL_SECONDS: Type.Number({ default: 300, minimum: 30, maximum: 3600 }),
+  S3_MAX_UPLOAD_BYTES: Type.Number({ default: 5_242_880, minimum: 1, maximum: 5_368_709_120 }),
+  // AWS credentials are read from env by the SDK credential chain.
+  // We accept them here so @fastify/env doesn't strip them, but the plugin
+  // doesn't reference them directly (the SDK picks them up).
+  AWS_ACCESS_KEY_ID: Type.String({ default: '' }),
+  AWS_SECRET_ACCESS_KEY: Type.String({ default: '' }),
 })
 
 export type Config = Static<typeof ConfigSchema>

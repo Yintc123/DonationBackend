@@ -1,12 +1,14 @@
 // Spec 011 §4 / §5 — Probe result aggregator (pure functions).
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   aggregateReadiness,
   buildLivenessBody,
   buildStartupBody,
+  memoizeProbe,
   runWithTimeout,
+  type ProbeStatus,
 } from './probes.js'
 
 describe('aggregateReadiness (spec 011 §4.2 / §5)', () => {
@@ -104,5 +106,94 @@ describe('runWithTimeout (spec 011 §7.1)', () => {
     await expect(
       runWithTimeout(() => Promise.reject(new Error('boom')), 100, 'tag'),
     ).rejects.toThrow('boom')
+  })
+})
+
+describe('memoizeProbe (spec 011 §7.2 / spec 018 §10.2.1)', () => {
+  type Result = ProbeStatus & { tag: string }
+  const ok = (tag: string): Result => ({ status: 'ok', tag })
+  const fail = (tag: string): Result => ({ status: 'fail', tag })
+
+  it('returns the underlying value on the first call', async () => {
+    const fn = vi.fn().mockResolvedValue(ok('first'))
+    const probe = memoizeProbe(fn, 1000)
+    expect(await probe()).toEqual({ status: 'ok', tag: 'first' })
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+
+  it('coalesces concurrent calls into a single underlying invocation', async () => {
+    let resolveFn: (v: Result) => void = () => {}
+    const fn = vi.fn().mockImplementation(
+      () =>
+        new Promise<Result>((resolve) => {
+          resolveFn = resolve
+        }),
+    )
+    const probe = memoizeProbe(fn, 1000)
+    const p1 = probe()
+    const p2 = probe()
+    const p3 = probe()
+    resolveFn(ok('shared'))
+    await Promise.all([p1, p2, p3])
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+
+  it('caches a successful result for ttlMs and re-probes after expiry', async () => {
+    let nowMs = 1_000_000
+    const fn = vi.fn().mockResolvedValue(ok('cached'))
+    const probe = memoizeProbe(fn, 1000, () => nowMs)
+    await probe()
+    await probe()
+    expect(fn).toHaveBeenCalledTimes(1)
+
+    nowMs += 1100
+    await probe()
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  it('does NOT cache a failure result — a transient hiccup re-probes immediately', async () => {
+    let nowMs = 1_000_000
+    const fn = vi
+      .fn<() => Promise<Result>>()
+      .mockResolvedValueOnce(fail('boom'))
+      .mockResolvedValue(ok('recovered'))
+    const probe = memoizeProbe(fn, 1000, () => nowMs)
+
+    const r1 = await probe()
+    expect(r1.status).toBe('fail')
+
+    nowMs += 50
+    const r2 = await probe()
+    expect(r2.status).toBe('ok')
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  it('does NOT cache a thrown error — next call retries fresh', async () => {
+    let nowMs = 1_000_000
+    const fn = vi
+      .fn<() => Promise<Result>>()
+      .mockRejectedValueOnce(new Error('network glitch'))
+      .mockResolvedValue(ok('recovered'))
+    const probe = memoizeProbe(fn, 1000, () => nowMs)
+
+    await expect(probe()).rejects.toThrow('network glitch')
+
+    nowMs += 10
+    const r2 = await probe()
+    expect(r2.status).toBe('ok')
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  it('clears the inflight slot even when the underlying call throws (no permanent inflight pin)', async () => {
+    const fn = vi
+      .fn<() => Promise<Result>>()
+      .mockRejectedValueOnce(new Error('first'))
+      .mockResolvedValue(ok('second'))
+    const probe = memoizeProbe(fn, 1000)
+
+    await expect(probe()).rejects.toThrow('first')
+    // A second call MUST start a fresh probe (not get stuck on a dead inflight).
+    const r = await probe()
+    expect(r).toEqual({ status: 'ok', tag: 'second' })
   })
 })

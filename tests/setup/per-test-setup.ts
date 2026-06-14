@@ -22,9 +22,15 @@ function getPrisma(dbUrl: string): PrismaClient {
 }
 
 beforeEach(async () => {
-  const redisUrl = inject('TEST_REDIS_URL')
-  if (redisUrl) {
-    const client = new Redis(redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 })
+  const redisHost = inject('TEST_REDIS_HOST')
+  const redisPort = inject('TEST_REDIS_PORT')
+  if (redisHost && redisPort) {
+    const client = new Redis({
+      host: redisHost,
+      port: Number(redisPort),
+      lazyConnect: true,
+      maxRetriesPerRequest: 1,
+    })
     try {
       await client.connect()
       await client.flushdb()

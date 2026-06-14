@@ -18,7 +18,9 @@ const BASE: Config = {
   DB_CONNECTION_LIMIT: '',
   DB_POOL_TIMEOUT: '',
   DATABASE_URL: 'postgresql://u:p@db:5432/n?schema=public',
-  REDIS_URL: 'redis://r:6379',
+  REDIS_HOST: 'r',
+  REDIS_PORT: 6379,
+  REDIS_PASSWORD: '',
   JWT_ACCESS_SECRET: 'a'.repeat(32),
   JWT_ACCESS_EXPIRES_IN: '3h',
   JWT_REFRESH_SECRET: 'b'.repeat(32),
@@ -46,6 +48,15 @@ const BASE: Config = {
   HSTS_MAX_AGE_SEC: 31536000,
   HSTS_INCLUDE_SUBDOMAINS: true,
   HSTS_PRELOAD: false,
+  S3_BUCKET: 'jko-donation-test-assets',
+  S3_REGION: 'ap-northeast-1',
+  S3_ENDPOINT: '',
+  S3_FORCE_PATH_STYLE: 'false',
+  S3_PUBLIC_URL_BASE: '',
+  S3_PRESIGN_TTL_SECONDS: 300,
+  S3_MAX_UPLOAD_BYTES: 5_242_880,
+  AWS_ACCESS_KEY_ID: '',
+  AWS_SECRET_ACCESS_KEY: '',
 }
 
 describe('buildPrismaClientOptions', () => {
