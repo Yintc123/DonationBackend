@@ -16,7 +16,7 @@ import {
   type ListQueryWithCharity,
 } from '../../../../schemas/donation-item/shared.js'
 
-import { setI18nHeaders, setNoCache } from '../headers.js'
+import { sendDetail, setI18nHeaders, setNoCache } from '../headers.js'
 
 const UUID_V4_PATTERN =
   '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
@@ -58,16 +58,14 @@ export async function registerDonationProjectRoutes(app: FastifyInstance): Promi
     },
     handler: async (req, reply) => {
       const locale = parseAcceptLanguage(req.headers['accept-language'])
-      const body = await getDonationProjectById({
+      const result = await getDonationProjectById({
         prisma: app.prisma,
         now: new Date(),
         locale,
         objectUrl: app.objectUrl,
         id: req.params.id,
       })
-      setI18nHeaders(reply, locale)
-      setNoCache(reply)
-      return body
+      return sendDetail(req, reply, locale, result)
     },
   })
 }

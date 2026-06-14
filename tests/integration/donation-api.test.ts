@@ -404,6 +404,85 @@ describe('GET /v1/donation/{resource}/:id detail (spec 017)', () => {
     expect(body.charity.id).toBe(c.id)
     expect(body.charity.name).toBe('parent name')
   })
+
+  // ── ETag + If-None-Match (spec 017 §2) ──────────────────────────────────
+
+  it('Charity detail emits a strong ETag wrapped in double quotes', async () => {
+    const c = await seedCharity({ name: 'etag charity' })
+    const res = await app.inject({ method: 'GET', url: `/v1/donation/charities/${c.id}` })
+    expect(res.statusCode).toBe(200)
+    const etag = res.headers.etag
+    expect(typeof etag).toBe('string')
+    expect(etag).toMatch(/^"[0-9a-f]{16}"$/)
+  })
+
+  it('If-None-Match matching the ETag → 304 with no body, ETag still set', async () => {
+    const c = await seedCharity({ name: 'etag charity 2' })
+    const first = await app.inject({
+      method: 'GET',
+      url: `/v1/donation/charities/${c.id}`,
+    })
+    const etag = first.headers.etag as string
+
+    const second = await app.inject({
+      method: 'GET',
+      url: `/v1/donation/charities/${c.id}`,
+      headers: { 'if-none-match': etag },
+    })
+    expect(second.statusCode).toBe(304)
+    expect(second.body).toBe('')
+    expect(second.headers.etag).toBe(etag)
+  })
+
+  it('If-None-Match with a stale ETag → 200 with new body + new ETag', async () => {
+    const c = await seedCharity({ name: 'etag charity 3' })
+    const res = await app.inject({
+      method: 'GET',
+      url: `/v1/donation/charities/${c.id}`,
+      headers: { 'if-none-match': '"deadbeef00000000"' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as { id: string }).id).toBe(c.id)
+  })
+
+  it('Different locales receive different ETags (spec 017 §2 — no zh/en cross-cache)', async () => {
+    const c = await seedCharity({
+      name: '中文名',
+      nameEn: 'English name',
+      description: '中',
+      descriptionEn: 'En',
+    })
+    const zh = await app.inject({
+      method: 'GET',
+      url: `/v1/donation/charities/${c.id}`,
+      headers: { 'accept-language': 'zh-TW' },
+    })
+    const en = await app.inject({
+      method: 'GET',
+      url: `/v1/donation/charities/${c.id}`,
+      headers: { 'accept-language': 'en' },
+    })
+    expect(zh.headers.etag).not.toBe(en.headers.etag)
+  })
+
+  it('Project detail ETag changes when the parent Charity is updated (spec 017 §4.3)', async () => {
+    const c = await seedCharity({ name: 'parent v1' })
+    const p = await seedProject({ charityId: c.id })
+    const first = await app.inject({
+      method: 'GET',
+      url: `/v1/donation/donation-projects/${p.id}`,
+    })
+    const etag1 = first.headers.etag as string
+
+    // Bump the parent's updatedAt by renaming.
+    await app.prisma.charity.update({ where: { id: c.id }, data: { name: 'parent v2' } })
+
+    const second = await app.inject({
+      method: 'GET',
+      url: `/v1/donation/donation-projects/${p.id}`,
+    })
+    expect(second.headers.etag).not.toBe(etag1)
+  })
 })
 
 describe('Cursor decoding via the public cursor helper round-trip', () => {

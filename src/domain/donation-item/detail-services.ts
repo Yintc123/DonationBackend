@@ -12,6 +12,7 @@
 import type { PrismaClient } from '@prisma/client'
 
 import { NotFoundError } from '../../lib/errors/index.js'
+import { buildETag } from '../../lib/http/index.js'
 import type { Locale } from '../../lib/i18n/index.js'
 import { pickLocalised } from '../../lib/i18n/index.js'
 import type {
@@ -25,13 +26,27 @@ import { inflateCategories } from './list-helpers.js'
 
 type ObjectUrl = (key: string) => string
 
+/**
+ * Detail-service return shape: body + the precomputed strong ETag
+ * (spec 017 §2). The ETag formula includes locale so zh-TW and en
+ * responses never share a cached representation; for Project / SaleItem
+ * it also includes the parent Charity's updatedAt because the nested
+ * charity object is part of the response — when the parent renames or
+ * updates its logo the child's ETag must invalidate (spec 017 §4.3 /
+ * §6.2 open question, formally taken here).
+ */
+export interface DetailWithETag<T> {
+  body: T
+  etag: string
+}
+
 export async function getCharityById(deps: {
   prisma: PrismaClient
   now: Date
   locale: Locale
   objectUrl: ObjectUrl
   id: string
-}): Promise<CharityDetailT> {
+}): Promise<DetailWithETag<CharityDetailT>> {
   const c = await deps.prisma.charity.findFirst({
     where: { id: deps.id, ...whereLive(deps.now) },
     include: {
@@ -44,7 +59,7 @@ export async function getCharityById(deps: {
   })
   if (!c) throw new NotFoundError({ resource: 'charity', id: deps.id, code: 'CHARITY_NOT_FOUND' })
 
-  return {
+  const body: CharityDetailT = {
     id: c.id,
     name: pickLocalised(deps.locale, { zh: c.name, en: c.nameEn }),
     description: pickLocalised(deps.locale, { zh: c.description, en: c.descriptionEn }),
@@ -57,6 +72,7 @@ export async function getCharityById(deps: {
     createdAt: c.createdAt.toISOString(),
     updatedAt: c.updatedAt.toISOString(),
   }
+  return { body, etag: buildETag(c.id, c.updatedAt, deps.locale) }
 }
 
 export async function getDonationProjectById(deps: {
@@ -65,7 +81,7 @@ export async function getDonationProjectById(deps: {
   locale: Locale
   objectUrl: ObjectUrl
   id: string
-}): Promise<ProjectDetailT> {
+}): Promise<DetailWithETag<ProjectDetailT>> {
   const p = await deps.prisma.donationProject.findFirst({
     where: { id: deps.id, ...whereLiveWithParent(deps.now) },
     include: {
@@ -87,7 +103,7 @@ export async function getDonationProjectById(deps: {
       code: 'DONATION_PROJECT_NOT_FOUND',
     })
 
-  return {
+  const body: ProjectDetailT = {
     id: p.id,
     name: pickLocalised(deps.locale, { zh: p.name, en: p.nameEn }),
     description: pickLocalised(deps.locale, { zh: p.description, en: p.descriptionEn }),
@@ -105,6 +121,10 @@ export async function getDonationProjectById(deps: {
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
   }
+  return {
+    body,
+    etag: buildETag(p.id, p.updatedAt, p.charity.updatedAt, deps.locale),
+  }
 }
 
 export async function getSaleItemById(deps: {
@@ -113,7 +133,7 @@ export async function getSaleItemById(deps: {
   locale: Locale
   objectUrl: ObjectUrl
   id: string
-}): Promise<SaleItemDetailT> {
+}): Promise<DetailWithETag<SaleItemDetailT>> {
   const s = await deps.prisma.saleItem.findFirst({
     where: { id: deps.id, ...whereLiveWithParent(deps.now) },
     include: {
@@ -135,7 +155,7 @@ export async function getSaleItemById(deps: {
       code: 'SALE_ITEM_NOT_FOUND',
     })
 
-  return {
+  const body: SaleItemDetailT = {
     id: s.id,
     name: pickLocalised(deps.locale, { zh: s.name, en: s.nameEn }),
     description: pickLocalised(deps.locale, { zh: s.description, en: s.descriptionEn }),
@@ -153,5 +173,9 @@ export async function getSaleItemById(deps: {
     categories: inflateCategories(s.charity.categories, deps.locale),
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
+  }
+  return {
+    body,
+    etag: buildETag(s.id, s.updatedAt, s.charity.updatedAt, deps.locale),
   }
 }
