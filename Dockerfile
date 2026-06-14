@@ -14,6 +14,12 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 
+# OpenSSL is required by Prisma to pick the correct query engine binary.
+# Without it `prisma generate` warns about libssl detection and falls back
+# to a guess, then at runtime `prisma migrate` tries to download the right
+# engine — which fails under the non-root `node` user (read-only paths).
+RUN apk add --no-cache openssl
+
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
 RUN npm ci
@@ -28,6 +34,10 @@ RUN npm run build
 FROM node:20-alpine AS deps-prod
 WORKDIR /app
 
+# OpenSSL needed during install so prisma's postinstall downloads the right
+# engine binaries for this libssl version.
+RUN apk add --no-cache openssl
+
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
 RUN npm ci --omit=dev && npm cache clean --force
@@ -35,6 +45,11 @@ RUN npm ci --omit=dev && npm cache clean --force
 # === Stage 3: runtime — minimal image ===
 FROM node:20-alpine AS runtime
 WORKDIR /app
+
+# OpenSSL needed at runtime so prisma CLI (used for `migrate deploy` from the
+# one-shot migration ECS task per ADR 010) can resolve the engine without
+# attempting a runtime download.
+RUN apk add --no-cache openssl
 
 # package.json is needed at runtime for Node to honor "type": "module".
 COPY package.json ./
