@@ -361,7 +361,12 @@ jobs:
           EOF
           )
 
-          NETWORK_CFG="awsvpcConfiguration={subnets=[$ECS_SUBNETS],securityGroups=[$BACKEND_TASK_SG],assignPublicIp=DISABLED}"
+          # assignPublicIp=ENABLED so the task can reach Secrets Manager /
+          # ECR / CloudWatch in the default VPC (no NAT Gateway, no VPC
+          # Interface Endpoints). The SG inbound is empty so no one can
+          # reach the task from the internet — public IP only enables
+          # outbound. Costs nothing extra.
+          NETWORK_CFG="awsvpcConfiguration={subnets=[$ECS_SUBNETS],securityGroups=[$BACKEND_TASK_SG],assignPublicIp=ENABLED}"
 
           RUN_TASK_ARN=$(aws ecs run-task \
             --cluster "$ECS_CLUSTER" \
