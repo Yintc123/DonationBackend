@@ -106,3 +106,55 @@ export function buildKey(input: BuildKeyInput): string {
   }
   return `donation/${input.entity}/${input.id}/${input.purpose}.${input.ext}`
 }
+
+// ── Object key validator (read path) ──────────────────────────────────────
+//
+// Used by callers that receive a key string from outside (frontend POST of
+// logoKey after a presigned upload, seed scripts, admin API write paths)
+// and need to confirm it matches our contract before persisting (spec 015
+// §3.3 — "application 層 regex 驗證, DB 層長度限制").
+//
+// Read-write asymmetry — IMPORTANT:
+//   - WRITE path (`buildKey`): never produces `.jpeg`; image/jpeg is fixed
+//     to `.jpg` (spec 018 §5.1.1) so the same image cannot land under two
+//     distinct keys.
+//   - READ path (this regex): accepts BOTH `.jpg` AND `.jpeg`. If a future
+//     bulk-import or backfill writes `.jpeg` keys, we still want to read
+//     them, and the public-bucket policy doesn't distinguish.
+// The asymmetry is deliberate, not a bug.
+
+const OBJECT_KEY_ENTITY = ENTITIES.join('|')
+const OBJECT_KEY_PURPOSE = PURPOSES.join('|')
+// UUID character class is case-insensitive (Prisma's @default(uuid()) emits
+// lowercase but the contract permits uppercase too); entity / purpose / ext
+// are case-sensitive lowercase per spec 018 §5.3.
+const OBJECT_KEY_UUID =
+  '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}'
+
+export const OBJECT_KEY_REGEX = new RegExp(
+  `^donation/(${OBJECT_KEY_ENTITY})/${OBJECT_KEY_UUID}/(${OBJECT_KEY_PURPOSE})\\.(png|jpg|jpeg|webp|gif)$`,
+)
+
+/** True iff `key` matches the spec 015 §3.3 / spec 018 §5.1 contract. */
+export function isValidObjectKey(key: string): boolean {
+  return OBJECT_KEY_REGEX.test(key)
+}
+
+/**
+ * Throws {@link ValidationError} when `key` does not match the object-key
+ * contract. Use on write paths (DB insert / update of logoKey / coverImageKey).
+ */
+export function assertValidObjectKey(key: string, fieldPath = '/objectKey'): void {
+  if (!isValidObjectKey(key)) {
+    throw new ValidationError({
+      errors: [
+        {
+          path: fieldPath,
+          message:
+            'object key must match donation/{entity}/{uuid}/{purpose}.{ext} (spec 015 §3.3)',
+          code: 'invalid.object_key',
+        },
+      ],
+    })
+  }
+}

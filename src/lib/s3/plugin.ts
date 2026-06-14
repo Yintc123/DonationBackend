@@ -24,12 +24,24 @@ import fp from 'fastify-plugin'
 import { closeS3Client, createS3Client } from './client.js'
 import { resolveS3Config, type S3Config } from './config.js'
 import { createStorageProbe, type StorageProbeResult } from './health.js'
+import { objectUrl } from './url.js'
 
 declare module 'fastify' {
   interface FastifyInstance {
     s3: S3Client
     s3Config: S3Config
     s3HealthProbe: () => Promise<StorageProbeResult>
+    /**
+     * Spec 015 §3.1 — build the public-read URL for an object key. The
+     * config (bucket / region / publicUrlBase / forcePathStyle) is
+     * partial-applied at plugin registration, so callers only pass the
+     * key — matching spec 015's single-arg expectation and keeping
+     * response builders (spec 016 / 017) clean.
+     *
+     * Non-Fastify callers (e.g. prisma/seed.ts) use the pure
+     * `objectUrl(key, config)` exported from `lib/s3/url.js` instead.
+     */
+    objectUrl: (key: string) => string
   }
 }
 
@@ -44,6 +56,7 @@ export const s3Plugin = fp(
     app.decorate('s3', client)
     app.decorate('s3Config', s3Config)
     app.decorate('s3HealthProbe', probe)
+    app.decorate('objectUrl', (key: string) => objectUrl(key, s3Config))
 
     log.info(
       {

@@ -9,6 +9,7 @@ import { HeadObjectCommand } from '@aws-sdk/client-s3'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { objectUrl } from '../../src/lib/s3/index.js'
 import { buildApp } from '../helpers/app.js'
 
 const VALID_UUID = '0e1b41a8-0000-4000-8000-000000000001'
@@ -44,6 +45,26 @@ describe('s3 plugin (integration, spec 018 §12)', () => {
     } finally {
       app.s3.send = broken
     }
+  })
+
+  // ── app.objectUrl decorator (spec 015 §3.1) ────────────────────────────
+
+  it('app.objectUrl(key) returns the same URL as the pure objectUrl(key, config)', async () => {
+    app = await buildApp()
+    const key = `donation/charities/${VALID_UUID}/logo.png`
+    expect(app.objectUrl(key)).toBe(objectUrl(key, app.s3Config))
+  })
+
+  it('app.objectUrl(key) shape matches the LocalStack path-style base', async () => {
+    app = await buildApp()
+    const key = `donation/donation-projects/${VALID_UUID}/cover.jpg`
+    const url = app.objectUrl(key)
+    // The test harness points S3_PUBLIC_URL_BASE at nothing and forces path
+    // style, so the URL is `<endpoint>/<bucket>/<key>`. We don't pin the
+    // exact endpoint (testcontainers picks an ephemeral port); we pin the
+    // shape.
+    expect(url).toContain(app.s3Config.bucket)
+    expect(url.endsWith(`/${key}`)).toBe(true)
   })
 
   // ── GET /v1/donation/uploads/presign ───────────────────────────────────
