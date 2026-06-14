@@ -30,7 +30,10 @@ env:
   # Deploy-only vars (consumed by the deploy job).
   AWS_REGION: ap-southeast-2
   ECR_REPOSITORY: jko_backend
-  ECS_CLUSTER: jko-cluster
+  # Existing wizard-created cluster from the healthcheck pilot; we keep this
+  # name because ECS clusters cannot be renamed and recreating it just for
+  # naming hygiene isn't worth the migration cost.
+  ECS_CLUSTER: warmhearted-crocodile-18gqvo-jko-cluster
   ECS_SERVICE: jko-backend-service
   CONTAINER_NAME: jko-backend
   TASK_DEFINITION: .aws/task-definition.json
