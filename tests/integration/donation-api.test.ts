@@ -34,19 +34,21 @@ async function seedCategory(opts: { key: string; displayName?: string; displayOr
   })
 }
 
-async function seedCharity(overrides: Partial<{
-  name: string
-  nameEn: string | null
-  description: string
-  descriptionEn: string | null
-  displayOrder: number
-  archivedAt: Date | null
-  deletedAt: Date | null
-  publishStartAt: Date | null
-  publishEndAt: Date | null
-  logoKey: string | null
-  categoryIds: string[]
-}> = {}) {
+async function seedCharity(
+  overrides: Partial<{
+    name: string
+    nameEn: string | null
+    description: string
+    descriptionEn: string | null
+    displayOrder: number
+    archivedAt: Date | null
+    deletedAt: Date | null
+    publishStartAt: Date | null
+    publishEndAt: Date | null
+    logoKey: string | null
+    categoryIds: string[]
+  }> = {},
+) {
   const c = await app.prisma.charity.create({
     data: {
       name: overrides.name ?? 'Charity-' + Math.random().toString(36).slice(2, 8),
@@ -108,7 +110,9 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
     const body = res.json() as JsonBody
     const names = body.items.map((i) => i.name)
     expect(names).toEqual(expect.arrayContaining(['live A', 'live B']))
-    expect(names).not.toEqual(expect.arrayContaining(['archived', 'deleted', 'scheduled', 'expired']))
+    expect(names).not.toEqual(
+      expect.arrayContaining(['archived', 'deleted', 'scheduled', 'expired']),
+    )
     expect(body.pageInfo).toEqual({ nextCursor: null, hasMore: false })
   })
 
@@ -150,7 +154,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
     expect(body.items).toHaveLength(1)
     expect(body.items[0]?.name).toBe('Stray Animal Shelter')
     expect(res.headers['content-language']).toBe('en')
-    expect(res.headers['vary']).toBe('Accept-Language')
+    expect(res.headers['vary']).toBe('Accept-Language, Origin')
   })
 
   it('falls back to zh name when row has no nameEn but locale=en', async () => {
@@ -340,9 +344,45 @@ describe('GET /v1/donation/categories (spec 016 §6)', () => {
     expect(body.items.map((i) => i.key)).toEqual(['child_care'])
   })
 
-  it('sets the 5-minute public cache header (spec 016 §6.4)', async () => {
+  it('sets the 5-minute public cache header with stale-while-revalidate (spec 016 §6.4 v0.13)', async () => {
     const res = await app.inject({ method: 'GET', url: '/v1/donation/categories' })
-    expect(res.headers['cache-control']).toBe('public, max-age=300, must-revalidate')
+    expect(res.headers['cache-control']).toBe(
+      'public, max-age=300, must-revalidate, stale-while-revalidate=86400',
+    )
+  })
+
+  it('emits a strong ETag and short-circuits to 304 on If-None-Match match (spec 016 §6 v0.13)', async () => {
+    await seedCategory({ key: 'animal_protection', displayOrder: 20 })
+    await seedCategory({ key: 'child_care', displayOrder: 10 })
+
+    const first = await app.inject({ method: 'GET', url: '/v1/donation/categories' })
+    expect(first.statusCode).toBe(200)
+    const etag = first.headers.etag as string
+    expect(etag).toMatch(/^"[0-9a-f]{16}"$/)
+
+    const second = await app.inject({
+      method: 'GET',
+      url: '/v1/donation/categories',
+      headers: { 'if-none-match': etag },
+    })
+    expect(second.statusCode).toBe(304)
+    expect(second.body).toBe('')
+    expect(second.headers.etag).toBe(etag)
+  })
+
+  it('different locales receive different category ETags (spec 016 §8 Vary: Accept-Language)', async () => {
+    await seedCategory({ key: 'child_care', displayOrder: 10 })
+    const zh = await app.inject({
+      method: 'GET',
+      url: '/v1/donation/categories',
+      headers: { 'accept-language': 'zh-TW' },
+    })
+    const en = await app.inject({
+      method: 'GET',
+      url: '/v1/donation/categories',
+      headers: { 'accept-language': 'en' },
+    })
+    expect(zh.headers.etag).not.toBe(en.headers.etag)
   })
 })
 
@@ -366,6 +406,9 @@ describe('GET /v1/donation/{resource}/:id detail (spec 017)', () => {
     const res = await app.inject({ method: 'GET', url: `/v1/donation/charities/${c.id}` })
     expect(res.statusCode).toBe(404)
     expect((res.json() as { code: string }).code).toBe('CHARITY_NOT_FOUND')
+    // Spec 017 §2 v0.6 (B3): 404 from lifecycle / cascading visibility MUST
+    // NOT be cached — the parent's renewal could flip 404 → 200 within seconds.
+    expect(res.headers['cache-control']).toBe('no-store')
   })
 
   it('returns 404 for a Project whose parent Charity is expired (Cascading visibility)', async () => {

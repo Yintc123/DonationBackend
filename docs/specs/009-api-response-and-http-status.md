@@ -3,8 +3,8 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.1 |
-| 日期 | 2026-06-13 |
+| 版本 | 0.2 |
+| 日期 | 2026-06-14 |
 | 適用範圍 | 所有 backend 對外 API endpoint |
 | 相關 ADR | `docs/decisions/002-backend-framework.md` |
 | 相關 spec | `005-error-handling.md`(錯誤回應)、`004-logger-module.md`(`X-Request-Id` 對應 `reqId`)、`006-redis-module.md`(idempotency cache) |
@@ -138,11 +138,14 @@ Content-Type: application/json; charset=utf-8
 - 雜湊、密碼、token、secret(由 response schema 在 Fastify 層攔截,spec 003 §7.1 已要求)
 - internal flag(`isDeleted` / `isInternal` 等實作細節)
 
-### 4.4 空欄位處理
+### 4.4 空欄位處理(v0.2)
 
 - 必填欄位 → 必出現,非空
-- 可選欄位 → 沒有時**省略 key**(不要回 `null` 與 `undefined` 混用)
+- 可選欄位 → 沒有時**回 `null`**,key **永遠存在**(原 v0.1「省略 key」改為 null;理由見下方)
 - List → 沒有 item 時回 `[]`,**不**回 `null`
+- 嚴禁 `null` 與 `undefined`(key 缺席)在同一欄位混用 — Fastify response schema(TypeBox `Type.Union([X, Type.Null()])`)強制 key 出現
+
+> **為什麼改成 null(v0.2)**:client TS 型別宣告穩定(`field: string | null` 永遠合法),不用區分「key 缺席 vs null」;BFF/前端對列表卡片解構 (`const { logoUrl }`) 不會拿到 `undefined`;與目前 `src/schemas/**` 內 `Type.Union([Type.String(), Type.Null()])` 慣例一致。代價:payload size 多幾個 byte,於 cursor 列表場景可忽略。下游 spec 016 / 017 同步更新。
 
 ---
 
@@ -366,7 +369,7 @@ fastify.get('/v1/<resource>/:id', {
 | `GET /v1/<resource>?cursor=...` 沒結果 | 200 + `{ items: [], pageInfo: { nextCursor: null, hasMore: false } }` |
 | `GET /v1/<resource>/:id` 找不到 | 404 + Problem Details(spec 005) |
 | `DELETE /v1/<resource>/:id` 不存在 | 204(idempotent,不要回 404) |
-| 可選欄位無值 | 省略 key |
+| 可選欄位無值 | 回 `null`(key 永遠存在,v0.2)|
 | 必填欄位無值 | 不可能;表示資料異常,500 |
 
 ---
@@ -485,3 +488,4 @@ X-Request-Id: ...
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
+| 0.2 | 2026-06-14 | §4.4 / §11 「可選欄位無值 → 省略 key」改為「**回 `null`,key 永遠存在**」 — 對齊 Fastify TypeBox `Type.Union([X, Type.Null()])` 慣例與下游 spec 016 / 017 既有 schema,client TS 型別更穩定;下游 spec 016 v0.13、spec 017 v0.6 同步 |

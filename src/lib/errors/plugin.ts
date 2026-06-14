@@ -113,10 +113,19 @@ const errorHandlerPlugin: FastifyPluginAsync<ErrorHandlerOptions> = async (fasti
       // Set our own X-Request-Id so the body and header always agree, even
       // when the spec-009 http-response plugin isn't registered (e.g. this
       // unit test) and even on 5xx where its onSend hook would still run.
+      //
+      // Spec 017 §2 v0.6 / spec 005 — error responses MUST NOT be cached.
+      // Required for the cascading-visibility scenario (Charity contract
+      // expires → child Project 404 → contract renewed → child 200): a CDN
+      // that caches the 404 would keep serving "gone" after the parent is
+      // back. Applies uniformly to all 4xx and 5xx — `no-store` on errors
+      // is a safe default; any future cacheable error response (none today)
+      // can override here.
       reply
         .status(appErr.statusCode)
         .type('application/problem+json; charset=utf-8')
         .header(REQUEST_ID_HEADER, requestId)
+        .header('Cache-Control', 'no-store')
         .send(body)
     },
   )

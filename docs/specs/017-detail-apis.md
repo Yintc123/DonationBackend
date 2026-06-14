@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.5 |
+| 版本 | 0.6 |
 | 日期 | 2026-06-14 |
 | 適用範圍 | `backend/src/routes/v1/donation/charities/get-by-id.ts`、`backend/src/routes/v1/donation/donation-projects/get-by-id.ts`、`backend/src/routes/v1/donation/sale-items/get-by-id.ts`、`backend/src/schemas/donation-item/detail.ts` |
 | 相關 ADR | 同 spec 016(專案級 002 Fastify schema-driven、007 Prisma;backend 002 charity-category-model、**backend 004 i18n-storage-model**)+ **backend 006 lifecycle-fields-and-cascading-visibility**(v0.5 — detail endpoint 必須通過 `whereLive` 才回 200,否則 404 不洩漏 archived / deleted)|
@@ -37,14 +37,16 @@
 |---|---|
 | URL pattern | `/v1/donation/<resource>/:id`,`id` 為 uuid v4 |
 | Auth | public(同 spec 016 §3)|
-| `:id` 非 uuid → 400 | `VALIDATION_ERROR` |
+| `:id` 非 uuid → 400 | `VALIDATION_FAILED`(v0.6 — 對齊 spec 005 §4.2 / spec 016 v0.12 字典;原版本拼成 `_ERROR` 是 drift)|
 | 找不到 → 404 | `CHARITY_NOT_FOUND` / `DONATION_PROJECT_NOT_FOUND` / `SALE_ITEM_NOT_FOUND` |
 | **Lifecycle filter**(v0.5 — backend ADR 006)| Public detail endpoint **必須**走 `whereLive` 4 條件:row 存在但 `deletedAt IS NOT NULL` / `archivedAt IS NOT NULL` / `publishStartAt > NOW()` / `publishEndAt <= NOW()` 任一成立 → **回 404,不回 200**;**禁止**洩漏「該 row 存在但不可見」的訊息。Project / SaleItem 額外:**parent Charity 必須也通過 `whereLive`**(Cascading visibility,ADR 006 §3),否則同樣 404 |
-| Cache-Control | `private, max-age=0, must-revalidate`(同 spec 016 §8)|
-| ETag | `"<sha256(id + updatedAt + charity.updatedAt for nested + locale)前 16 字元>"`;`If-None-Match` 命中回 304(**v0.3 加入 locale** 避免 zh/en 互蓋)|
+| Cache-Control(2xx)| `private, max-age=0, must-revalidate`(同 spec 016 §8)|
+| **Cache-Control(404)**(v0.6 — B3)| `no-store`(spec 005 已預設,本 spec 顯式重申)。**理由**:cascading visibility(ADR 006 §3)會讓「Charity 合約過期 → 子表 404」與「續約 → 子表 200」反覆切換,client / CDN 若 cache 404 5 秒就會看到「續約完還是 404」的鬼故事;同樣 `archivedAt` toggle 也適用。Detail endpoint 的 404 永遠不可 cache |
+| ETag(2xx)| `"<sha256(id + updatedAt + charity.updatedAt for nested + locale)前 16 字元>"`;`If-None-Match` 命中回 304(**v0.3 加入 locale** 避免 zh/en 互蓋)。**v0.6 — 404 response 不簽發 ETag**(避免 archived row 重新發布後舊 304 卡掉新內容,§7 已有測試)|
 | **Accept-Language**(v0.3)| `zh-TW` / `en`;規則同 spec 016 §4.1.1;response 各 `name` / `description` / `content` 走 fallback `XxxEn ?? Xxx`;`Content-Language` 必有;`Vary: Accept-Language` 必有 |
 | **圖片 URL**(v0.4)| DB 存 `logoKey` / `coverImageKey`(S3 key,spec 015 v0.8);response 仍回 `logoUrl` / `coverImageUrl`(完整 URL),由 spec 018 `objectUrl(key)` 拼接。換 CDN / bucket → 改 env(`S3_PUBLIC_URL_BASE`)即可 |
-| Rate-limit | 與 list endpoint **共用 bucket**(同 IP,所有 read endpoint)|
+| **空欄位處理**(v0.6)| 可選欄位無值 → 回 `null`,**key 永遠存在**(對齊 spec 009 §4.4 v0.2、spec 016 v0.13)。`contactPhone` / `contactEmail` / `officialWebsite` / `approvalNo` / `logoUrl` / `coverImageUrl` / `raisingApprovalNo` / `reliefApprovalNo` 全採此規約 |
+| Rate-limit | 與 list endpoint **共用 bucket**(同 IP,所有 read endpoint);BFF 拓墣下的 key 規約見 spec 016 §10.1 v0.13 |
 | CORS | public(同 spec 016 §9)|
 
 > **v0.5 — Cascading visibility 在 detail 的意義**(ADR 006 §3):前端拿 list response 的 `id` 點進 detail 時,如果 Charity 合約剛好過期 / 被 archive / soft delete,detail endpoint **不可**回 200。一致地走 `whereLive` + parent `whereLive`,**沒走 helper = 安全漏洞**(下架的資料被 deep link 看到)。實作建議:在 `domain/donation-item/get-by-id.ts` 內 `findUnique({ where: { id, ...whereLive(now) } })`,parent 透過 `findFirst({ where: { id, charity: whereLive(now) } })` 一次撈。
@@ -86,11 +88,11 @@
 
 | 欄位 | 必有 | 型別 | 說明 |
 |---|---|---|---|
-| 基本欄位(id / name / description / logoUrl / createdAt / updatedAt) | ✅ | 同 list | |
-| `contactPhone` | optional | string | 「02-66040024」 |
-| `contactEmail` | optional | string(email) | |
-| `officialWebsite` | optional | string(URL) | |
-| `approvalNo` | optional | string | 「台內團字第1110295700號」 |
+| 基本欄位(id / name / description / logoUrl / createdAt / updatedAt) | ✅ | 同 list | `logoUrl` 為 `string \| null`(無圖時 `null`,key 永遠存在,v0.6)|
+| `contactPhone` | nullable | string \| null | 「02-66040024」;無值 `null` |
+| `contactEmail` | nullable | string(email) \| null | |
+| `officialWebsite` | nullable | string(URL) \| null | |
+| `approvalNo` | nullable | string \| null | 「台內團字第1110295700號」 |
 | `categories[].id` | ✅ | uuid | 對應 Category 表 |
 | `categories[].key` | ✅ | string | program identifier(spec 015 §7.1) |
 | `categories[].displayName` | ✅ | string | UI label |
@@ -103,7 +105,9 @@
 **v0.5 — 必須走 `whereLive`**(backend ADR 006 §2):row 在 DB 中存在但 lifecycle filter 不通過 → 視為 404,**不**洩漏存在訊息。改用 `findFirst`(允許 compound where)而非 `findUnique`:
 
 ```ts
-import { whereLive } from '@/domain/donation-item/where.js'
+// v0.6 — import 路徑對齊 code(原 spec 寫 `@/domain/donation-item/where.js` 是過去構想,
+// 實作落地在 lifecycle 子 domain)
+import { whereLive } from '@/domain/lifecycle/index.js'
 
 const c = await prisma.charity.findFirst({
   where: { id, ...whereLive(new Date()) },   // ← 4 條件全套
@@ -117,7 +121,7 @@ const c = await prisma.charity.findFirst({
     },
   },
 })
-if (!c) throw new NotFoundError('CHARITY_NOT_FOUND')
+if (!c) throw new NotFoundError({ resource: 'charity', id, code: 'CHARITY_NOT_FOUND' })
 return {
   ...c,
   categories: c.categories.map(jc => ({
@@ -171,14 +175,14 @@ return {
 
 | 欄位 | 必有 | 型別 | 說明 |
 |---|---|---|---|
-| 基本欄位(id / name / description / logoUrl / createdAt / updatedAt) | 同 list | | |
-| `coverImageUrl` | optional | string(URL) | 詳情頁主視覺 |
+| 基本欄位(id / name / description / logoUrl / createdAt / updatedAt) | 同 list | | `logoUrl: string \| null` |
+| `coverImageUrl` | nullable | string(URL) \| null | 詳情頁主視覺;無圖 `null` |
 | `content` | ✅ | string(可空字串但通常非空) | 完整專案內容 |
-| `raisingApprovalNo` | optional | string | 勸募立案核准字號 |
-| `reliefApprovalNo` | optional | string | 衛部救字號 |
+| `raisingApprovalNo` | nullable | string \| null | 勸募立案核准字號 |
+| `reliefApprovalNo` | nullable | string \| null | 衛部救字號 |
 | `charity.id` | ✅ | uuid | 對應 `/v1/donation/charities/:id` |
 | `charity.name` | ✅ | string | |
-| `charity.logoUrl` | optional | string(URL) | |
+| `charity.logoUrl` | nullable | string(URL) \| null | |
 | `categories` | ✅ | 同 §3.2 | 繼承自主辦團體;**空 array 合法**(主辦團體可未掛 category)|
 
 > **v0.3 i18n**:`name` / `description` / `content` 都依 locale fallback。`charity.name` 同邏輯。`content` 為長文,在 `en` 缺翻譯時 fallback 中文,前端應理解可能混雜語系(極少數情境)。
@@ -188,15 +192,14 @@ return {
 **v0.5 — 必須走 `whereLive` 並對 parent Charity 套 cascade**(backend ADR 006 §3):
 
 ```ts
-import { whereLive } from '@/domain/donation-item/where.js'
+// v0.6 — code 採用 `whereLiveWithParent(now)` 一個 helper 收掉「Project 自身 live
+// + parent Charity 也 live」兩段條件,呼叫端不必自己拼 `charity: { is: whereLive(now) }`。
+// 行為等價,可讀性 / 拼錯機率都優於分開寫。
+import { whereLiveWithParent } from '@/domain/lifecycle/index.js'
 
 const now = new Date()
 const p = await prisma.donationProject.findFirst({
-  where: {
-    id,
-    ...whereLive(now),                       // ← Project 自己 live
-    charity: { is: whereLive(now) },         // ← Cascade:主辦 Charity 也必須 live
-  },
+  where: { id, ...whereLiveWithParent(now) },   // ← Project + parent Charity 一次套
   include: {
     charity: {
       include: {
@@ -211,7 +214,7 @@ const p = await prisma.donationProject.findFirst({
     },
   },
 })
-if (!p) throw new NotFoundError('DONATION_PROJECT_NOT_FOUND')
+if (!p) throw new NotFoundError({ resource: 'donation-project', id, code: 'DONATION_PROJECT_NOT_FOUND' })
 const { charity, ...rest } = p
 return {
   ...rest,
@@ -273,7 +276,7 @@ return {
 
 ### 5.3 Prisma 查詢
 
-同 §4.3 把 `donationProject` 換成 `saleItem` — **同樣**需要 `whereLive` + `charity: { is: whereLive(now) }` cascade(v0.5)。
+同 §4.3 把 `donationProject` 換成 `saleItem` — **同樣**用 `whereLiveWithParent(now)` helper(v0.6,原 v0.5 分開寫 `whereLive` + `charity: { is: whereLive(now) }` 已收成單一 helper,語意等價)。
 
 ---
 
@@ -313,10 +316,10 @@ API 回傳 `name: string`,client 無法分辨「拿到的是 en 還是 fallback 
 |---|---|---|
 | unit | TypeBox schema parse Project detail response | 對 |
 | integration | `GET /v1/donation/charities/:id` 帶齊聯絡欄位的 seed → response 完整 | 對 |
-| integration | `GET /v1/donation/charities/:id` 部分聯絡欄位為 null → response 省略 key(spec 009 §4.4) | 對 |
+| integration | `GET /v1/donation/charities/:id` 部分聯絡欄位為 DB null → response 對應欄位**回 `null`,key 仍出現**(v0.6 — spec 009 §4.4 v0.2)| 對 |
 | integration | `GET /v1/donation/donation-projects/:id` nested charity inflated 且 `categories` 繼承自主辦團體 | 對 |
 | integration | `GET /v1/donation/sale-items/:id` `priceTwd` 為 0 → 回 200(0 為合法價格) | 對 |
-| integration | 三 endpoint 帶 invalid uuid → 400 `VALIDATION_ERROR` | 對 |
+| integration | 三 endpoint 帶 invalid uuid → 400 `VALIDATION_FAILED`(v0.6) | 對 |
 | integration | 三 endpoint 帶不存在 uuid → 404 對應 code | 對 |
 | integration | ETag 命中 `If-None-Match` → 304 | 對 |
 | integration | 改主辦團體名稱 → Project detail ETag 變動 → 304 不再命中 | 對 |
@@ -333,6 +336,7 @@ API 回傳 `name: string`,client 無法分辨「拿到的是 en 還是 fallback 
 | integration | **v0.5 Cascading visibility(SaleItem 端)**:Charity B `archivedAt = past`,旗下 SaleItem S1 自身全空 — `GET /v1/donation/sale-items/S1` 回 404 | 對 |
 | integration | **v0.5 Cascading visibility — archived category 隱藏**:detail response 內的 `categories` 不含 `archivedAt` / `deletedAt` 非空的 Category(透過 `include.where` 過濾)| 對 |
 | integration | **v0.5 ETag 不對 404 row 簽發**:archived / deleted row 的 404 response **無** ETag header(避免 client cache 後續續恢復後的 200 被舊 304 卡掉)| 對 |
+| integration | **v0.6 404 response Cache-Control: no-store**(B3):上述 archived / deleted / publish window 外 / cascading parent 過期等四條 404 情境,response 的 `Cache-Control` 必含 `no-store`(避免 CDN cache 過期 row 的 404,續約 / unarchive 後仍回 404)| 對 |
 | e2e | 前端 charity detail page 直接渲染 | 對 |
 | e2e | 前端 project detail 點主辦團體 chip → 跳對應 charity detail | 對 |
 
@@ -347,3 +351,4 @@ API 回傳 `name: string`,client 無法分辨「拿到的是 en 還是 fallback 
 | 0.3 | 2026-06-14 | 引入 i18n(backend ADR 004):(1) §2 共通規則加 `Accept-Language` 行為;(2) ETag 公式包含 locale(避免 zh/en 互蓋);(3) `Content-Language` / `Vary` header 必有;(4) §3 ~ §5 各 response shape 不變,fallback 在 server 端完成;(5) Category inflated `displayName` 依 locale 切換(seed 100% backfill 不會 fallback);(6) §6.4 新增 i18n fallback 透明度開放問題(`?include=langInfo`);(7) §7 補 3 條 i18n 測試 |
 | 0.4 | 2026-06-14 | 同步 spec 015 v0.8 / spec 018 v0.2:detail response 中的 `logoUrl` / `coverImageUrl` / `charity.logoUrl` 由 server 端 `objectUrl(key)` 拼接(DB 存 key,**response shape 對 client 不變**)。§2 共通規則加註圖片 URL 拼接來源;§7 不必新測試(URL 完整性已在 spec 018 §12 testcontainer e2e 覆蓋)|
 | 0.5 | 2026-06-14 | Entity lifecycle 落實到 detail endpoint(**backend ADR 006 / spec 015 v0.9 / spec 016 v0.11**):(1) §2 共通規則加「Lifecycle filter」行 — public detail 必須走 `whereLive` 4 條件,任一不通過回 404 不洩漏存在;(2) Project / SaleItem 額外 cascading visibility — parent Charity 也必須通過 `whereLive`,否則同樣 404;(3) §2 末加 implementation hint;(4) §3.3 / §4.3 / §5.3 Prisma 查詢範例改用 `findFirst` + `whereLive(now)`,Project / SaleItem 加 `charity: { is: whereLive(now) }` cascade,Category include 加 `archivedAt: null, deletedAt: null` 過濾;(5) §7 補 8 條 lifecycle 整合測試(4 種 lifecycle 路徑各 → 404、Cascading visibility Project / SaleItem 各 + 反向恢復、archived category 不出現在 categories 內、ETag 不對 404 row 簽發)|
+| 0.6 | 2026-06-14 | 與實作對齊 + best practice 補強(對齊 spec 009 v0.2 / spec 016 v0.13):**(A 類 drift)** (1) §2 / §7 `VALIDATION_ERROR` → `VALIDATION_FAILED`(spec 005 §4.2 字典為命名權威,過去版本拼成 `_ERROR` 是 drift);(2) §2 / §3.2 / §4.2 / §5.2 / §7 可選欄位無值改為「回 `null`,key 永遠存在」 — 對齊 `src/schemas/donation-item/detail.ts` 既有 `Type.Union([String, Null])` schema 與 spec 009 v0.2;(3) §3.3 / §4.3 / §5.3 import 路徑 `@/domain/donation-item/where.js` → `@/domain/lifecycle/index.js`(對齊 code);(4) §4.3 / §5.3 改用 `whereLiveWithParent(now)` 單一 helper(語意等價於 `whereLive + charity: { is: whereLive(now) }`,可讀性與正確性都優於分開拼);(5) §3.3 `NotFoundError` 範例補上 `{ resource, id, code }` payload(對齊實作)。**(B 類 best practice)** (6) §2 新增 `Cache-Control(404): no-store`(B3) — cascading visibility 與 lifecycle window 會讓 404 ↔ 200 反覆切換,client / CDN 不可 cache 404;§7 補 1 條對應測試 |

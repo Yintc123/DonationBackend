@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.12 |
+| 版本 | 0.13 |
 | 日期 | 2026-06-14 |
 | 適用範圍 | `backend/src/routes/v1/donation/charities/*`、`backend/src/routes/v1/donation/donation-projects/*`、`backend/src/routes/v1/donation/sale-items/*`、`backend/src/routes/v1/donation/categories/*`、`backend/src/domain/donation-item/*`、`backend/src/domain/category/*`、`backend/src/schemas/donation-item/*`、`backend/src/schemas/category/*` |
 | 相關 ADR | `../../docs/decisions/002-backend-framework.md`(專案級 — Fastify schema-driven)、`../../docs/decisions/007-orm-prisma.md`(專案級)、`../decisions/001-donation-item-relations.md`(backend 級 — `?charityId=` 過濾)、`../decisions/002-charity-category-model.md`(backend 級 — `?category=<key>` 過濾、`/v1/donation/categories` 端點、子表繼承查詢)、`../decisions/004-i18n-storage-model.md`(backend 級 — `Accept-Language` request header + fallback 語意)、`../decisions/006-lifecycle-fields-and-cascading-visibility.md`(backend 級 — **v0.11 起所有 public list query 必須走 `whereLive` + Project / SaleItem cascade parent Charity 的 `whereLive`**)|
@@ -98,7 +98,7 @@ Accept-Language: zh-TW           # 或 en,缺則預設 zh-TW
 
 | 參數 | 必填 | 預設 | 上限 / 規則 | 說明 |
 |---|---|---|---|---|
-| `q` | 否 | — | trim 後 1 ~ 80 字 | 關鍵字。對 `name` 與 `description` ILIKE 子字串比對(spec 015 §4.2 trigram GIN) |
+| `q` | 否 | — | **NFC 正規化** + trim 後 1 ~ 80 字(JS string `length`,即 UTF-16 code unit)| 關鍵字。對 `name` 與 `description` ILIKE 子字串比對(spec 015 §4.2 trigram GIN)。**v0.13 — NFC 正規化(B2)**:不同輸入法 / 平台會送出 NFC vs NFD 不同 byte 序列(同顯示文字),server 收進後一律 `String.prototype.normalize('NFC')` 再 trim、計長度、丟 Prisma;否則「ç」/「c + ̧」之類組合會 ILIKE 漏命中 |
 | `category` | 否 | — | `CategoryKey`(16 個白名單之一,spec 015 §7.1)| 分類過濾;**用 application-level key 而非 UUID**(backend ADR 002 v0.2 §結果)。Charity 直接 JOIN `charity_categories` + `categories` 拿 key;Project / SaleItem 透過主表 JOIN(§4.6 子表繼承) |
 | `cursor` | 否 | — | opaque base64url 字串 | 由 server 上一頁 `pageInfo.nextCursor` 提供 |
 | `limit` | 否 | `10` | `1` ~ `50` | 每頁筆數;預設 `10` 對齊 brief v0.3「每 tab 一開始抓 10 筆」;spec 009 §5.2 上限 100,本端點再收緊到 50 |
@@ -191,17 +191,17 @@ Accept-Language: zh-TW           # 或 en,缺則預設 zh-TW
 | `items[].id` | all | ✅ | uuid string | spec 015 主鍵 |
 | `items[].name` | all | ✅ | string | 完整名稱 |
 | `items[].description` | all | ✅ | string | 完整簡介(無截斷;前端 CSS 控制行數)|
-| `items[].logoUrl` | all | optional | string (URL) | 無 logo 時**省略 key**(spec 009 §4.4)|
+| `items[].logoUrl` | all | nullable | string (URL) \| null | 無 logo 時回 `null`,**key 永遠存在**(v0.13 — spec 009 §4.4 v0.2 統一 null 語意)|
 | `items[].createdAt` / `updatedAt` | all | ✅ | ISO 8601 UTC | |
 | `items[].charityId` | donation-projects / sale-items | ✅ | uuid string | FK |
 | `items[].charityName` | donation-projects / sale-items | ✅ | string | embed,避免 N+1 |
-| `items[].coverImageUrl` | donation-projects / sale-items | optional | string (URL) | 卡片主視覺 |
+| `items[].coverImageUrl` | donation-projects / sale-items | nullable | string (URL) \| null | 卡片主視覺;無圖時回 `null`(同上)|
 | `items[].priceTwd` | sale-items | ✅ | integer ≥ 0 | TWD 整數 |
-| `items[].categories` | donation-projects / sale-items | ✅ | `CategoryKey[]` | 繼承自主辦團體(可空 array)|
+| `items[].categories` | all (v0.13) | ✅ | `InflatedCategory[]` | `{ id, key, displayName }[]` — Charity 自身、Project / SaleItem 繼承自主辦團體(可空 array)。**v0.13:Charity endpoint 也加入此欄位**(對齊實作 `CharityListItem` schema,並與 detail `categories` 一致;之前 §4.4 註記「未來 `?include=categories`」已實質落地)|
 | `pageInfo.nextCursor` | all | nullable | string | 最後一頁為 `null` |
 | `pageInfo.hasMore` | all | ✅ | boolean | `false` 時 `nextCursor` 必為 `null` |
 
-> `charities` endpoint 的卡片 layout(IMG_4875)只需要 logo + name + description,不必 embed categories 或 cover image。若未來公益團體列表卡也想顯示 tags,加 `?include=categories`(屬 additive)。
+> v0.13 — Charity list item 已嵌入 `categories`(對齊 detail 與實作 schema);Project / SaleItem 的 `categories` 仍由主辦團體繼承。原 `?include=categories` 開放問題已實質吸收,標記為 resolved。
 
 ### 4.5 排序與 cursor
 
@@ -343,7 +343,7 @@ Accept: application/json
 HTTP/1.1 200 OK
 Content-Type: application/json; charset=utf-8
 X-Request-Id: <uuid>
-Cache-Control: public, max-age=300, must-revalidate
+Cache-Control: public, max-age=300, must-revalidate, stale-while-revalidate=86400
 ETag: "v1:categories:<hash>"
 
 {
@@ -364,7 +364,6 @@ ETag: "v1:categories:<hash>"
 |---|---|---|---|
 | `items[].id` | ✅ | uuid string | 內部 entity identifier(非 filter 用 — filter 走 `key`)|
 | `items[].key` | ✅ | string | **filter 用** — list endpoint `?category=<key>` 帶這個值 |
-| ~~`items[].key`~~(已在表上一行)| | | |
 | `items[].displayName` | ✅ | string | UI 顯示文字 |
 | `items[].displayOrder` | ✅ | int | dropdown 排序;前端已 ORDER BY 過,直接渲染 |
 
@@ -372,7 +371,7 @@ ETag: "v1:categories:<hash>"
 
 - **不分頁**(分類數量小,固定 < 50;若超出,改加 `?q=` 搜尋,本 spec v0.5 不處理)
 - 預設 `ORDER BY display_order ASC, key ASC`
-- 共用 cache:**`Cache-Control: public, max-age=300, must-revalidate`** + ETag — 與 list endpoint 不同(category 字典變動極少,可中介層 cache 5 分鐘)
+- 共用 cache:**`Cache-Control: public, max-age=300, must-revalidate, stale-while-revalidate=86400`** + ETag — 與 list endpoint 不同(category 字典變動極少,可中介層 cache 5 分鐘)。**v0.13 — `stale-while-revalidate=86400`(B6)**:max-age 過後 24h 內仍允許 CDN / browser 拿過期內容後背景 revalidate,提升 categories endpoint 韌性(網路抖動 / 短暫 5xx 下使用者仍能拿到 dropdown)。對 admin 改字典的可見性影響:從原本「最多 5 分鐘 stale」延長到「最多 5 分鐘 stale + 背景 revalidate」,實際因 admin endpoint(`whereForAdmin`)立即生效仍可接受。
 - 條件 GET(`If-None-Match`)命中回 304
 - **v0.8 i18n**:`Accept-Language: en` 時,`displayName` 欄位回 `displayNameEn`(Category 16 筆強制 backfill,所以**不**會 fallback)。ETag 與 cache key **包含 locale**,避免 zh / en 互相污染(具體做法:cache key 加 `Vary: Accept-Language` header)
 - **v0.11 lifecycle filter**(backend ADR 006):查詢 `WHERE deleted_at IS NULL AND archived_at IS NULL`(Category 沒有 publishStartAt / publishEndAt — 字典表無合作期限,spec 015 v0.9 §3.3)。**Cache 影響**:Category 字典極少改動,5 分鐘 max-age 仍然合理;admin archive 一個分類後最多 5 分鐘前端會看到舊資料,可接受(admin endpoint 走 `whereForAdmin` 立即看到正確結果)|
@@ -443,7 +442,18 @@ Shape 詳見 spec 017。重點差異(對 list item 而言):
 - 三 endpoint **共用同一 bucket key**(同 IP,不分 resource)— 避免 client 用三 endpoint 繞限額
 - 觸發 → 429 `RATE_LIMITED` + `Retry-After`
 
-> Demo 時若需展示三 tab 連續無限滾動,可暫時把 limit 拉到 600;不在本 spec 寫死。
+### 10.1 BFF 拓墣下的 rate-limit key(v0.13 — B1)
+
+本 API 對 public 開放但**實際生產環境前面壓一層 Next.js BFF**(frontend route handler,經由內部 service mesh 呼叫 backend)。若直接用 raw `request.ip` 為 bucket key,**整個前端站台共用同一個 IP**,60/min 不到 5 秒就被一個熱門使用者吃光,其餘 user 全 429。
+
+規約:
+
+1. **必信任 proxy**:Fastify `trustProxy` 已開(spec 011 / `tests/integration/trust-proxy.test.ts`),`request.ip` 會取 `X-Forwarded-For` 第一段(真實 client IP),BFF egress IP 不會誤用為 bucket key。
+2. **BFF 必須轉發 `X-Forwarded-For`**:Next.js 16 route handler 透過 `headers()` 取得 inbound `x-forwarded-for`,附加 inbound `request.ip` 後送 backend(frontend spec 001e backend-fetch 應同步)。若 BFF 沒轉發,backend 看到的 client IP 一律為 BFF egress IP → bucket 共用問題仍在。
+3. **若同時有 session**:rate-limit key 可加 session id(`bucket = ip + sessionId`),不同 user 不互相污染;未登入流量仍走 IP-only。
+4. **Demo 環境**:若 demo 需要連續無限滾動三 tab × 3 頁,把 limit 拉到 600/min/IP(env override),不寫死於 spec。
+
+> **未做這層**:backend 看到的會是 frontend 容器 IP,實質「整個 demo 全站共一個 bucket」。請在 frontend route handler PR 同步補 `X-Forwarded-For` 轉發。
 
 ---
 
@@ -455,6 +465,22 @@ Shape 詳見 spec 017。重點差異(對 list item 而言):
 - `Cache-Control: private, max-age=0, must-revalidate`
 - BFF 側可自行 short TTL cache(例 5s)削平 burst
 - **v0.11 — lifecycle 時間敏感性**:list query 結果依賴 `NOW()`(`publishStartAt` / `publishEndAt` 視窗)。`private, max-age=0` 確保每次都重新 revalidate,**時間敏感資料不會 stale**。**BFF 短 TTL cache(5s)是上限** — 不要拉超過 30 秒,否則「上下架瞬間」可見性誤差會被使用者感知
+- **v0.13 — BFF cache key 必含維度(B4)**:若 BFF 啟用 short TTL cache,cache key **必須**完整覆蓋下列維度,否則 zh / en 互相污染、不同 filter 共用結果、cursor 翻頁拿到舊頁:
+
+  ```ts
+  // frontend BFF — route handler 內 short-TTL cache 的 key
+  const cacheKey = [
+    pathname,              // /v1/donation/charities | /v1/donation/donation-projects | /v1/donation/sale-items
+    q ?? '',
+    category ?? '',
+    cursor ?? '',
+    String(limit ?? 10),
+    charityId ?? '',       // Project / SaleItem only
+    acceptLanguage,        // 'zh-TW' | 'en' — 不可缺
+  ].join('|')
+  ```
+
+  反例:只用 pathname + q → en 使用者搜 `stray` 拿到上一個 zh-TW 結果。`Vary: Accept-Language`(spec 016 §8)管的是 CDN / browser cache,**BFF 自管的 in-memory cache 不會自動套用 Vary**,必須自己列。
 
 ### 11.2 單筆
 
@@ -474,57 +500,73 @@ Shape 詳見 spec 017。重點差異(對 list item 而言):
 ```ts
 // src/schemas/donation-item/shared.ts
 export const ListQueryBase = Type.Object({
-  q:          Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+  q:        Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
   category: Type.Optional(Type.Union(CATEGORY_KEYS.map(k => Type.Literal(k)))),
   // ↑ CATEGORY_KEYS 來自 src/domain/category/keys.ts(spec 015 §7.2),16 個 literal union
-  cursor:     Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
-  limit:      Type.Optional(Type.Integer({ minimum: 1, maximum: 50, default: 10 })),
-  sort:       Type.Optional(Type.Union([
-    Type.Literal('createdAt:desc'),
-    Type.Literal('createdAt:asc'),
-    Type.Literal('name:asc'),
-  ])),
+  cursor:   Type.Optional(Type.String({ minLength: 1, maxLength: 1024 })),
+  // v0.13 — maxLength 對齊實作(原 spec 寫 512,實作用 1024;cursor payload 是 base64url 三段,1024 留餘裕)
+  limit:    Type.Optional(Type.Integer({ minimum: 1, maximum: 50, default: 10 })),
+  // v0.12 已移除 `sort` 參數(§4.5 凍結排序為 display_order ASC, created_at DESC, id DESC)
 })
 
-// Project / SaleItem 多 charityId 過濾
-export const ListQueryWithCharityFk = Type.Intersect([
+// Project / SaleItem 多 charityId 過濾(實作名稱:`ListQueryWithCharityId`)
+export const ListQueryWithCharityId = Type.Intersect([
   ListQueryBase,
   Type.Object({
-    charityId: Type.Optional(Type.String({ format: 'uuid' })),
+    charityId: Type.Optional(Type.String({ pattern: UUID_V4_PATTERN })),
+    // v0.13 — 用顯式 UUID v4 pattern,Fastify Ajv 不依賴 `format: 'uuid'` ajv-formats 額外註冊
   }),
 ])
 
-export const ItemBase = Type.Object({
-  id:          Type.String({ format: 'uuid' }),
-  name:        Type.String(),
-  description: Type.String(),
-  logoUrl:     Type.Optional(Type.String({ format: 'uri' })),
-  createdAt:   Type.String({ format: 'date-time' }),
-  updatedAt:   Type.String({ format: 'date-time' }),
+// v0.13 — 統一 null 語意:logoUrl / coverImageUrl 為 `string | null`,key 永遠存在
+// (spec 009 §4.4 v0.2)
+const InflatedCategory = Type.Object({
+  id:          Type.String(),
+  key:         Type.String(),
+  displayName: Type.String(),
 })
 
-// v0.6:Project list item 多 charityId / charityName / coverImageUrl / categories
-export const DonationProjectListItem = Type.Intersect([
-  ItemBase,
-  Type.Object({
-    charityId:     Type.String({ format: 'uuid' }),
-    charityName:   Type.String(),
-    coverImageUrl: Type.Optional(Type.String({ format: 'uri' })),
-    categories:    Type.Array(CategoryKeyEnum),
-  }),
-])
+export const ItemBase = Type.Object({
+  id:          Type.String(),
+  name:        Type.String(),
+  description: Type.String(),
+  logoUrl:     Type.Union([Type.String(), Type.Null()]),
+  categories:  Type.Array(InflatedCategory),   // v0.13 — Charity 也帶 categories
+  createdAt:   Type.String(),
+  updatedAt:   Type.String(),
+})
 
-// v0.6:SaleItem list item 同上 + priceTwd
-export const SaleItemListItem = Type.Intersect([
-  ItemBase,
-  Type.Object({
-    charityId:     Type.String({ format: 'uuid' }),
-    charityName:   Type.String(),
-    coverImageUrl: Type.Optional(Type.String({ format: 'uri' })),
-    priceTwd:      Type.Integer({ minimum: 0 }),
-    categories:    Type.Array(CategoryKeyEnum),
-  }),
-])
+// Charity list item = ItemBase
+export const CharityListItem = ItemBase
+
+// v0.6 / v0.13:Project list item — parent FK + cover + 繼承 categories
+export const ProjectListItem = Type.Object({
+  id:            Type.String(),
+  charityId:     Type.String(),
+  charityName:   Type.String(),
+  name:          Type.String(),
+  description:   Type.String(),
+  logoUrl:       Type.Union([Type.String(), Type.Null()]),
+  coverImageUrl: Type.Union([Type.String(), Type.Null()]),
+  categories:    Type.Array(InflatedCategory),  // 繼承自主辦團體
+  createdAt:     Type.String(),
+  updatedAt:     Type.String(),
+})
+
+// v0.6:SaleItem list item 同 Project + priceTwd
+export const SaleItemListItem = Type.Object({
+  id:            Type.String(),
+  charityId:     Type.String(),
+  charityName:   Type.String(),
+  name:          Type.String(),
+  description:   Type.String(),
+  logoUrl:       Type.Union([Type.String(), Type.Null()]),
+  coverImageUrl: Type.Union([Type.String(), Type.Null()]),
+  priceTwd:      Type.Integer({ minimum: 0 }),
+  categories:    Type.Array(InflatedCategory),
+  createdAt:     Type.String(),
+  updatedAt:     Type.String(),
+})
 
 export const PageInfo = Type.Object({
   nextCursor: Type.Union([Type.String(), Type.Null()]),
@@ -550,26 +592,26 @@ export const CategoryListResponse = Type.Object({
 三 endpoint 各自組裝:
 
 ```ts
-// src/routes/v1/donation/charities/list.ts
+// src/routes/v1/donation/charities/index.ts
 fastify.get('/v1/donation/charities', {
   schema: {
     querystring: ListQueryBase,
-    response: { 200: makeListResponse(ItemBase) },
+    response: { 200: makeListResponse(CharityListItem) },
   },
 }, async (req) => charityService.list(req.query))
 
-// src/routes/v1/donation/donation-projects/list.ts
+// src/routes/v1/donation/donation-projects/index.ts
 fastify.get('/v1/donation/donation-projects', {
   schema: {
-    querystring: ListQueryWithCharityFk,
-    response: { 200: makeListResponse(DonationProjectListItem) },
+    querystring: ListQueryWithCharityId,
+    response: { 200: makeListResponse(ProjectListItem) },
   },
 }, async (req) => donationProjectService.list(req.query))
 
-// src/routes/v1/donation/sale-items/list.ts(item schema 多 priceTwd)
+// src/routes/v1/donation/sale-items/index.ts(item schema 多 priceTwd)
 fastify.get('/v1/donation/sale-items', {
   schema: {
-    querystring: ListQueryWithCharityFk,
+    querystring: ListQueryWithCharityId,
     response: { 200: makeListResponse(SaleItemListItem) },
   },
 }, async (req) => saleItemService.list(req.query))
@@ -589,6 +631,23 @@ function buildListService<T>(delegate: PrismaDelegate<T>) { ... }
 ```
 
 > 此 §11 是實作 hint,不是強制 contract;實作 PR 可微調。
+
+---
+
+## 12.1 OpenAPI 文件(v0.13 — B5)
+
+Fastify route schema 已是 JSON-Schema 起點,**dev 環境**自動產出 OpenAPI 屬零成本附加(spec 009 §1.3 原列 out of scope,本 spec 把產出路徑收進來,但仍**不**強制 prod 暴露)。
+
+規約:
+
+- 套件:`@fastify/swagger` + `@fastify/swagger-ui`(已在 `package.json` 預留 — 待 PR 接上)
+- 暴露條件:`NODE_ENV !== 'production'` 才註冊;prod 環境 `/openapi.json` / `/docs` 一律 404(避免無意間洩漏內部 schema 給攻擊者掃)
+- 路徑:`GET /openapi.json` 回 JSON、`GET /docs` 回 Swagger UI
+- 來源:Fastify route schema **直接餵入**,本 spec §12 的 TypeBox 物件全部會自動進文件,無需手寫 YAML
+- security scheme:本 spec 三個 list endpoint 為 public,文件不必標 Bearer;若日後加 admin endpoint,在該 route 加 `tags: ['admin']` + `security: [{ bearerAuth: [] }]`
+- CORS:OpenAPI endpoint 不對外暴露,不必加白名單
+
+> 評審意義:7 天作業 demo 時開 `/docs` 直接看 spec 化的 contract,比手寫 README 列舉端點更有說服力;同時驗證「schema-driven 是真的,不是名義上」。
 
 ---
 
@@ -669,3 +728,4 @@ function buildListService<T>(delegate: PrismaDelegate<T>) { ... }
 | 0.10 | 2026-06-14 | 圖片改 server 端拼 URL(spec 018 v0.2 / spec 015 v0.8):DB 存 `logoKey` / `coverImageKey`,response 仍維持 `logoUrl` / `coverImageUrl`(完整 URL,由 `objectUrl(key)` 拼)。**response shape 對 client 不變**,僅 service 層多一次 URL builder 呼叫。§2 新增設計原則 7。換 CDN / bucket = 改 env,不必 backfill DB |
 | 0.11 | 2026-06-14 | Entity lifecycle + cascading visibility 落實到 list query(**backend ADR 006 / spec 015 v0.9**):(1) §2 設計原則 8 — 所有公開 list 必須走 `whereLive(now)` helper,Project / SaleItem cascade parent Charity 的 `whereLive`(`whereLiveWithParent`);(2) §4.5 預設排序改 `display_order ASC, created_at DESC, id DESC`,cursor payload 改三段(`lastDisplayOrder` / `lastCreatedAt` / `lastId`);(3) §4.6 三段 SQL 範例補 `whereLive` 四條件,Project / SaleItem SQL 加 JOIN charities + parent whereLive,Category JOIN 也加 `cat.deleted_at IS NULL AND cat.archived_at IS NULL`;(4) cursor 內 `lastId` row 被 soft delete → 不回錯;display_order 被 admin 改動 → 順序可能稍跳,可接受。下游 spec 017 v0.5 同步 |
 | 0.12 | 2026-06-14 | 文件對齊修正(無 contract 改動):(1) §4.2 移除 `sort` 參數 — v0.11 §4.5 已凍結排序為 `display_order ASC, created_at DESC, id DESC`(ADR 006 §4 強制),Query 參數表與 §4.5 規則對齊;(2) §5.1 / §7 `VALIDATION_ERROR` → `VALIDATION_FAILED`(spec 005 §4.2 字典為 code 命名權威,本 spec 過去版本拼成 `_ERROR` 是 drift);(3) §5.1 `INTERNAL` → `INTERNAL_ERROR`(同 spec 005);(4) 程式碼端同時把 `PAGINATION_CURSOR_INVALID` / `UNIQUE_CONSTRAINT` / `FK_CONSTRAINT` 三個原本以 string literal 拋出的 code 註冊進 `src/lib/errors/codes.ts`(spec 005 §4.4 governance) |
+| 0.13 | 2026-06-14 | 與實作對齊 + best practice 補強:**(A 類 drift)** (1) §4.4 / §6.3 改為「nullable 欄位回 `null`,key 永遠存在」(對齊 spec 009 §4.4 v0.2 與既有 `Type.Union([X, Null])` schema);(2) §4.4 Charity list-item 加 `categories`(對齊 `src/schemas/donation-item/list-item.ts` 既有實作,resolves 原 §4.4 註記);(3) §6.3 移除刪除線殘行 `~~items[].key~~`;(4) §12 `cursor.maxLength` 512 → 1024(對齊 code);(5) §12 範例 `ListQueryWithCharityFk` → `ListQueryWithCharityId`、`charityId` 用 pattern UUID v4 而非 `format: 'uuid'`(對齊 code);(6) §12 範例 `ItemBase` / `ProjectListItem` / `SaleItemListItem` schema 用 `Type.Union([Type.String(), Type.Null()])`,移除過時 `sort` 殘留與 `CategoryKeyEnum`(改用 `InflatedCategory` `{ id, key, displayName }`)。**(B 類 best practice)** (7) §4.2 `q` 加 NFC 正規化(B2),避免不同輸入法 / 平台組合字漏命中;(8) §10.1 BFF 拓墣下的 rate-limit key 規約(B1) — 信任 proxy、轉發 `X-Forwarded-For`、有 session 加 sessionId、demo 加限額;(9) §11.1 BFF cache key 維度規約(B4) — 必含 pathname + q + category + cursor + limit + charityId + Accept-Language;(10) §6.4 categories cache 加 `stale-while-revalidate=86400`(B6);(11) §12.1 新增 OpenAPI 產出規約(B5) — dev `/openapi.json` + `/docs`,prod 404。下游 spec 017 v0.6 同步 |
