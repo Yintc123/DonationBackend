@@ -50,6 +50,14 @@ export const ErrorCode = Object.freeze({
   UNIQUE_CONSTRAINT: 'UNIQUE_CONSTRAINT',
   FK_CONSTRAINT: 'FK_CONSTRAINT',
 
+  // ── §4.2.* donation domain query (spec 016 §5.1) ──────────────────────
+  // Emitted by src/domain/category/keys.ts parseCategoryKey when the
+  // value is well-formed (passes the generic Type.String length bound)
+  // but not in the 16-key CATEGORY_KEYS whitelist. Distinct from the
+  // generic VALIDATION_FAILED so clients can tell "typo / stale URL"
+  // from "schema-level shape error".
+  CATEGORY_UNKNOWN: 'CATEGORY_UNKNOWN',
+
   // ── §4.2.2 auth (spec 008 §9) ──────────────────────────────────────────
   // Owned by spec 008 (email + password).
   AUTH_EMAIL_TAKEN: 'AUTH_EMAIL_TAKEN',
@@ -122,6 +130,7 @@ export const ErrorCodeStatus: Readonly<Record<ErrorCodeValue, number>> = Object.
   [ErrorCode.PAGINATION_CURSOR_INVALID]: 400,
   [ErrorCode.UNIQUE_CONSTRAINT]: 409,
   [ErrorCode.FK_CONSTRAINT]: 400,
+  [ErrorCode.CATEGORY_UNKNOWN]: 400,
   [ErrorCode.AUTH_EMAIL_TAKEN]: 409,
   [ErrorCode.AUTH_INVALID_CREDENTIALS]: 401,
   [ErrorCode.AUTH_ACCOUNT_LOCKED]: 429,

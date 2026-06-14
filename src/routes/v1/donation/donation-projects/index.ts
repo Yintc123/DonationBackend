@@ -5,6 +5,7 @@ import { Type, type Static } from '@sinclair/typebox'
 
 import { paginatedEnvelope } from '../../../../lib/http/index.js'
 import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
+import { parseCategoryKey } from '../../../../domain/category/keys.js'
 import {
   getDonationProjectById,
   listDonationProjects,
@@ -36,12 +37,13 @@ export async function registerDonationProjectRoutes(app: FastifyInstance): Promi
     },
     handler: async (req, reply) => {
       const locale = parseAcceptLanguage(req.headers['accept-language'])
+      const category = parseCategoryKey(req.query.category)
       const result = await listDonationProjects({
         prisma: app.prisma,
         now: new Date(),
         locale,
         objectUrl: app.objectUrl,
-        input: req.query,
+        input: { ...req.query, category },
       })
       setI18nHeaders(reply, locale)
       setNoCache(reply)

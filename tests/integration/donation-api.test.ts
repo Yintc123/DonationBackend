@@ -181,13 +181,34 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
     expect(body.items.map((i) => i.name)).toEqual(['animal charity'])
   })
 
-  it('rejects unknown category via TypeBox union (CATEGORY_UNKNOWN-equivalent)', async () => {
+  it('rejects unknown category with the dedicated CATEGORY_UNKNOWN code (spec 016 §5.1)', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/v1/donation/charities',
       query: { category: 'animals' },
     })
     expect(res.statusCode).toBe(400)
+    const body = res.json() as {
+      code: string
+      details: { category: string; allowed: string[] }
+    }
+    expect(body.code).toBe('CATEGORY_UNKNOWN')
+    expect(body.details.category).toBe('animals')
+    expect(body.details.allowed).toEqual(expect.arrayContaining(['animal_protection']))
+    expect(body.details.allowed).toHaveLength(16)
+  })
+
+  it('rejects an empty category (TypeBox length bound, not the whitelist) → VALIDATION_FAILED', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/donation/charities',
+      query: { category: '' },
+    })
+    expect(res.statusCode).toBe(400)
+    // Distinction from CATEGORY_UNKNOWN: an empty string fails the schema
+    // length minimum, so it's a generic VALIDATION_FAILED rather than a
+    // whitelist-violation domain error.
+    expect((res.json() as { code: string }).code).toBe('VALIDATION_FAILED')
   })
 
   it('paginates correctly across 3 pages with limit=2 and emits a usable cursor', async () => {

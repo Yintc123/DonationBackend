@@ -3,7 +3,9 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { CATEGORY_KEYS, isCategoryKey } from './keys.js'
+import { AppError } from '../../lib/errors/index.js'
+
+import { CATEGORY_KEYS, isCategoryKey, parseCategoryKey } from './keys.js'
 
 describe('CATEGORY_KEYS (spec 015 §7.1)', () => {
   it('contains exactly the 16 keys defined in spec 015 §7.1, in display order', () => {
@@ -50,5 +52,49 @@ describe('isCategoryKey', () => {
     for (const bad of ['', 'animals', 'CHILD_CARE', 'child-care', '../etc']) {
       expect(isCategoryKey(bad)).toBe(false)
     }
+  })
+})
+
+describe('parseCategoryKey (spec 016 §5.1 — CATEGORY_UNKNOWN)', () => {
+  it('returns undefined when the input is undefined (filter omitted)', () => {
+    expect(parseCategoryKey(undefined)).toBeUndefined()
+  })
+
+  it('returns the value when it is a known CategoryKey', () => {
+    expect(parseCategoryKey('animal_protection')).toBe('animal_protection')
+  })
+
+  it('throws BadRequestError with code CATEGORY_UNKNOWN for a typo', () => {
+    try {
+      parseCategoryKey('animals')
+      throw new Error('expected throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(AppError)
+      const appErr = err as AppError
+      expect(appErr.code).toBe('CATEGORY_UNKNOWN')
+      expect(appErr.statusCode).toBe(400)
+    }
+  })
+
+  it('includes the offending value and the allowed whitelist in details', () => {
+    try {
+      parseCategoryKey('animals')
+    } catch (err) {
+      const appErr = err as AppError
+      expect(appErr.details).toMatchObject({
+        category: 'animals',
+        allowed: expect.arrayContaining(['animal_protection']),
+      })
+      return
+    }
+    throw new Error('expected throw')
+  })
+
+  it('rejects an empty string (not a permitted category key)', () => {
+    expect(() => parseCategoryKey('')).toThrowError()
+  })
+
+  it('rejects case-mismatched input even when the lowercase form is in the whitelist', () => {
+    expect(() => parseCategoryKey('ANIMAL_PROTECTION')).toThrowError()
   })
 })
