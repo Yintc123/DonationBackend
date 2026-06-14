@@ -26,7 +26,6 @@ const baseConfig: Config = {
   DB_SSL_MODE: '',
   DB_CONNECTION_LIMIT: '',
   DB_POOL_TIMEOUT: '',
-  DATABASE_URL: 'postgresql://u:p@localhost:5432/d',
   REDIS_HOST: 'localhost',
   REDIS_PORT: 6379,
   REDIS_PASSWORD: '',

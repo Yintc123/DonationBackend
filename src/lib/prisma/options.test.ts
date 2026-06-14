@@ -17,7 +17,6 @@ const BASE: Config = {
   DB_SSL_MODE: '',
   DB_CONNECTION_LIMIT: '',
   DB_POOL_TIMEOUT: '',
-  DATABASE_URL: 'postgresql://u:p@db:5432/n?schema=public',
   REDIS_HOST: 'r',
   REDIS_PORT: 6379,
   REDIS_PASSWORD: '',
@@ -60,9 +59,17 @@ const BASE: Config = {
 }
 
 describe('buildPrismaClientOptions', () => {
-  it('passes DATABASE_URL through as datasourceUrl', () => {
+  it('composes datasourceUrl from discrete DB_* parts', () => {
     expect(buildPrismaClientOptions(BASE)).toEqual({
       datasourceUrl: 'postgresql://u:p@db:5432/n?schema=public',
+    })
+  })
+
+  it('percent-encodes special characters in DB_PASSWORD', () => {
+    expect(
+      buildPrismaClientOptions({ ...BASE, DB_PASSWORD: 'p@ss:word' }),
+    ).toEqual({
+      datasourceUrl: 'postgresql://u:p%40ss%3Aword@db:5432/n?schema=public',
     })
   })
 })

@@ -74,8 +74,8 @@ USER node
 
 EXPOSE 3001
 
-# CMD wraps node in `sh -c` to compose DATABASE_URL from discrete DB_* env
-# at runtime — mirrors the migration command in pipeline.yml so DB_* stays
-# the single source of truth (spec 001 §4). exec replaces the shell with
-# the node process so PID 1 receives SIGTERM directly for graceful shutdown.
-CMD ["sh", "-c", "export DATABASE_URL=\"postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME?schema=$DB_SCHEMA\" && exec node dist/server.js"]
+# Application is launched directly — Node receives SIGTERM as PID 1 for
+# graceful shutdown. The Prisma client composes its own connection URL
+# from discrete DB_* env via src/lib/db/compose-database-url.ts, so no
+# shell wrapper is needed at runtime.
+CMD ["node", "dist/server.js"]

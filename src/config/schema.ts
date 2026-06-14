@@ -46,7 +46,13 @@ export const ConfigSchema = Type.Object({
   ),
   DB_CONNECTION_LIMIT: Type.String({ default: '' }),
   DB_POOL_TIMEOUT: Type.String({ default: '' }),
-  DATABASE_URL: Type.String({ minLength: 1 }),
+  // DATABASE_URL intentionally absent from the schema. DB_* parts are the
+  // single source of truth (spec 001 §3.2 supersession). Application code
+  // composes the URL via src/lib/db/compose-database-url.ts at the boundary
+  // where PrismaClient is constructed. Prisma CLI still reads
+  // `env("DATABASE_URL")` from schema.prisma directly — those CLI
+  // invocations (local `.env`, CI inline env, ECS sh wrapper) supply it
+  // out-of-band; no application code path depends on it.
 
   // === Redis (spec 001 §3.3) ===
   // Symmetric with DB_* — discrete host/port/password. We pass these to

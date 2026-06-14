@@ -62,7 +62,10 @@ const INFRA_INJECT = {
   DB_PASSWORD: 'TEST_DB_PASSWORD',
   DB_NAME: 'TEST_DB_NAME',
   DB_SCHEMA: 'TEST_DB_SCHEMA',
-  DATABASE_URL: 'TEST_DATABASE_URL',
+  // DATABASE_URL deliberately not mapped — application code composes the
+  // URL from discrete DB_* parts via src/lib/db/compose-database-url.ts.
+  // The Prisma CLI step that runs migrations against the testcontainer
+  // gets DATABASE_URL via execSync's `env:` option in global-setup.ts.
   REDIS_HOST: 'TEST_REDIS_HOST',
   REDIS_PORT: 'TEST_REDIS_PORT',
   S3_ENDPOINT: 'TEST_S3_ENDPOINT',
