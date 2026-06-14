@@ -3,11 +3,11 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.4 |
+| 版本 | 0.5 |
 | 日期 | 2026-06-14 |
 | 適用範圍 | `backend/src/routes/v1/donation/charities/get-by-id.ts`、`backend/src/routes/v1/donation/donation-projects/get-by-id.ts`、`backend/src/routes/v1/donation/sale-items/get-by-id.ts`、`backend/src/schemas/donation-item/detail.ts` |
-| 相關 ADR | 同 spec 016(專案級 002 Fastify schema-driven、007 Prisma;backend 002 charity-category-model、**backend 004 i18n-storage-model**)|
-| 相關 spec | `015-charity-data-model.md` v0.6(資料來源)、`016-charity-list-api.md` v0.6(list endpoint + 共用 contract 規約)、`009-api-response-and-http-status.md`(status / header)、`005-error-handling.md`(錯誤回應)|
+| 相關 ADR | 同 spec 016(專案級 002 Fastify schema-driven、007 Prisma;backend 002 charity-category-model、**backend 004 i18n-storage-model**)+ **backend 006 lifecycle-fields-and-cascading-visibility**(v0.5 — detail endpoint 必須通過 `whereLive` 才回 200,否則 404 不洩漏 archived / deleted)|
+| 相關 spec | `015-charity-data-model.md` v0.9(資料來源,lifecycle 欄位來源)、`016-charity-list-api.md` v0.11(list endpoint + 共用 contract 規約 + cascading visibility 規約)、`009-api-response-and-http-status.md`(status / header)、`005-error-handling.md`(錯誤回應)|
 | 設計來源 | Figma 截圖補件 IMG_4876(公益團體介紹)/ IMG_4883(捐款專案介紹)/ IMG_4882(義賣商品介紹),2026-06-14 |
 
 ---
@@ -39,12 +39,15 @@
 | Auth | public(同 spec 016 §3)|
 | `:id` 非 uuid → 400 | `VALIDATION_ERROR` |
 | 找不到 → 404 | `CHARITY_NOT_FOUND` / `DONATION_PROJECT_NOT_FOUND` / `SALE_ITEM_NOT_FOUND` |
+| **Lifecycle filter**(v0.5 — backend ADR 006)| Public detail endpoint **必須**走 `whereLive` 4 條件:row 存在但 `deletedAt IS NOT NULL` / `archivedAt IS NOT NULL` / `publishStartAt > NOW()` / `publishEndAt <= NOW()` 任一成立 → **回 404,不回 200**;**禁止**洩漏「該 row 存在但不可見」的訊息。Project / SaleItem 額外:**parent Charity 必須也通過 `whereLive`**(Cascading visibility,ADR 006 §3),否則同樣 404 |
 | Cache-Control | `private, max-age=0, must-revalidate`(同 spec 016 §8)|
 | ETag | `"<sha256(id + updatedAt + charity.updatedAt for nested + locale)前 16 字元>"`;`If-None-Match` 命中回 304(**v0.3 加入 locale** 避免 zh/en 互蓋)|
 | **Accept-Language**(v0.3)| `zh-TW` / `en`;規則同 spec 016 §4.1.1;response 各 `name` / `description` / `content` 走 fallback `XxxEn ?? Xxx`;`Content-Language` 必有;`Vary: Accept-Language` 必有 |
 | **圖片 URL**(v0.4)| DB 存 `logoKey` / `coverImageKey`(S3 key,spec 015 v0.8);response 仍回 `logoUrl` / `coverImageUrl`(完整 URL),由 spec 018 `objectUrl(key)` 拼接。換 CDN / bucket → 改 env(`S3_PUBLIC_URL_BASE`)即可 |
 | Rate-limit | 與 list endpoint **共用 bucket**(同 IP,所有 read endpoint)|
 | CORS | public(同 spec 016 §9)|
+
+> **v0.5 — Cascading visibility 在 detail 的意義**(ADR 006 §3):前端拿 list response 的 `id` 點進 detail 時,如果 Charity 合約剛好過期 / 被 archive / soft delete,detail endpoint **不可**回 200。一致地走 `whereLive` + parent `whereLive`,**沒走 helper = 安全漏洞**(下架的資料被 deep link 看到)。實作建議:在 `domain/donation-item/get-by-id.ts` 內 `findUnique({ where: { id, ...whereLive(now) } })`,parent 透過 `findFirst({ where: { id, charity: whereLive(now) } })` 一次撈。
 
 ---
 
@@ -97,11 +100,18 @@
 
 ### 3.3 Prisma 查詢
 
+**v0.5 — 必須走 `whereLive`**(backend ADR 006 §2):row 在 DB 中存在但 lifecycle filter 不通過 → 視為 404,**不**洩漏存在訊息。改用 `findFirst`(允許 compound where)而非 `findUnique`:
+
 ```ts
-const c = await prisma.charity.findUnique({
-  where: { id },
+import { whereLive } from '@/domain/donation-item/where.js'
+
+const c = await prisma.charity.findFirst({
+  where: { id, ...whereLive(new Date()) },   // ← 4 條件全套
   include: {
     categories: {
+      where: {
+        category: { deletedAt: null, archivedAt: null },  // ← 字典本身也 live (spec 015 §3.3)
+      },
       include: { category: true },
       orderBy: { category: { displayOrder: 'asc' } },
     },
@@ -115,6 +125,8 @@ return {
   })),
 }
 ```
+
+> Charity 不需要 cascade(它是最上層),`whereLive` 4 條件即可。Category 字典過濾在 `include.where` 內處理,避免讓 archived category 的 tag pill 漏出來。
 
 ---
 
@@ -173,13 +185,25 @@ return {
 
 ### 4.3 Prisma 查詢
 
+**v0.5 — 必須走 `whereLive` 並對 parent Charity 套 cascade**(backend ADR 006 §3):
+
 ```ts
-const p = await prisma.donationProject.findUnique({
-  where: { id },
+import { whereLive } from '@/domain/donation-item/where.js'
+
+const now = new Date()
+const p = await prisma.donationProject.findFirst({
+  where: {
+    id,
+    ...whereLive(now),                       // ← Project 自己 live
+    charity: { is: whereLive(now) },         // ← Cascade:主辦 Charity 也必須 live
+  },
   include: {
     charity: {
       include: {
         categories: {
+          where: {
+            category: { deletedAt: null, archivedAt: null },
+          },
           include: { category: true },
           orderBy: { category: { displayOrder: 'asc' } },
         },
@@ -197,6 +221,10 @@ return {
   })),
 }
 ```
+
+> **語意**:若 Charity 合作合約剛過期(`publishEndAt < now`),旗下 Project 即使自身欄位全空也回 404 — 對 client 等同「找不到」,**不**洩漏「該 row 存在但合約過期」。續約後同一個 deep link 立刻 200。
+>
+> `categories` 取得來源**繼承自主辦團體**(spec 015 §7.4),與 Project 自身欄位無關。
 
 ---
 
@@ -245,7 +273,7 @@ return {
 
 ### 5.3 Prisma 查詢
 
-同 §4.3 把 `donationProject` 換成 `saleItem`。
+同 §4.3 把 `donationProject` 換成 `saleItem` — **同樣**需要 `whereLive` + `charity: { is: whereLive(now) }` cascade(v0.5)。
 
 ---
 
@@ -296,6 +324,15 @@ API 回傳 `name: string`,client 無法分辨「拿到的是 en 還是 fallback 
 | integration | **v0.3 i18n**:`Accept-Language: en` 的 detail response 各 `name` / `description` / `content` 為英文(有翻譯時);缺英文時 fallback zh-TW,且 `Content-Language: zh-TW` | 對 |
 | integration | **v0.3 i18n**:同 charity 的 `zh-TW` 與 `en` 兩次 GET 的 ETag **不同**(locale 進入 ETag 計算)| 對 |
 | integration | **v0.3 i18n**:nested `charity` 物件的 `name` 也走 fallback | 對 |
+| integration | **v0.5 archived row → 404**:seed Charity / Project / SaleItem `archivedAt = past`,detail endpoint 回 `*_NOT_FOUND`(**不**洩漏「row 存在但已封存」)| 對 |
+| integration | **v0.5 deleted row → 404**:`deletedAt = past` 同樣回 404 | 對 |
+| integration | **v0.5 publishStartAt 未到 → 404**:`publishStartAt = future` 的 row 當下 404;fake clock 推到 `publishStartAt + 1s` 後同 id 回 200 | 對 |
+| integration | **v0.5 publishEndAt 已過 → 404**:`publishEndAt = past` 同樣 404 | 對 |
+| integration | **v0.5 Cascading visibility(Project 端,ADR 006 §3)**:Charity A `publishEndAt = past`(合約過期),A 旗下 Project P1 自身欄位全空 — `GET /v1/donation/donation-projects/P1` 回 `DONATION_PROJECT_NOT_FOUND`(404),**不**洩漏「P1 存在但 parent 過合約」 | 對 |
+| integration | **v0.5 Cascading visibility — 反向恢復**:接續上一條,A.publishEndAt 設回未來,同 id deep link 回 200 | 對 |
+| integration | **v0.5 Cascading visibility(SaleItem 端)**:Charity B `archivedAt = past`,旗下 SaleItem S1 自身全空 — `GET /v1/donation/sale-items/S1` 回 404 | 對 |
+| integration | **v0.5 Cascading visibility — archived category 隱藏**:detail response 內的 `categories` 不含 `archivedAt` / `deletedAt` 非空的 Category(透過 `include.where` 過濾)| 對 |
+| integration | **v0.5 ETag 不對 404 row 簽發**:archived / deleted row 的 404 response **無** ETag header(避免 client cache 後續續恢復後的 200 被舊 304 卡掉)| 對 |
 | e2e | 前端 charity detail page 直接渲染 | 對 |
 | e2e | 前端 project detail 點主辦團體 chip → 跳對應 charity detail | 對 |
 
@@ -309,3 +346,4 @@ API 回傳 `name: string`,client 無法分辨「拿到的是 en 還是 fallback 
 | 0.2 | 2026-06-14 | 三個 detail endpoint 加 `/donation/` 前綴(同步 spec 016 v0.7):`GET /v1/donation/charities/:id`、`GET /v1/donation/donation-projects/:id`、`GET /v1/donation/sale-items/:id` |
 | 0.3 | 2026-06-14 | 引入 i18n(backend ADR 004):(1) §2 共通規則加 `Accept-Language` 行為;(2) ETag 公式包含 locale(避免 zh/en 互蓋);(3) `Content-Language` / `Vary` header 必有;(4) §3 ~ §5 各 response shape 不變,fallback 在 server 端完成;(5) Category inflated `displayName` 依 locale 切換(seed 100% backfill 不會 fallback);(6) §6.4 新增 i18n fallback 透明度開放問題(`?include=langInfo`);(7) §7 補 3 條 i18n 測試 |
 | 0.4 | 2026-06-14 | 同步 spec 015 v0.8 / spec 018 v0.2:detail response 中的 `logoUrl` / `coverImageUrl` / `charity.logoUrl` 由 server 端 `objectUrl(key)` 拼接(DB 存 key,**response shape 對 client 不變**)。§2 共通規則加註圖片 URL 拼接來源;§7 不必新測試(URL 完整性已在 spec 018 §12 testcontainer e2e 覆蓋)|
+| 0.5 | 2026-06-14 | Entity lifecycle 落實到 detail endpoint(**backend ADR 006 / spec 015 v0.9 / spec 016 v0.11**):(1) §2 共通規則加「Lifecycle filter」行 — public detail 必須走 `whereLive` 4 條件,任一不通過回 404 不洩漏存在;(2) Project / SaleItem 額外 cascading visibility — parent Charity 也必須通過 `whereLive`,否則同樣 404;(3) §2 末加 implementation hint;(4) §3.3 / §4.3 / §5.3 Prisma 查詢範例改用 `findFirst` + `whereLive(now)`,Project / SaleItem 加 `charity: { is: whereLive(now) }` cascade,Category include 加 `archivedAt: null, deletedAt: null` 過濾;(5) §7 補 8 條 lifecycle 整合測試(4 種 lifecycle 路徑各 → 404、Cascading visibility Project / SaleItem 各 + 反向恢復、archived category 不出現在 categories 內、ETag 不對 404 row 簽發)|

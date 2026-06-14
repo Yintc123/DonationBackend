@@ -3,10 +3,10 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.10 |
+| 版本 | 0.11 |
 | 日期 | 2026-06-14 |
 | 適用範圍 | `backend/src/routes/v1/donation/charities/*`、`backend/src/routes/v1/donation/donation-projects/*`、`backend/src/routes/v1/donation/sale-items/*`、`backend/src/routes/v1/donation/categories/*`、`backend/src/domain/donation-item/*`、`backend/src/domain/category/*`、`backend/src/schemas/donation-item/*`、`backend/src/schemas/category/*` |
-| 相關 ADR | `../../docs/decisions/002-backend-framework.md`(專案級 — Fastify schema-driven)、`../../docs/decisions/007-orm-prisma.md`(專案級)、`../decisions/001-donation-item-relations.md`(backend 級 — `?charityId=` 過濾)、`../decisions/002-charity-category-model.md`(backend 級 — `?category=<key>` 過濾、`/v1/donation/categories` 端點、子表繼承查詢)、`../decisions/004-i18n-storage-model.md`(backend 級 — `Accept-Language` request header + fallback 語意)|
+| 相關 ADR | `../../docs/decisions/002-backend-framework.md`(專案級 — Fastify schema-driven)、`../../docs/decisions/007-orm-prisma.md`(專案級)、`../decisions/001-donation-item-relations.md`(backend 級 — `?charityId=` 過濾)、`../decisions/002-charity-category-model.md`(backend 級 — `?category=<key>` 過濾、`/v1/donation/categories` 端點、子表繼承查詢)、`../decisions/004-i18n-storage-model.md`(backend 級 — `Accept-Language` request header + fallback 語意)、`../decisions/006-lifecycle-fields-and-cascading-visibility.md`(backend 級 — **v0.11 起所有 public list query 必須走 `whereLive` + Project / SaleItem cascade parent Charity 的 `whereLive`**)|
 | 相關 spec | `015-charity-data-model.md`(資料來源)、`009-api-response-and-http-status.md`(分頁 / status / header 規約)、`005-error-handling.md`(錯誤回應)、`010-rate-limit-module.md`、`012-cors-and-security-headers.md`(public CORS) |
 | 設計來源 | Figma file key `0kx2Ne2rvndhfVr3uVUwad`,frame「分類列表 - 全部團體」/「分類列表 - 搜尋中」/「搜尋 - No Result - 公益團體」 |
 
@@ -50,6 +50,7 @@
 5. **schema-first**:request / response 用 TypeBox 宣告,handler 從 schema 推導型別(ADR 002)。
 6. **多語系透過 `Accept-Language` request header**(backend ADR 004):server 從 header 選 zh-TW 或 en 欄位,**response shape 不變**(client 永遠收到 `name: string`,英文缺則 fallback 主語);搜尋的 `q` 對應 locale 的 `name + description` 欄位做 ILIKE。
 7. **圖片 URL 由 server 端拼接**(spec 018 v0.2):DB 存 `logoKey` / `coverImageKey`(S3 key),response 中的 `logoUrl` / `coverImageUrl` 由 `objectUrl(key)` 從 env-controlled base URL 拼。**response shape 對 client 不變**(收到的仍是完整 URL);未來換 CDN / 換 bucket → 改 env 即可,不必 backfill DB。
+8. **Entity lifecycle 預設 filter**(v0.11 — backend ADR 006):所有 list / detail 公開 endpoint 必須走 service-layer `whereLive(now)` helper(4 條件:`deletedAt IS NULL` / `archivedAt IS NULL` / `publishStartAt 在過去 OR null` / `publishEndAt 在未來 OR null`),**禁止**route handler 自拼。Project / SaleItem 額外**對 parent Charity 套同樣 helper**(cascading visibility);Charity 合作合約過期 → 旗下所有子表自動消失,續約自動恢復,**禁止**用 batch job 同步狀態(避免續約倒回的複雜度)。
 
 ---
 
@@ -203,25 +204,32 @@ Accept-Language: zh-TW           # 或 en,缺則預設 zh-TW
 
 ### 4.5 排序與 cursor
 
-- 預設 `createdAt:desc`(新加入優先)
-- Tiebreaker:`id` 方向與主排序相同(spec 009 §5.4)
+- **v0.11 預設變更**(backend ADR 006 §4):`ORDER BY display_order ASC, created_at DESC, id DESC`
+  - `displayOrder` 為主要排序鍵(admin 手動置頂機制);未指定 = `0`,fallback 到 `createdAt`
+  - 三 list endpoint 共用此排序,**route handler 不可覆寫**;若日後業務要新排序欄位,在 spec 改完後同步 ADR 006
+- Tiebreaker:`id` 方向與**第二級**排序(`createdAt`)相同(spec 009 §5.4)
+- cursor payload **v0.11 起包三段值**(原本只有 `lastSortValue` + `lastId`):
 - cursor payload(client 視為 opaque):
 
 ```ts
+// v0.11 — 三段 cursor 對應 displayOrder + createdAt + id
 type CursorPayload = {
-  lastSortValue: string;  // ISO 8601 或 name 字串
-  lastId: string;         // uuid
+  lastDisplayOrder: number; // int
+  lastCreatedAt: string;    // ISO 8601
+  lastId: string;           // uuid
 };
 // base64url(JSON.stringify(payload))
 ```
 
 - cursor 解碼失敗 → 400 `PAGINATION_CURSOR_INVALID`
-- cursor 內 `lastId` 已被刪除 → **不**回錯,用 `lastSortValue` 續查(spec 009 §5.4)
+- cursor 內 `lastId` 已被 soft delete(`deletedAt` 非空)→ **不**回錯,用 `(lastDisplayOrder, lastCreatedAt)` 續查(spec 009 §5.4)
+- cursor 內 `lastId` row 的 `displayOrder` 或 `createdAt` 已被 admin 改值 → 結果順序可能稍跳,**接受**(cursor 不是 transactional snapshot;Figma 沒有「絕對穩定 cursor」需求)
 
 ### 4.6 搜尋語意
 
 - `q` 與 `category`(與 `charityId`,Project / SaleItem 時)為 **AND** 關係
 - `q` 對 `name` / `description` 為 OR
+- **v0.11 — 所有 SQL 範例必須先套 `whereLive`**(backend ADR 006 §2):4 條件 `deleted_at IS NULL AND archived_at IS NULL AND (publish_start_at IS NULL OR publish_start_at <= NOW()) AND (publish_end_at IS NULL OR publish_end_at > NOW())`。下方 SQL 範例已內嵌;**禁止** route 自拼,**必須**走 service-layer `whereLive(now)` helper
 
 **Charity endpoint 的 filter 查詢(`zh-TW` locale):**
 ```sql
@@ -229,8 +237,17 @@ SELECT c.*
 FROM charities c
 [JOIN charity_categories cc ON cc.charity_id = c.id]                 -- 僅當有 category
 [JOIN categories cat ON cat.id = cc.category_id AND cat.key = $key]  -- key 比對(categories.key 為 unique index)
-WHERE (c.name ILIKE '%' || $q || '%' OR c.description ILIKE '%' || $q || '%')
-ORDER BY c.created_at DESC, c.id DESC
+WHERE
+  -- v0.11 — whereLive (ADR 006 §2)
+  c.deleted_at IS NULL
+  AND c.archived_at IS NULL
+  AND (c.publish_start_at IS NULL OR c.publish_start_at <= NOW())
+  AND (c.publish_end_at   IS NULL OR c.publish_end_at   >  NOW())
+  -- v0.11 — Category 自己也要 live(若有 category filter)
+  [AND cat.deleted_at IS NULL AND cat.archived_at IS NULL]
+  -- 原 q + category filter
+  AND (c.name ILIKE '%' || $q || '%' OR c.description ILIKE '%' || $q || '%')
+ORDER BY c.display_order ASC, c.created_at DESC, c.id DESC          -- v0.11 — 排序加 displayOrder
 LIMIT $limit
 ```
 
@@ -238,17 +255,35 @@ LIMIT $limit
 
 **`en` locale 改打英文欄位**:`name` → `name_en`、`description` → `description_en`(其他不變)。Service 層根據解析後的 locale 動態切欄。
 
-**Project / SaleItem endpoint 的 filter 查詢(子表繼承:JOIN 主辦團體的 categories):**
+**Project / SaleItem endpoint 的 filter 查詢(子表繼承 + cascading visibility):**
 ```sql
 SELECT p.*
 FROM donation_projects p   -- 或 sale_items
+-- v0.11 — Cascading visibility: parent Charity 必須也 live(ADR 006 §3)
+JOIN charities c ON c.id = p.charity_id
 [JOIN charity_categories cc ON cc.charity_id = p.charity_id]
 [JOIN categories cat ON cat.id = cc.category_id AND cat.key = $key]
-WHERE (p.name ILIKE '%' || $q || '%' OR p.description ILIKE '%' || $q || '%')
+WHERE
+  -- v0.11 — whereLive on Project / SaleItem
+  p.deleted_at IS NULL
+  AND p.archived_at IS NULL
+  AND (p.publish_start_at IS NULL OR p.publish_start_at <= NOW())
+  AND (p.publish_end_at   IS NULL OR p.publish_end_at   >  NOW())
+  -- v0.11 — whereLive on parent Charity(Cascading visibility 主路徑)
+  AND c.deleted_at IS NULL
+  AND c.archived_at IS NULL
+  AND (c.publish_start_at IS NULL OR c.publish_start_at <= NOW())
+  AND (c.publish_end_at   IS NULL OR c.publish_end_at   >  NOW())
+  -- v0.11 — Category 自己也要 live(若有 category filter)
+  [AND cat.deleted_at IS NULL AND cat.archived_at IS NULL]
+  -- 原 q + filter
+  AND (p.name ILIKE '%' || $q || '%' OR p.description ILIKE '%' || $q || '%')
   [AND p.charity_id = $charityId]
-ORDER BY p.created_at DESC, p.id DESC
+ORDER BY p.display_order ASC, p.created_at DESC, p.id DESC          -- v0.11 — 排序加 displayOrder
 LIMIT $limit
 ```
+
+> **Cascading visibility 業務語意**(ADR 006 §3):Charity 的合作合約過期(`publishEndAt < NOW()`)時,旗下所有 Project / SaleItem **自動**從 public list 消失,不需另外改子表;續約只動 Charity 一個欄位,子表全部自動恢復。**禁止**用 batch job 同步狀態。
 
 同樣 `en` locale 改打 `name_en` / `description_en`。Project / SaleItem **無 `content` 搜尋**(content 是長文,v0.7 trgm index 也未涵蓋,spec 015 §4.2)。
 
@@ -339,6 +374,7 @@ ETag: "v1:categories:<hash>"
 - 共用 cache:**`Cache-Control: public, max-age=300, must-revalidate`** + ETag — 與 list endpoint 不同(category 字典變動極少,可中介層 cache 5 分鐘)
 - 條件 GET(`If-None-Match`)命中回 304
 - **v0.8 i18n**:`Accept-Language: en` 時,`displayName` 欄位回 `displayNameEn`(Category 16 筆強制 backfill,所以**不**會 fallback)。ETag 與 cache key **包含 locale**,避免 zh / en 互相污染(具體做法:cache key 加 `Vary: Accept-Language` header)
+- **v0.11 lifecycle filter**(backend ADR 006):查詢 `WHERE deleted_at IS NULL AND archived_at IS NULL`(Category 沒有 publishStartAt / publishEndAt — 字典表無合作期限,spec 015 v0.9 §3.3)。**Cache 影響**:Category 字典極少改動,5 分鐘 max-age 仍然合理;admin archive 一個分類後最多 5 分鐘前端會看到舊資料,可接受(admin endpoint 走 `whereForAdmin` 立即看到正確結果)|
 
 ---
 
@@ -417,10 +453,12 @@ Shape 詳見 spec 017。重點差異(對 list item 而言):
 - **不**回 ETag
 - `Cache-Control: private, max-age=0, must-revalidate`
 - BFF 側可自行 short TTL cache(例 5s)削平 burst
+- **v0.11 — lifecycle 時間敏感性**:list query 結果依賴 `NOW()`(`publishStartAt` / `publishEndAt` 視窗)。`private, max-age=0` 確保每次都重新 revalidate,**時間敏感資料不會 stale**。**BFF 短 TTL cache(5s)是上限** — 不要拉超過 30 秒,否則「上下架瞬間」可見性誤差會被使用者感知
 
 ### 11.2 單筆
 
 - 回 ETag(§6.3),客戶端可條件 GET 取 304
+- **v0.11 — lifecycle 一致性**:detail endpoint 同樣 `private, max-age=0, must-revalidate`(spec 017 §2 定錨);archived / deleted / 排程未到 / 排程已過 row → 404(不洩漏存在),ETag 對這些 row **不**簽發
 
 ### 11.3 Idempotency
 
@@ -583,6 +621,17 @@ function buildListService<T>(delegate: PrismaDelegate<T>) { ... }
 | e2e | 三 tab 各自:無限滾動 3 頁 + 1 次搜尋 + 1 次清空,共 9 個情境跑完 | 全綠 |
 | e2e | tab 切換時 client 改打不同 endpoint(BFF route handler 切換)| 對 |
 | e2e | 進頁面先打 `/v1/donation/categories` 取 dropdown 內容 → 選一個 → 三 tab filter 都跑得通 | 全綠 |
+| integration | **v0.11 排序變更**:list 三 endpoint 預設排序為 `display_order ASC, created_at DESC, id DESC`;seed 兩筆 displayOrder = -1 / -2 + 一筆 displayOrder = 0,前兩筆出現在 page 1 最前 | 對 |
+| integration | **v0.11 cursor 三段相容**:首頁拿到 `nextCursor`,decode 後含 `lastDisplayOrder` / `lastCreatedAt` / `lastId` 三欄;帶它打第二頁不重複也不漏 row | 對 |
+| integration | **v0.11 cursor pointing at soft-deleted row**:首頁 nextCursor 取到後,把該 `lastId` 對應 row set `deletedAt = NOW()`,帶 cursor 打下一頁仍然 200 + 從相鄰位置續發(spec 009 §5.4)| 對 |
+| integration | **v0.11 lifecycle filter — archived**:seed `archivedAt = past` 的 row 不出現在三 list endpoint 的結果 | 對 |
+| integration | **v0.11 lifecycle filter — deleted**:seed `deletedAt = past` 的 row 同樣不出現 | 對 |
+| integration | **v0.11 lifecycle filter — publishStartAt 未到**:seed `publishStartAt = future` 的 row 當下不出現;**fake clock 推到 publishStartAt + 1s** 後出現 | 對 |
+| integration | **v0.11 lifecycle filter — publishEndAt 已過**:seed `publishEndAt = past` 的 row 不出現 | 對 |
+| integration `*` | **v0.11 Cascading visibility(ADR 006 §3)**:setup Charity A `publishEndAt = past`(合約過期),旗下 Project P1 / SaleItem S1 自身 lifecycle 全空(預設「永久上架」);`GET /v1/donation/donation-projects` 不包含 P1;`GET /v1/donation/sale-items` 不包含 S1;`GET /v1/donation/charities` 也不包含 A | 對 |
+| integration `*` | **v0.11 Cascading visibility — 反向恢復**:接續上一條 — 把 A.publishEndAt 設回未來,三 endpoint 同次 query 全部重新看到(無 cache 干擾)| 對 |
+| integration `*` | **v0.11 Cascading visibility — archived parent**:Charity B `archivedAt = past`,旗下 Project / SaleItem 自身全空 — public list 同樣不包含子表 | 對 |
+| integration | **v0.11 `/v1/donation/categories` lifecycle**:seed Category `archivedAt = past`,dropdown response 不包含;seed `deletedAt = past` 的 Category 同樣不包含 | 對 |
 
 ---
 
@@ -617,3 +666,4 @@ function buildListService<T>(delegate: PrismaDelegate<T>) { ... }
 | 0.8 | 2026-06-14 | 引入 i18n(backend ADR 004):(1) §2 設計原則 6 新增 `Accept-Language` 機制;(2) §4.1 / §4.1.1 加 request header 與 locale 解析語意(`zh-TW` 預設、`en` 支援、其他 fallback、quality value 規則);(3) §4.6 SQL 範例補「locale 切換 name / name_en」;(4) §6 `/v1/donation/categories` 補 `displayNameEn` 處理 + `Vary: Accept-Language` cache key;(5) §8 Headers 加 `Content-Language` / `Vary` 為必有;(6) §12 schema(TypeBox)不變(response shape 對 client 不變);(7) §13 補 6 條 i18n 整合測試 |
 | 0.9 | 2026-06-14 | **議題 A 收尾**:filter 參數 `?categoryId=<uuid>` → `?category=<key>`(對齊 brief v0.6 URL sync;backend ADR 002 v0.2)。(1) §4.2 query param 改 `category: CategoryKey`(16 literal union);(2) §4.6 SQL JOIN `categories.key`(unique index);(3) §5.1 新增 `CATEGORY_UNKNOWN` 400 — wildcard typo 直接 reject;(4) §5.2 邊界拆「合法 key 無命中 → 200」與「拼錯 → 400」;(5) §6.3 categories response 標註 `key` 為 filter 用值;(6) §12 schema 用 `Type.Union(literals)` 替換 uuid format;(7) §13 補白名單檢查、拼錯、無命中、子表繼承四條 test;(8) §14 補多選 / 動態化升級觸發 |
 | 0.10 | 2026-06-14 | 圖片改 server 端拼 URL(spec 018 v0.2 / spec 015 v0.8):DB 存 `logoKey` / `coverImageKey`,response 仍維持 `logoUrl` / `coverImageUrl`(完整 URL,由 `objectUrl(key)` 拼)。**response shape 對 client 不變**,僅 service 層多一次 URL builder 呼叫。§2 新增設計原則 7。換 CDN / bucket = 改 env,不必 backfill DB |
+| 0.11 | 2026-06-14 | Entity lifecycle + cascading visibility 落實到 list query(**backend ADR 006 / spec 015 v0.9**):(1) §2 設計原則 8 — 所有公開 list 必須走 `whereLive(now)` helper,Project / SaleItem cascade parent Charity 的 `whereLive`(`whereLiveWithParent`);(2) §4.5 預設排序改 `display_order ASC, created_at DESC, id DESC`,cursor payload 改三段(`lastDisplayOrder` / `lastCreatedAt` / `lastId`);(3) §4.6 三段 SQL 範例補 `whereLive` 四條件,Project / SaleItem SQL 加 JOIN charities + parent whereLive,Category JOIN 也加 `cat.deleted_at IS NULL AND cat.archived_at IS NULL`;(4) cursor 內 `lastId` row 被 soft delete → 不回錯;display_order 被 admin 改動 → 順序可能稍跳,可接受。下游 spec 017 v0.5 同步 |

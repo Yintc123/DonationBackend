@@ -3,10 +3,10 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.8 |
+| 版本 | 0.9 |
 | 日期 | 2026-06-14 |
 | 適用範圍 | `backend/prisma/schema.prisma`、`backend/prisma/seed.ts`、`backend/src/domain/donation-item/*`、`backend/src/domain/category/*` |
-| 相關 ADR | `../../docs/decisions/003-database-postgresql.md`(專案級)、`../../docs/decisions/007-orm-prisma.md`(專案級)、`../decisions/001-donation-item-relations.md`(backend 級 — 三 entity 1:N NOT NULL FK)、`../decisions/002-charity-category-model.md`(backend 級 — Charity-Category M:N + 子表繼承)、`../decisions/004-i18n-storage-model.md`(backend 級 — 多語系 suffix columns 設計)|
+| 相關 ADR | `../../docs/decisions/003-database-postgresql.md`(專案級)、`../../docs/decisions/007-orm-prisma.md`(專案級)、`../decisions/001-donation-item-relations.md`(backend 級 — 三 entity 1:N NOT NULL FK)、`../decisions/002-charity-category-model.md`(backend 級 — Charity-Category M:N + 子表繼承)、`../decisions/004-i18n-storage-model.md`(backend 級 — 多語系 suffix columns 設計)、`../decisions/006-lifecycle-fields-and-cascading-visibility.md`(backend 級 — soft delete / archive / 上下架時間 / cascading visibility,**v0.9 起 schema 加 5 欄**)|
 | 相關 spec | `003-orm-module.md`(Prisma client 與命名)、`016-charity-list-api.md`(本資料模型的對外 contract)、`018-storage-module.md`(v0.8 起圖片欄位存 S3 key,API 層建 URL)|
 | 設計來源 | Figma《2026 全端面試作業 - web》file key `0kx2Ne2rvndhfVr3uVUwad`,頁面標題「所有捐款項目」;Category 模型補 Figma 缺圖(2026-06-14 產品口頭確認)|
 
@@ -31,13 +31,16 @@
 - 搜尋欄位的索引策略(`pg_trgm`)
 - Seed 資料注入策略(對應作業加分項「建立 Database」)
 - 命名規約(snake_case in DB / camelCase in Prisma)
+- **Entity lifecycle 欄位**(v0.9 — ADR 006):`displayOrder` / `archivedAt` / `deletedAt` / `publishStartAt` / `publishEndAt`,涵蓋手動排序、暫時下架、soft delete、排程上架 / 下架(合作合約期限)
+- **Cascading visibility**(v0.9 — ADR 006 §3):DonationProject / SaleItem 公開可見性必須同時通過自己**與**主辦 Charity 的 lifecycle filter
 
 ### 1.3 Out of scope
 
-- **API 行為**(分頁、查詢參數、回應 shape)— 由 spec 016 擁有
+- **API 行為**(分頁、查詢參數、回應 shape)— 由 spec 016 擁有(本 spec 只規範 schema + 預設 query helper 命名,filter 套用點由 spec 016 / 017 落實)
 - **使用者收藏 / 追蹤** — 不在本次作業需求
 - **金流、捐款交易、訂單、收據** — 不在本次作業需求,但 model 命名需避免日後衝突(見 §10)
-- **soft delete / audit log** — 沿用 backend 整體尚未決議的政策,本 spec 不單獨引入
+- **Admin endpoint** — 後台 UI 不在本作業 scope;本 spec 只**約定** admin 路徑必須繞過預設 `whereLive` 走 `whereForAdmin`(細節見 ADR 006 §5)
+- ~~**soft delete / audit log**~~ → v0.9 已收束,改由 ADR 006 規範 `deletedAt` timestamp 同時擔任 soft-delete 與最小 audit 角色;若日後需 actor 維度 audit,ADR 006 升級觸發已列出路徑
 
 ---
 
@@ -57,6 +60,8 @@
 5. **欄位語意對齊 ADR 003**:`uuid` 主鍵、`createdAt`/`updatedAt` 必有、字串長度有上限、可選欄位明確標記
 6. **搜尋為一級需求**:作業要求三 tab 各自關鍵字搜尋,三表都建 trigram 索引(含中英文各一組)
 7. **多語系採 suffix columns**(backend ADR 004 定錨):中文主語 NOT NULL、英文 nullable;API 層用 `Accept-Language` 選欄位,response shape 對 client 不變(`name: string`,英文缺則 fallback 主語)
+8. **Entity lifecycle 統一模式**(v0.9 — backend ADR 006 定錨):三主 entity(Charity / Project / SaleItem)各加 5 個欄位 `displayOrder` / `archivedAt` / `deletedAt` / `publishStartAt` / `publishEndAt`;**timestamp 而非 boolean**(deletedAt 同時擔任 soft-delete marker + 最小 audit);Category 只加 `archivedAt` / `deletedAt`(字典表無合作期限);CharityOnCategory join 表**不**加 lifecycle 欄位(直接刪 join 列等於 unassign)
+9. **Cascading visibility**(v0.9 — backend ADR 006 §3 定錨):Project / SaleItem 公開路徑 query 必須 JOIN `charities` 並對 parent 同套 `whereLive`;Charity 合約過期 → 旗下所有子表自動消失;續約 → 自動恢復;**禁止**用 batch job 同步狀態(避免續約時 cascade 倒回的複雜度)
 
 ---
 
@@ -85,6 +90,12 @@ model Charity {
   contactEmail    String?  @db.VarChar(254)       // RFC 5321 上限
   officialWebsite String?  @db.VarChar(2048)
   approvalNo      String?  @db.VarChar(80)        // 核准字號「台內團字第1110295700號」
+  // Lifecycle 欄位(v0.9 — ADR 006)
+  displayOrder    Int      @default(0)             // 排序;0 = 一般,負數 / 較小先顯示
+  archivedAt      DateTime?                        // 暫時下架(可恢復);非空 = 已封存
+  deletedAt       DateTime?                        // soft delete + 最小 audit;非空 = 已刪除
+  publishStartAt  DateTime?                        // 合約 / 平台合作起始;null = 立刻上架
+  publishEndAt    DateTime?                        // 合約 / 平台合作結束;null = 永久(直到手動下架)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -92,7 +103,11 @@ model Charity {
   saleItems        SaleItem[]
   categories       CharityOnCategory[]
 
-  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  // v0.9 — ADR 006:public list 主路徑為 whereLive(deleted/archived/publish 全通過),
+  // 用 displayOrder + createdAt + id 排序。partial index 把這條 query 壓縮到 index-only scan。
+  @@index([displayOrder, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([publishEndAt])                          // cascade visibility 查 parent 過期
+  @@index([createdAt(sort: Desc), id(sort: Desc)]) // admin 全量(允許看 archived / deleted)
   @@map("charities")
 }
 
@@ -111,13 +126,21 @@ model DonationProject {
   contentEn           String?  @db.Text            // en
   raisingApprovalNo   String?  @db.VarChar(80)     // 勸募立案核准字號
   reliefApprovalNo    String?  @db.VarChar(80)     // 衛部救字第1151361613號 等
+  // Lifecycle 欄位(v0.9 — ADR 006)
+  displayOrder        Int      @default(0)         // 排序
+  archivedAt          DateTime?                    // 暫時下架
+  deletedAt           DateTime?                    // soft delete
+  publishStartAt      DateTime?                    // 募款開始;null = 立刻
+  publishEndAt        DateTime?                    // 募款結束;null = 永久(直到手動)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
   charity Charity @relation(fields: [charityId], references: [id], onDelete: Restrict)
 
   @@index([charityId])
-  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@index([charityId, displayOrder, createdAt(sort: Desc), id(sort: Desc)]) // v0.9 — public list (whereLive 主路徑)
+  @@index([publishEndAt])                                                    // 排程下架 sweep / 過期 query
+  @@index([createdAt(sort: Desc), id(sort: Desc)])                          // admin 全量
   @@map("donation_projects")
 }
 
@@ -137,13 +160,21 @@ model SaleItem {
   contentEn           String?  @db.Text            // en
   raisingApprovalNo   String?  @db.VarChar(80)     // 勸募立案核准字號
   reliefApprovalNo    String?  @db.VarChar(80)     // 衛部救字第1141364521號 等
+  // Lifecycle 欄位(v0.9 — ADR 006)
+  displayOrder        Int      @default(0)         // 排序
+  archivedAt          DateTime?                    // 暫時下架
+  deletedAt           DateTime?                    // soft delete
+  publishStartAt      DateTime?                    // 開賣時間;null = 立刻
+  publishEndAt        DateTime?                    // 下架時間;null = 永久(直到手動)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
   charity Charity @relation(fields: [charityId], references: [id], onDelete: Restrict)
 
   @@index([charityId])
-  @@index([createdAt(sort: Desc), id(sort: Desc)])
+  @@index([charityId, displayOrder, createdAt(sort: Desc), id(sort: Desc)]) // v0.9 — public list (whereLive 主路徑)
+  @@index([publishEndAt])                                                    // 排程下架 sweep / 過期 query
+  @@index([createdAt(sort: Desc), id(sort: Desc)])                          // admin 全量
   @@map("sale_items")
 }
 
@@ -154,6 +185,9 @@ model Category {
   displayName    String   @db.VarChar(80)             // UI 顯示,zh-TW,如 "動物保護"
   displayNameEn  String?  @db.VarChar(80)             // en,如 "Animal Protection"
   displayOrder   Int      @default(0)                 // dropdown 排序
+  // Lifecycle 欄位(v0.9 — ADR 006;字典表沒有合作期限,因此不加 publishStartAt / publishEndAt)
+  archivedAt     DateTime?                            // 暫時隱藏該分類
+  deletedAt      DateTime?                            // soft delete + 最小 audit
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -188,7 +222,12 @@ model CharityOnCategory {
 | `nameEn` | `varchar(120)` | NULL | trim 後 1 ~ 120 字 | 英文翻譯;缺則 API fallback 至 `name`(v0.7 — ADR 004)|
 | `descriptionEn` | `varchar(500)` | NULL | trim 後 1 ~ 500 字 | 英文翻譯;缺則 fallback 至 `description` |
 | `logoKey` | `varchar(512)` | NULL | S3 key,符合 spec 018 §5.1 pattern(`donation/{entity}/{id}/{purpose}.{ext}`)| 列表頁小 logo;Charity 卡用主視覺,Project / SaleItem 卡用 `coverImageKey`。**API 層用 `objectUrl(logoKey)` 拼最終 URL,DB 不存完整 URL**(v0.8 — env 解耦、CDN 切換 config-only;見 backend spec 018 §1.1)|
-| `createdAt` | `timestamptz` | NOT NULL | `now()` | cursor 分頁主鍵 |
+| `displayOrder` | `int` | NOT NULL | 預設 `0`;application 層允許負數 | 手動排序;0 = 一般,**負數 / 較小先顯示**;list `ORDER BY display_order ASC, created_at DESC, id DESC`(v0.9 — ADR 006)|
+| `archivedAt` | `timestamptz` | NULL | — | 暫時下架(可恢復);**非空時 public list / detail 不可見**;預設 list query 必須加 `archivedAt IS NULL`(v0.9 — ADR 006)|
+| `deletedAt` | `timestamptz` | NULL | — | soft delete(預期不恢復,合規 / audit 用);**非空時所有 endpoint 不可見**;預設 list query 必須加 `deletedAt IS NULL`;timestamp 同時擔任最小 audit(誰刪可由 application log 補)(v0.9 — ADR 006 §1)|
+| `publishStartAt` | `timestamptz` | NULL | — | 排程上架時間;`null` = 立刻上架;public list query 加 `(publishStartAt IS NULL OR publishStartAt <= NOW())`(v0.9 — ADR 006)|
+| `publishEndAt` | `timestamptz` | NULL | — | 排程下架時間;`null` = 永久上架(直到手動);public list query 加 `(publishEndAt IS NULL OR publishEndAt > NOW())`;**Charity 的 publishEndAt = 合作合約結束日**;public list 中 Project / SaleItem **同時**要求 parent Charity 的 publishEndAt 通過(cascading visibility — ADR 006 §3)|
+| `createdAt` | `timestamptz` | NOT NULL | `now()` | cursor 分頁次要排序 / tiebreaker(v0.9 起預設排序的 secondary key,首要是 `displayOrder`)|
 | `updatedAt` | `timestamptz` | NOT NULL | `@updatedAt` | ETag 計算(spec 009 §8.3) |
 
 > **注意**:v0.4 的 `category String?` 欄位**已移除**,改由 Category M:N 關聯處理(§3.3)。
@@ -241,9 +280,14 @@ model CharityOnCategory {
 | `id` | `uuid` | NOT NULL | — | 主鍵 |
 | `key` | `varchar(40)` | NOT NULL | unique;`[a-z][a-z_]*`;1 ~ 40 字 | 程式用識別碼,如 `animal_protection` |
 | `displayName` | `varchar(80)` | NOT NULL | 1 ~ 80 字 | UI 顯示文字,如 `流浪動物` |
+| `displayNameEn` | `varchar(80)` | NULL | 1 ~ 80 字 | en;dropdown 對英文 client 顯示;v0.7 起 16 筆 seed 100% backfill |
 | `displayOrder` | `int` | NOT NULL | 預設 `0` | dropdown 排序;同值依 `key` 字典序 |
+| `archivedAt` | `timestamptz` | NULL | — | 暫時隱藏分類(可恢復);v0.9 — ADR 006;預設 list 加 `archivedAt IS NULL`;**非空時不出現在 `/v1/donation/categories` dropdown,但既有 join 列保留**(已掛到該分類的 Charity 不受影響) |
+| `deletedAt` | `timestamptz` | NULL | — | soft delete 字典項;v0.9 — ADR 006;非空時所有 endpoint 不可見;**FK Restrict 仍然會擋 hard delete**(spec §3.5) |
 | `createdAt` | `timestamptz` | NOT NULL | `now()` | |
 | `updatedAt` | `timestamptz` | NOT NULL | `@updatedAt` | |
+
+> Category **不**加 `publishStartAt` / `publishEndAt`:字典表是平台內部運營項目,無「合作合約期限」概念。需要暫時隱藏用 `archivedAt`(ADR 006 §1 / §決策 4)。
 
 **`CharityOnCategory` 欄位字典:**
 
@@ -261,13 +305,23 @@ model CharityOnCategory {
 - 不設 unique constraint:同名項目允許(分會、不同期專案、批次商品),由 `id` 唯一識別
 - 不設 enum on `category`:理由見 §7
 
+#### v0.9 — Lifecycle 約束(ADR 006)
+
+- **`publishStartAt` ≤ `publishEndAt`**:application 層在 write 時檢查;DB 層不加 CHECK constraint(避免 NULL 處理糾結)
+- **`archivedAt` 與 `deletedAt` 正交**:可以同時存在(先 archive、後 delete);query filter 用 OR 不是 AND
+- **預設 list filter 強制四條件**:所有公開 list / detail endpoint 必須通過 `whereLive`(`deletedAt IS NULL AND archivedAt IS NULL AND publishStartAt 在過去 AND publishEndAt 在未來`);**route handler 禁止自拼 where**,必須走 service-layer helper(ADR 006 §2)
+- **Cascading visibility**:DonationProject / SaleItem 的公開 query 必須 JOIN charities 並對 parent 再套 `whereLive`(ADR 006 §3);Charity 自身 list 不需 cascade(它是最上層)
+- **預設排序**:`ORDER BY display_order ASC, created_at DESC, id DESC`(三 entity 共用,ADR 006 §4)
+
 ### 3.4 為何 Project / SaleItem 的 `onDelete: Restrict`
 
 | 規則 | 行為 | 適不適合本場景 |
 |---|---|---|
-| `Cascade` | 刪 Charity → 連帶刪所有 Project / SaleItem | ❌ Charity 被誤刪 / 暫時下架時連帶吞掉歷史專案,不可逆 |
-| **`Restrict`** | 刪 Charity 前必須先把所有 Project / SaleItem 處理掉(刪除或改 FK) | ✅ 防誤刪;日後若有 soft delete / archive,在這層擋下 |
+| `Cascade` | 刪 Charity → 連帶刪所有 Project / SaleItem | ❌ Charity 被誤刪時連帶吞掉歷史專案,**不可逆 hard delete** |
+| **`Restrict`** | 刪 Charity 前必須先把所有 Project / SaleItem 處理掉(soft delete 或物理刪除) | ✅ 防誤刪;與 v0.9 soft delete 模型協作 |
 | `SetNull` | FK 變 null | ❌ 違反 §2 NOT NULL 約定 |
+
+> **v0.9 變更**:soft delete(set `deletedAt`)是業務預設動作,**不**觸發 onDelete cascade(`deletedAt` 只是欄位 update,不是 DELETE)。Cascading visibility(Project / SaleItem 隨 Charity 一起從 public 消失)由 query-layer JOIN filter 實現(ADR 006 §3),**不**由 DB FK cascade 實現 — 兩者目的不同:FK cascade 處理 hard delete 的 referential integrity,query JOIN 處理 public 可見性。`Restrict` 在 hard delete 路徑仍是正解。
 
 ### 3.5 為何 CharityOnCategory 兩端的 cascade 不對稱
 
@@ -287,12 +341,30 @@ model CharityOnCategory {
 | 索引 | 用途 | 覆蓋查詢 |
 |---|---|---|
 | 主鍵 `(id)` | resource 查詢 | `WHERE id = ?` |
-| `(createdAt DESC, id DESC)` | cursor 分頁 tiebreaker | `ORDER BY createdAt DESC, id DESC LIMIT ?` |
-| `(charityId)`(僅 Project / SaleItem)| 「某團體底下所有專案 / 商品」過濾、FK lookup;`charity_categories` JOIN 反向 | `WHERE charity_id = ?` |
+| **`(displayOrder, createdAt DESC, id DESC)`**(v0.9 — Charity)| public list 主路徑 + cursor 分頁 tiebreaker | `ORDER BY display_order ASC, created_at DESC, id DESC LIMIT ?` |
+| **`(charityId, displayOrder, createdAt DESC, id DESC)`**(v0.9 — Project / SaleItem)| 「某團體底下所有專案 / 商品」+ public list 排序合一(spec 016 §4.5 + ADR 006 §4)| `WHERE charity_id = ? ORDER BY display_order ASC, created_at DESC, id DESC` |
+| `(createdAt DESC, id DESC)`(v0.9 起退居 admin 全量查詢)| admin endpoint 允許看 archived / deleted 的全量列表 | `ORDER BY created_at DESC, id DESC LIMIT ?` |
+| **`(publishEndAt)`**(v0.9 — 三主 entity)| 排程下架 sweep + 「即將過期」query | `WHERE publish_end_at < NOW() + interval '7 days'` |
+| `(charityId)`(Project / SaleItem,**v0.9 起為 redundant** 但保留)| 簡單 FK lookup,Prisma `include` 也用 | `WHERE charity_id = ?` |
 | `categories.(displayOrder)` | dropdown 排序 | `ORDER BY display_order, key` |
 | `categories.(key)` | unique constraint + key lookup | `WHERE key = ?` |
 | `charity_categories.(charityId, categoryId)` | composite PK,正向查「該團體有哪些分類」 | `WHERE charity_id = ?` |
 | `charity_categories.(categoryId)` | 反向查「該分類下有哪些團體」(Charity tab filter 主路徑、Project/SaleItem tab filter 的 JOIN 起點)| `WHERE category_id = ?` |
+
+### 4.1.1 Partial index 選項(v0.9 — ADR 006 §後果)
+
+預設不建,**等 EXPLAIN 顯示 lifecycle filter 是熱點再加**(YAGNI):
+
+```sql
+-- 加速 public list 主路徑(whereLive 篩掉 archived/deleted 後再排序)
+CREATE INDEX charities_live_idx
+  ON charities (display_order ASC, created_at DESC, id DESC)
+  WHERE deleted_at IS NULL AND archived_at IS NULL;
+
+-- 同模式 donation_projects_live_idx / sale_items_live_idx(各帶 charity_id 前綴)
+```
+
+實測 trigger:`EXPLAIN ANALYZE` 顯示 sequential filter 佔比 > 30%,或單筆 query > 50ms。本作業資料量 < 1k row,**不會觸發**。
 
 ### 4.2 搜尋索引:`pg_trgm`
 
@@ -385,6 +457,8 @@ CREATE INDEX IF NOT EXISTS sale_items_description_en_trgm_idx
 - **Charity M ─ N Category**(透過 `CharityOnCategory` join) — Charity 端 Cascade,Category 端 Restrict(§3.5)
 - DonationProject / SaleItem **無 category** 欄位,filter 時 JOIN `charity_categories` 取得主辦團體的分類(子表繼承)
 
+> **v0.9 — Lifecycle 欄位未列圖**(篇幅):三主 entity(Charity / Project / SaleItem)各有 `displayOrder` + `archivedAt` + `deletedAt` + `publishStartAt` + `publishEndAt`,Category 有 `archivedAt` + `deletedAt`。public list / detail query 必須通過 `whereLive` 四條件;Project / SaleItem 額外 cascade 通過 parent Charity 的 `whereLive`(ADR 006 §2 / §3)。
+
 ---
 
 ## 6. Seed / Mock 資料
@@ -440,6 +514,14 @@ backend/prisma/
   - 英文(`nameEn` / `descriptionEn` / `contentEn`)**至少 30%** 有 backfill(供英文 client demo 不全空;餘留 70% nullable 以測 fallback)
   - 至少 1 筆每張表的 `nameEn` 或 `descriptionEn` 含 `stray` 或 `animal`(讓「流浪動物」demo query 的英文版 `q=stray` 也命中)
   - **Category 16 筆全部**有 `displayNameEn`(dropdown 對英文 client 不可缺項)
+- **v0.9 Lifecycle seed**(ADR 006):
+  - 預設 **85%** row `archivedAt = null` / `deletedAt = null` / `publishStartAt = null` / `publishEndAt = null`(預設「立刻且永久上架」狀態)
+  - **1 ~ 2 筆每張表**設 `archivedAt = <過去時間>` 模擬「已封存」(demo public list 不應出現)
+  - **1 筆每張表**設 `deletedAt = <過去時間>` 模擬「已軟刪」(demo 所有 endpoint 不應出現)
+  - **DonationProject** 至少:1 筆 `publishStartAt` 在未來(預售中)、1 筆 `publishEndAt` 已過期(募款結束)、1 筆 `publishStartAt` 在過去 + `publishEndAt` 在未來(募款進行中,預設狀態)
+  - **SaleItem** 同模式(demo 「上架中 / 預售中 / 已下架」三態)
+  - **Cascading visibility demo**:**1 個 Charity** 設 `publishEndAt = <過去時間>`(合約已過期),該 Charity 底下保留 1 筆 Project + 1 筆 SaleItem **都不設**自己的 publishEndAt — 預期 public list 因 cascade 連 children 一起消失,**且**該 Charity 也不在 list 中。測試此 invariant 的 integration test 在 §11
+  - **`displayOrder`**:全部預設 0;**指定 2 ~ 3 筆**設成 `-1` / `-2`(置頂),demo 「精選」排序生效
 
 ### 6.5 測試環境
 
@@ -619,6 +701,15 @@ DROP TABLE IF EXISTS categories;
 | integration | **v0.7 i18n write**:`prisma.charity.create({ data: { name, description, nameEn: null }})` 能寫入(英文 nullable);讀回 `nameEn === null` |
 | integration | **v0.7 Category displayNameEn**:16 筆 seed 後,每筆 `displayNameEn` 必為非空字串(不允許 nullable seed) |
 | seed | `npx prisma db seed` 後:Category = 16 筆(對齊 §7.1),每筆有 `displayNameEn`;Charity ≥ 20、Project / SaleItem ≥ 30;每個 Charity 有 1 ~ 3 個 categories、≥ 1 Project + ≥ 1 SaleItem;`animal_protection` 至少 1 個 Charity 掛上;每張表的名稱皆含「流浪動物」≥ 1 筆;**`nameEn` / `descriptionEn` 至少 30% 非 null,且至少 1 筆含 `stray` 或 `animal`** |
+| unit | **v0.9 `whereLive(now)` helper**(ADR 006 §2):4 條件全套(`deletedAt IS NULL` / `archivedAt IS NULL` / `publishStartAt 在過去 OR null` / `publishEndAt 在未來 OR null`);傳入不同 `now` 結果不同 |
+| integration | **v0.9 預設 list query 排除 archived row**:seed `archivedAt = past`,`prisma.charity.findMany({ where: whereLive(now) })` 不包含該 row |
+| integration | **v0.9 預設 list query 排除 deleted row**:seed `deletedAt = past`,結果不包含;**且** `findUnique({ where: { id: deletedId } })` walk 過 `whereLive` 的 service 層也回 null(route → 404) |
+| integration | **v0.9 publish 時間視窗**:seed `publishStartAt = future`,當下 `whereLive(now)` 排除;`now = publishStartAt + 1s` 後納入 |
+| integration | **v0.9 publish 結束**:seed `publishEndAt = past`,`whereLive(now)` 排除;`now = publishEndAt - 1s` 時納入 |
+| integration | **v0.9 Cascading visibility(ADR 006 §3)**:setup → Charity A `publishEndAt = past`,A 底下 Project P1 / SaleItem S1 自身欄位全空(預設「永久上架」);`prisma.donationProject.findMany({ where: whereLiveWithParent(now) })` 必須**不**包含 P1;同樣 SaleItem 不包含 S1;Charity list 也不包含 A。**反向確認**:把 A.publishEndAt 設回未來,三個 endpoint 都重新看到 |
+| integration | **v0.9 Cascading visibility — archived parent**:setup → Charity B `archivedAt = past`,旗下 Project P2 自身欄位全空;public list 不包含 P2 |
+| integration | **v0.9 displayOrder 排序生效**:三筆 Charity displayOrder = -1 / 0 / 1,排序結果順序為 -1 → 0 → 1;同 displayOrder 內按 `createdAt DESC` |
+| integration | **v0.9 FK Restrict 仍生效**:`prisma.charity.delete()`(hard delete)有 Project / SaleItem 必須 throw(soft delete 走 `deletedAt = now`,不觸發 FK 檢查) |
 
 ---
 
@@ -636,9 +727,13 @@ DROP TABLE IF EXISTS categories;
 - **Category 是否升級為獨立表**:見 §7.4 觸發條件
 - ~~**多語言 name / description**~~ → v0.7 已實現 suffix columns `nameEn` / `descriptionEn` / `contentEn`(zh-TW + en),見 backend ADR 004
 - **i18n 第 3 語**(如日文):目前 2 語以 suffix columns 設計;若加第 3 語,ADR 004 §升級觸發 提供路徑(評估改 JSONB 或 translation table)
-- **Project / SaleItem 是否需要「狀態」欄位**(草稿 / 上架 / 下架 / 結案):Figma 未露,目前不加;若評審反問「下架項目怎麼處理」,可口頭交代「目前以刪除實現,日後加 status enum」
-- **是否需要 `displayOrder` / `featured` 欄位**:Figma 沒露,目前不加
-- **soft delete**:整體 backend 尚未決議;若引入,FK `onDelete: Restrict` 改為配合 `deletedAt` 過濾邏輯
+- ~~**Project / SaleItem 是否需要「狀態」欄位**~~ → v0.9 已用 `archivedAt` / `deletedAt` / `publishStartAt` / `publishEndAt` 四個 timestamp 取代 status enum;若日後需要工作流 status,ADR 006 §升級觸發 提供路徑
+- ~~**是否需要 `displayOrder` / `featured` 欄位**~~ → v0.9 已實現 `displayOrder`(三主 entity + Category 統一);`featured` 用 `displayOrder` 負數即可
+- ~~**soft delete**~~ → v0.9 已 by ADR 006 引入 `deletedAt` timestamp,擔任 soft-delete marker + 最小 audit
+- **Cascading visibility 的 admin 預覽 endpoint**:本作業 out of scope,但約定先行(ADR 006 §5):未來實作必須走 `whereForAdmin({ includeArchived, includeDeleted, includeScheduled })` helper,**禁止** route handler 自拼 where。實際 admin UI 何時做留待後續 spec
+- **`whereLive` / `whereForAdmin` helper 在哪一層**:ADR 006 §2 只規範「service-layer 提供」,具體放在 `domain/donation-item/where.ts` 還是 `lib/lifecycle/`?待 spec 016 落地時決定(因 list query 是 spec 016 owner)
+- **過期 sweep job**:大量過期 Charity / Project / SaleItem 是否需要定期搬到 cold storage / archive partition?MVP 不處理,留 `publishEndAt` partial index 預備
+- **S3 object 與 entity 生命週期解耦**(spec 018):soft delete 一個 entity 後,它的 S3 logoKey / coverImageKey object **不會自動清掉**(避免 recovery 時遺失)。要清需要批次 job 或 S3 lifecycle policy + delete marker — 本 spec 不涵蓋,ADR 006 「相關文件」已標示
 
 ---
 
@@ -654,3 +749,4 @@ DROP TABLE IF EXISTS categories;
 | 0.6 | 2026-06-14 | 截圖補件(IMG_4875-4883)欄位擴充:(1) Charity 加 `contactPhone` / `contactEmail` / `officialWebsite` / `approvalNo` 4 個 nullable 聯絡 / 核准欄位;(2) DonationProject 加 `coverImageUrl` / `content` (text) / `raisingApprovalNo` / `reliefApprovalNo`;(3) SaleItem 加同 4 個欄位 + `priceTwd` (Int NOT NULL);(4) §7.1 Category 由 6 筆擴為 16 筆,key rename 對齊新 displayName;(5) §6.4 seed 約束補新欄位多樣化要求。前端 spec 002 / 004 系列同步更新 |
 | 0.7 | 2026-06-14 | 引入雙語系儲存(backend ADR 004 — Pattern A suffix columns):(1) Charity / Project / SaleItem 加 `nameEn` / `descriptionEn` nullable;Project / SaleItem 加 `contentEn` nullable;Category 加 `displayNameEn` nullable;(2) §4.2 trgm GIN index 補英文 6 個(中文 6 個 + 英文 6 個);(3) §6.4 seed 約束新增英文 ≥ 30% backfill + Category 100% backfill;(4) §7.1 Category 表加 displayNameEn 範例;(5) §11 補 3 個 i18n 相關 integration test;(6) §12 收束 i18n 相關開放問題 |
 | 0.8 | 2026-06-14 | 引入 S3 物件儲存(spec 018):(1) `logoUrl String? @db.VarChar(2048)` → `logoKey String? @db.VarChar(512)`,同樣對 `coverImageUrl` → `coverImageKey`;DB 不再存完整 URL,改存 S3 key,**API 層用 `objectUrl(key)` 拼**(env 解耦、CDN 切換 config-only);(2) §3.3 驗證規則改為對 key pattern regex 而非 http(s) 驗證;(3) §6.4 seed 改為「先上傳圖檔到 LocalStack 再寫 key 進 DB」;(4) §11 unit test 改 regex 驗證;(5) ER 圖 `logoUrl?` → `logoKey?`。下游 spec 016 v0.10 + spec 017 v0.4 對齊 |
+| 0.9 | 2026-06-14 | 引入 Entity lifecycle 統一模式(**backend ADR 006**):(1) 三主 entity(Charity / Project / SaleItem)各加 5 個欄位 — `displayOrder Int default 0` + `archivedAt DateTime?` + `deletedAt DateTime?` + `publishStartAt DateTime?` + `publishEndAt DateTime?`;Category 加 `archivedAt` / `deletedAt`(無 publish 時間);CharityOnCategory **不加**(join 表刪列即 unassign);(2) §3 約束 新增 lifecycle 區段:`whereLive` 4 條件 + Cascading visibility(Project / SaleItem public 必須通過 parent Charity 的 `whereLive`)+ 預設排序 `display_order ASC, created_at DESC, id DESC`;(3) §3.4 onDelete 改寫:soft delete 是業務動作不觸發 FK cascade,Restrict 仍正解 hard delete;(4) §4.1 索引重劃 — composite `(displayOrder, createdAt DESC, id DESC)` + `(publishEndAt)` + admin 全量 fallback;§4.1.1 partial index 列為「實測再加」;(5) §6.4 seed 加 archived / deleted / 三態 publish + cascading visibility demo(過期合約 Charity 含子表)+ displayOrder 置頂示範;(6) §11 補 8 個 lifecycle 相關 integration test(whereLive 4 條件、Cascading visibility 正反向、displayOrder 排序、FK Restrict 仍生效);(7) §12 關閉 3 個歷史開放問題(status 欄位、displayOrder、soft delete),新增 4 個(admin helper 位置、過期 sweep、S3 object 解耦);(8) Charity 的 publishStartAt / publishEndAt 對應「合作合約期限」,**不是**團體存在期限。下游 spec 016 / 017 同步引用 ADR 006 §2 / §3 |
