@@ -21,6 +21,7 @@ import {
 } from '../../lib/errors/index.js'
 import { normalizeEmail } from '../../lib/auth/email.js'
 import { normalizeUsername, MAX_USERNAME_LENGTH, MIN_USERNAME_LENGTH } from '../../lib/auth/username.js'
+import { registerWithV1Alias } from '../../lib/http/index.js'
 import type { LimitWindow } from '../../lib/rate-limit/index.js'
 
 interface PatchMeBody {
@@ -45,7 +46,7 @@ export async function registerMeRoutes(
   const refreshStore = createRefreshStore(app.redis)
 
   // ── GET /auth/me ───────────────────────────────────────────────────────
-  app.route({
+  registerWithV1Alias(app, {
     method: 'GET',
     url: '/auth/me',
     config: { rateLimit: { perUser: ME_READ_USER } },
@@ -85,7 +86,7 @@ export async function registerMeRoutes(
   })
 
   // ── PATCH /auth/me ─────────────────────────────────────────────────────
-  app.route<{ Body: PatchMeBody }>({
+  registerWithV1Alias<{ Body: PatchMeBody }>(app, {
     method: 'PATCH',
     url: '/auth/me',
     schema: {
@@ -185,7 +186,7 @@ export async function registerMeRoutes(
   // semantically "shelve me" — admin can later unarchive if/when admin
   // endpoints exist; from the self-service side it's one-way (no self-
   // unarchive because login is blocked once archived).
-  app.route({
+  registerWithV1Alias(app, {
     method: 'POST',
     url: '/auth/me/archive',
     config: { rateLimit: { perUser: ME_ARCHIVE_USER } },
@@ -205,7 +206,7 @@ export async function registerMeRoutes(
   })
 
   // ── DELETE /auth/me ────────────────────────────────────────────────────
-  app.route({
+  registerWithV1Alias(app, {
     method: 'DELETE',
     url: '/auth/me',
     config: { rateLimit: { perUser: ME_DELETE_USER } },
