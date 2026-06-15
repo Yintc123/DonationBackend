@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.4 |
+| 版本 | 0.5 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/src/routes/auth/*`、`backend/src/lib/auth/*` |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`(BFF 邊界)、`docs/decisions/004-auth-token-strategy.md`(access + refresh) |
@@ -440,12 +440,13 @@ const { payload } = await jwtVerify(idToken, JWKS, {
 
 本節定義本服務的身分識別抽象,供本 spec(Google)與 spec 008(帳密)共用。具體欄位與資料表結構由資料模型 spec 擁有,**本節只規範形式**。
 
-### 10.1 兩層結構:Account ↔ Credential(v0.4 — username 為新主鍵)
+### 10.1 兩層結構:Account ↔ Credential(v0.5 — 加 role)
 
 ```
 Account 1 ─────── N Credential
        │
        │ id, username? (unique), email? (unique),
+       │ role (Int, default 1 — 見 §10.10),
        │ displayOrder, archivedAt?, deletedAt?,
        │ createdAt, updatedAt, lastLoginAt?, lastLoginType?
        │
@@ -637,6 +638,58 @@ archive 之後,舊 access JWT 在剩餘 TTL 內(最多 3h,ADR 004)仍能呼叫 `
 
 要更嚴格的話,access TTL 縮短或引入 stateful access store(本期不做)。
 
+### 10.10 Account.role 與後台授權(v0.5)
+
+`Account` 帶 `role Int @default(1)` 一欄。固定 const(`src/lib/auth/role.ts`):
+
+```ts
+export const Role = {
+  ADMIN: 0,
+  USER: 1,
+} as const
+
+export type RoleValue = (typeof Role)[keyof typeof Role]
+```
+
+#### 為什麼 const literal 而非 Prisma enum
+
+| 比較 | 結論 |
+|---|---|
+| Prisma enum | 改值需 schema migration;對 demo 階段過重 |
+| TS const(採用) | 改 enum mapping = 一行 code change;DB 只存 Int |
+
+未來如需 `MODERATOR` / `SUPPORT` 等更細分,再升 Prisma enum(v0.5 收束 spec 008 §14 OQ「admin role 怎麼放」)。
+
+#### 為什麼 0 = ADMIN
+
+- JavaScript 中 `undefined === 0` 為 false → **舊 JWT(無 role claim)被讀為 `undefined`,自動非 admin**,fail-safe
+- 命名與 HTTP 0 = "no error" 概念對齊(「最高權限 = 最低值」)
+
+#### Account.role 寫入時機
+
+| 觸發 | 寫入規則 |
+|---|---|
+| `POST /auth/register`(spec 008) | 預設 `role = USER`(=1) |
+| `POST /auth/google/exchange` login intent — new-account 分支 | 預設 `role = USER` |
+| Bootstrap 第一筆 admin | 透過 prisma seed 寫死 / 一次性 script(本期落地;spec 020 §14 OQ #10) |
+| Admin 端點「升降權」 | 本期 **不**提供 — 改 role 需走 DB 直連或未來 admin API |
+
+#### JWT 中的 role claim
+
+- access JWT(本 spec §11.1)新增 `role` claim,值為 `Account.role`
+- refresh 路徑 issueBundle 時**重新從 DB 讀取** role,避免「admin 中途被降級但 access 在 TTL 內仍有效」的視窗(對齊 §10.9 zombie-session 處理)
+
+#### 後台授權的範圍
+
+`role === ADMIN` 是進入「後台寫入端點」(spec 020 §3 的 23 個端點 + spec 018 presign,v0.5)的必要條件。其他端點:
+
+| 端點群 | role 檢查? |
+|---|---|
+| Public read(`/v1/donation/*` GET) | ❌ 不檢查;任何 caller 可讀 |
+| Self-service(`/auth/me/*`)| ❌ 不檢查 role;只檢查「JWT 有效 + account 非 disabled」(§10.9) |
+| 認證類(`/auth/login` / refresh / logout)| ❌ 不檢查 role |
+| `requireAdmin` preHandler(`src/lib/auth/bearer.ts` v0.5 新增) | ✅ `role !== ADMIN` → 403 `FORBIDDEN` |
+
 ---
 
 ## 11. Token 發放(落實 ADR 004)
@@ -650,6 +703,7 @@ archive 之後,舊 access JWT 在剩餘 TTL 內(最多 3h,ADR 004)仍能呼叫 `
   "sub": "<userId>",              // 我們自己的 userId(非 Google sub)
   "jti": "<uuid>",                // 用於 blacklist
   "type": "access",
+  "role": 0 | 1,                  // v0.5 — §10.10:0=ADMIN, 1=USER;從 Account.role 讀
   "iat": <now>,
   "exp": <now + 10800>            // 3h(ADR 004)
 }
@@ -657,6 +711,8 @@ archive 之後,舊 access JWT 在剩餘 TTL 內(最多 3h,ADR 004)仍能呼叫 `
 
 - 演算法:**HS256**(與 `JWT_ACCESS_SECRET` 對稱簽)— 同一服務內驗證,不需 asymmetric
 - 若未來提供 third-party verify,改 RS256 + 公鑰公開
+- **`role` claim 預設給,缺值視為 USER**(`requireAdmin` 用 `claims.role === 0` 嚴格比對,`undefined === 0` 為 false → fail-safe)
+- refresh path 重新從 DB 讀 role,寫入新 access token(§10.10 一致性說明)
 
 ### 11.2 Refresh Token
 
@@ -885,3 +941,4 @@ jkod:auth:blacklist:{jti}          STRING "1"
 | 0.2 | 2026-06-13 | 引入 Account ↔ Credential identity 模型(§10),供 spec 008(帳密)共用;Google sign-in 邏輯改為查 GoogleCredential,email 衝突走嚴格手動連結(無自動連結);新增 §10.5 連結政策、§10.6 手動連結 Google 流程(`intent=link`);§7 端點規格擴充 intent 區分;§12 新增 4 個錯誤碼(`AUTH_EMAIL_OWNED_BY_OTHER_ACCOUNT` / `AUTH_GOOGLE_ALREADY_LINKED` / `AUTH_CREDENTIAL_EXISTS` / `AUTH_LINK_SESSION_MISMATCH`);§15 新增 6 個 event;§17 更新開放問題(account linking 變成 unlink、email 驗證留作未來);移除「帳密不支援」「account linking 不支援」字眼(已分別由 spec 008 與 §10.6 涵蓋) |
 | 0.3 | 2026-06-15 | §10 加 §10.8 `Account.lastLoginAt` / `lastLoginType` 兩個 audit 欄位(nullable + `LoginType` enum `PASSWORD` / `GOOGLE`);明文寫入 / 不寫入規則 — register / login 成功 / Google exchange login intent 兩條路徑寫入,link intent / change-password / set-password / refresh / logout / 失敗登入皆不寫入。新增 Prisma migration `add_account_last_login` + service 層 `account.update / create` 對應 2 處(`auth/service.ts` register + login,`auth-google/service.ts` existing-account login + new-account 分支)。spec 008 §5.4 同步引用 |
 | 0.4 | 2026-06-15 | §10.1 改寫:`username` 為新主鍵,`email` 變 optional(兩者皆 nullable + unique,應用層強制「至少一個」);§10.2 帳密 sign-in 改用單一 `identifier` 欄位 + `@` sniff;新增 §10.9 Account lifecycle policy(`displayOrder` / `archivedAt` / `deletedAt`,任一 lifecycle stamp 非 null 即 disabled,login / refresh / Google exchange 全 401 `AUTH_ACCOUNT_DISABLED`,refresh 觸發 `revokeAll`);3 個新 error code(`AUTH_USERNAME_TAKEN` / `AUTH_IDENTIFIER_REQUIRED` / `AUTH_ACCOUNT_DISABLED`);Prisma migration `account_username_and_lifecycle`。spec 008 §3.4 / §4 / §5 同步引用 |
+| 0.5 | 2026-06-15 | §10.1 Account ER box 加 `role`(Int @default(1));新增 §10.10「Account.role 與後台授權」 — 引入 `src/lib/auth/role.ts` const(`ADMIN=0` / `USER=1`)、寫入時機、`requireAdmin` preHandler 規約;§11.1 access JWT claims 加 `role`,refresh path 重新從 DB 讀(避免「中途降權但 access TTL 內仍有效」);後台 = spec 020 §3 的 23 個寫入端點 + spec 018 presign。spec 008 §4.2 同步寫 register 預設 `role=1`;spec 020 §2.3 / §11 / §14 OQ #1 收束 |
