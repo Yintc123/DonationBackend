@@ -34,6 +34,7 @@ import { registerCategoryRoutes } from './routes/v1/donation/categories/index.js
 import { registerCharityRoutes } from './routes/v1/donation/charities/index.js'
 import { registerDonationProjectRoutes } from './routes/v1/donation/donation-projects/index.js'
 import { registerAdminOrderRoutes } from './routes/v1/admin/orders/index.js'
+import { registerCategoryAdminRoutes } from './routes/v1/donation/categories/admin.js'
 import { registerCharityAdminRoutes } from './routes/v1/donation/charities/admin.js'
 import { registerProjectAdminRoutes } from './routes/v1/donation/donation-projects/admin.js'
 import { registerOrderRoutes } from './routes/v1/donation/orders/index.js'
@@ -121,6 +122,7 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(registerCharityAdminRoutes)
   await app.register(registerProjectAdminRoutes)
   await app.register(registerSaleItemAdminRoutes)
+  await app.register(registerCategoryAdminRoutes)
 
   return app
 }
