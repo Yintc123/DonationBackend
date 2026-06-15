@@ -94,6 +94,25 @@ export async function buildApp(
     delete process.env[key]
   }
 
+  // Step 1b: belt-and-suspenders — DATABASE_URL is intentionally outside
+  // the Config schema (see src/config/schema.ts §1; production composes it
+  // from discrete DB_* parts via composeDatabaseUrl), so the loop above
+  // does NOT scrub it. Vite's loadEnv auto-populates `.env` into
+  // `process.env` when vitest starts, and our `.env` defines
+  // DATABASE_URL → dev DB (jko-postgres:5433/jkodonation_dev). If any
+  // future code path (a new `new PrismaClient()` without `datasourceUrl`,
+  // a stray `execSync('npx prisma ...')` without an `env:` override) reads
+  // the default-resolved DATABASE_URL, it would silently target dev DB
+  // and could destroy real data via TRUNCATE / migrate reset / db seed.
+  //
+  // We scrub here so any such path fails-loud at startup ("DATABASE_URL is
+  // not set") instead of quietly wiping the developer's local rows.
+  delete process.env.DATABASE_URL
+  // DIRECT_URL is Prisma's bypass-connection-pool URL (used by `migrate
+  // deploy`, `db pull`, etc. when the primary URL points to a pooler).
+  // Same leak vector — scrub it too.
+  delete process.env.DIRECT_URL
+
   // Step 2: apply explicit test defaults.
   Object.assign(process.env, APP_TEST_DEFAULTS)
 

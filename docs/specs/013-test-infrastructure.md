@@ -3,8 +3,8 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.1 |
-| 日期 | 2026-06-13 |
+| 版本 | 0.2 |
+| 日期 | 2026-06-15 |
 | 適用範圍 | `backend/vitest.workspace.ts`、`backend/tests/**`、`backend/src/**/*.test.ts` |
 | 相關 ADR | (無新 ADR;承 `backend/CLAUDE.md` 的 TDD 鐵則) |
 | 相關 spec | `001-environment-config.md`(test env vars)、`003-orm-module.md` §10(`testcontainers` 起 Postgres)、`005-error-handling.md`(error 斷言)、`006-redis-module.md`(`testcontainers` 起 Redis)、`007-auth-flow-google-oidc.md`(MSW 攔截 Google OAuth)、`011-health-check.md`(probe 測試) |
@@ -237,6 +237,44 @@ for (const db of REDIS_DB_NUMBERS) {
 - 共用 DB + truncate 策略下,平行多檔會競爭 → §4.2 已設 `maxConcurrency: 1`
 - 若效能成瓶頸,改 per-test schema(`CREATE SCHEMA test_${id}` + `SET search_path`)或多 container,本期不做
 
+### 6.4 防漏:Dev DB pointer 不可在 test 進程內留活路(v0.2)
+
+#### 背景
+
+Vitest 啟動時 vite 的 `loadEnv` 會把 `.env` 內容自動載入 `process.env`,包括 `DATABASE_URL`(本機 `.env` 指向 `localhost:5433/jkodonation_dev` 的 dev DB)。本 spec §5.1 規約 `tests/helpers/app.ts` 在 buildApp 時 SCRUB 所有 `KNOWN_CONFIG_KEYS`,但 `DATABASE_URL` **刻意不在 `src/config/schema.ts` 內**(production 從 `DB_*` 組,見 spec 001 §3.2),所以 SCRUB 漏掉它。
+
+#### 漏水後果
+
+`process.env.DATABASE_URL` 殘留指向 dev DB。**只要任一未來 code 走以下路徑**:
+1. `new PrismaClient()` 不傳 `datasourceUrl`(預設讀 `schema.prisma` 的 `env("DATABASE_URL")`)
+2. `execSync('npx prisma ...')` 不在 `env:` 選項覆寫 `DATABASE_URL`
+3. 任何工具走 dotenv-flow 自動 resolve
+
+→ 立刻打 dev DB,跑 `TRUNCATE` / `migrate reset` / `db seed` 就**靜默清空真實開發資料**,且不會有錯誤訊息。
+
+#### 規約
+
+`tests/helpers/app.ts` step 1 額外 scrub:
+
+```ts
+delete process.env.DATABASE_URL
+delete process.env.DIRECT_URL
+```
+
+效果:任何遺漏的 PrismaClient / prisma CLI fallback 路徑會在啟動時 **fail-loud**(「DATABASE_URL is not set」)而非靜默打 dev DB。配合 §5.1 的 `injectRequired` throw,test 進程內**沒有任何路徑能 reach dev DB**。
+
+#### Audit:目前 code 對齊狀況(v0.2 落地)
+
+| 路徑 | 解析來源 | 風險 |
+|---|---|---|
+| `prismaPlugin`(`src/lib/prisma/plugin.ts`)| `composeDatabaseUrl(config)` from DB_* | ✅ 安全(`tests/helpers/app.ts` step 3 已注入 testcontainer DB_*)|
+| `tests/setup/per-test-setup.ts` TRUNCATE | `inject('TEST_DATABASE_URL')` | ✅ testcontainer URI |
+| `tests/setup/global-setup.ts:execSync('npx prisma migrate deploy')` | `env: { ...process.env, DATABASE_URL: postgres.connectionUri }` | ✅ 顯式覆寫 |
+| `tests/integration/donation-model.test.ts` `new PrismaClient` | `datasourceUrl: inject('TEST_DATABASE_URL')` | ✅ |
+| `prisma/seed.ts` `new PrismaClient` | `datasourceUrl: composeDatabaseUrl(config)` | ✅(seed 走 production env;dev seed 是預期清 dev DB 的場景) |
+
+未來新增 test / helper 時若違反上述慣例,§6.4 SCRUB 是最後一道防線。
+
 ---
 
 ## 7. Fixture 工廠
@@ -394,3 +432,4 @@ CI 與 `tests/setup/global-setup.ts` 都需注入 spec 001 §4.3 必填項。`ci
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
+| 0.2 | 2026-06-15 | §6.4 新增「Dev DB pointer 不可在 test 進程內留活路」規約 — `tests/helpers/app.ts` step 1 額外 `delete process.env.DATABASE_URL / DIRECT_URL`。理由:`src/config/schema.ts` 刻意把 `DATABASE_URL` 留在 schema 外(production 從 DB_* 組),於是 §5.1 的 SCRUB 漏掉它,vite `loadEnv` 自動載 `.env` 後 `process.env.DATABASE_URL` 殘留指向 dev DB。本版加 belt-and-suspenders 防漏,目前 code 已對齊(audit 表)|
