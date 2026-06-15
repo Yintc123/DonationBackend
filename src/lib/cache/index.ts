@@ -7,5 +7,11 @@
 //   await invalidate(redis, key, logger)
 
 export { buildCacheKey } from './keys.js'
+export {
+  donationCacheKeysFor,
+  invalidateDonationEntity,
+  type DonationEntity,
+  type InvalidateDonationContext,
+} from './invalidate-donation.js'
 export { parseJson, stableStringify } from './json.js'
 export { invalidate, withCache, type CacheOptions } from './with-cache.js'

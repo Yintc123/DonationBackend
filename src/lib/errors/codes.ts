@@ -116,6 +116,11 @@ export const ErrorCode = Object.freeze({
   INVALID_BILLING_DAY: 'INVALID_BILLING_DAY',
   ORDER_NOT_FOUND: 'ORDER_NOT_FOUND',
   ORDER_STATUS_INVALID: 'ORDER_STATUS_INVALID',
+
+  // ── §4.2.* donation write API (spec 020 §10) ───────────────────────────
+  CHARITY_CATEGORY_INVALID: 'CHARITY_CATEGORY_INVALID',
+  INVALID_S3_KEY_BINDING: 'INVALID_S3_KEY_BINDING',
+  INVALID_LIFECYCLE_RANGE: 'INVALID_LIFECYCLE_RANGE',
 } as const)
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode]
@@ -170,6 +175,9 @@ export const ErrorCodeStatus: Readonly<Record<ErrorCodeValue, number>> = Object.
   [ErrorCode.INVALID_BILLING_DAY]: 400,
   [ErrorCode.ORDER_NOT_FOUND]: 404,
   [ErrorCode.ORDER_STATUS_INVALID]: 409,
+  [ErrorCode.CHARITY_CATEGORY_INVALID]: 400,
+  [ErrorCode.INVALID_S3_KEY_BINDING]: 400,
+  [ErrorCode.INVALID_LIFECYCLE_RANGE]: 400,
   [ErrorCode.S3_BUCKET_MISCONFIGURED]: 500,
   [ErrorCode.S3_ACCESS_DENIED]: 500,
   [ErrorCode.S3_TIMEOUT]: 503,

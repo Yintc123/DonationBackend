@@ -34,7 +34,10 @@ import { registerCategoryRoutes } from './routes/v1/donation/categories/index.js
 import { registerCharityRoutes } from './routes/v1/donation/charities/index.js'
 import { registerDonationProjectRoutes } from './routes/v1/donation/donation-projects/index.js'
 import { registerAdminOrderRoutes } from './routes/v1/admin/orders/index.js'
+import { registerCharityAdminRoutes } from './routes/v1/donation/charities/admin.js'
+import { registerProjectAdminRoutes } from './routes/v1/donation/donation-projects/admin.js'
 import { registerOrderRoutes } from './routes/v1/donation/orders/index.js'
+import { registerSaleItemAdminRoutes } from './routes/v1/donation/sale-items/admin.js'
 import { registerSaleItemRoutes } from './routes/v1/donation/sale-items/index.js'
 import { registerPresignUploadRoute } from './routes/v1/donation/uploads/presign.js'
 import type { Config } from './config/schema.js'
@@ -114,6 +117,10 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(registerOrderRoutes)
   // Admin order endpoints (spec 022 Phase 4, role=0 gated).
   await app.register(registerAdminOrderRoutes)
+  // Donation entity admin write endpoints (spec 020 §5, role=0 gated).
+  await app.register(registerCharityAdminRoutes)
+  await app.register(registerProjectAdminRoutes)
+  await app.register(registerSaleItemAdminRoutes)
 
   return app
 }
