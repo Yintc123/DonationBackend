@@ -21,9 +21,9 @@ const SECRETS: TokenSecrets = {
   refreshTtlSec: 2592000, // 30d
 }
 
-describe('signAccessToken (spec 007 §11.1)', () => {
+describe('signAccessToken (spec 007 §11.1 + spec 020 §2.3)', () => {
   it('embeds sub / type=access / iss / aud / exp matching policy', async () => {
-    const { token } = await signAccessToken('acct-123', SECRETS)
+    const { token } = await signAccessToken('acct-123', SECRETS, 1)
     const claims = decodeJwtUnsafe(token)
     expect(claims.sub).toBe('acct-123')
     expect(claims.type).toBe('access')
@@ -34,6 +34,13 @@ describe('signAccessToken (spec 007 §11.1)', () => {
     expect(typeof claims.iat).toBe('number')
     // exp - iat should equal the configured TTL.
     expect(claims.exp! - claims.iat!).toBe(SECRETS.accessTtlSec)
+  })
+
+  it('embeds the role claim verbatim (spec 020 §2.3)', async () => {
+    const userToken = await signAccessToken('acct-user', SECRETS, 1)
+    const adminToken = await signAccessToken('acct-admin', SECRETS, 0)
+    expect(decodeJwtUnsafe(userToken.token).role).toBe(1)
+    expect(decodeJwtUnsafe(adminToken.token).role).toBe(0)
   })
 })
 
@@ -55,7 +62,7 @@ describe('signRefreshToken (spec 007 §11.2)', () => {
 
 describe('verifyAccessToken (spec 007 §11.1)', () => {
   it('should return claims for a valid access token', async () => {
-    const { token } = await signAccessToken('acct-x', SECRETS)
+    const { token } = await signAccessToken('acct-x', SECRETS, 1)
     const claims = await verifyAccessToken(token, SECRETS)
     expect(claims.sub).toBe('acct-x')
     expect(claims.type).toBe('access')
@@ -70,10 +77,14 @@ describe('verifyAccessToken (spec 007 §11.1)', () => {
   it('should reject when type !== access (spec 008 §5.1 type guard)', async () => {
     // Construct a token signed with the access secret but with type=refresh.
     // The verifier MUST refuse it so refresh tokens cannot impersonate access.
-    const { token } = await signAccessToken('acct-x', {
-      ...SECRETS,
-      // Same secret — only way to fake type is via sign-then-decode-then-mutate.
-    })
+    const { token } = await signAccessToken(
+      'acct-x',
+      {
+        ...SECRETS,
+        // Same secret — only way to fake type is via sign-then-decode-then-mutate.
+      },
+      1,
+    )
     // Truthy "happy path" guarantees signature check passes.
     const ok = await verifyAccessToken(token, SECRETS)
     expect(ok.type).toBe('access')
@@ -90,7 +101,7 @@ describe('verifyRefreshToken (spec 007 §5.1)', () => {
   })
 
   it('should reject when the refresh token is signed with the access secret', async () => {
-    const { token } = await signAccessToken('acct-y', SECRETS)
+    const { token } = await signAccessToken('acct-y', SECRETS, 1)
     await expect(verifyRefreshToken(token, SECRETS)).rejects.toThrow()
   })
 })

@@ -45,6 +45,20 @@ export {
   type VerifiedRefreshClaims,
 } from './tokens.js'
 export {
+  Role,
+  isRole,
+  loadAccountRole,
+  type RoleValue,
+} from './role.js'
+export {
+  extractBearer,
+  isExpiryError,
+  requireAccessAccountId,
+  requireAccessClaims,
+  requireAdmin,
+  requireLiveAccountId,
+} from './bearer.js'
+export {
   createAuthService,
   type AuthService,
   type AuthServiceDeps,
@@ -81,6 +95,11 @@ export const authPlugin = fp(
       loginLockOpts,
       tokenSecrets,
     })
+
+    // Spec 020 v0.2 §2.3 — expose tokenSecrets to admin routes so they can
+    // call `requireAdmin(req, app.prisma, app.tokenSecrets)` without each
+    // module rebuilding the secret bundle.
+    app.decorate('tokenSecrets', tokenSecrets)
 
     await registerAuthRoutes(app, { service })
     await registerMeRoutes(app, { tokenSecrets })

@@ -14,9 +14,10 @@
 import type { PrismaClient } from '@prisma/client'
 import type { FastifyRequest } from 'fastify'
 
-import { ErrorCode, UnauthorizedError } from '../errors/index.js'
+import { ErrorCode, ForbiddenError, UnauthorizedError } from '../errors/index.js'
 
-import { verifyAccessToken, type TokenSecrets } from './tokens.js'
+import { Role } from './role.js'
+import { verifyAccessToken, type TokenSecrets, type VerifiedAccessClaims } from './tokens.js'
 
 export function extractBearer(req: FastifyRequest): string {
   const authHeader = req.headers.authorization
@@ -47,14 +48,24 @@ export async function requireAccessAccountId(
   req: FastifyRequest,
   secrets: TokenSecrets,
 ): Promise<string> {
+  const claims = await requireAccessClaims(req, secrets)
+  return claims.sub
+}
+
+/**
+ * Same verification step as `requireAccessAccountId` but returns the full
+ * claim set so callers (`requireAdmin`) can read `role` without a second
+ * verify round trip. No DB hit.
+ */
+export async function requireAccessClaims(
+  req: FastifyRequest,
+  secrets: TokenSecrets,
+): Promise<VerifiedAccessClaims> {
   const token = extractBearer(req)
   try {
-    const claims = await verifyAccessToken(token, secrets)
-    return claims.sub
+    return await verifyAccessToken(token, secrets)
   } catch (err) {
-    const code = isExpiryError(err)
-      ? ErrorCode.AUTH_TOKEN_EXPIRED
-      : ErrorCode.UNAUTHORIZED
+    const code = isExpiryError(err) ? ErrorCode.AUTH_TOKEN_EXPIRED : ErrorCode.UNAUTHORIZED
     throw new UnauthorizedError({
       code,
       message: code === ErrorCode.AUTH_TOKEN_EXPIRED ? 'Token expired' : 'Unauthorized',
@@ -89,4 +100,46 @@ export async function requireLiveAccountId(
     })
   }
   return accountId
+}
+
+/**
+ * Spec 020 v0.2 §2.3 — admin gate.
+ *
+ * Three layered checks: (1) the JWT is a valid `type=access` signature
+ * (`requireAccessClaims` — 401 on missing / expired / wrong-type),
+ * (2) the Account is not disabled (`requireLiveAccountId`-equivalent — 401
+ * AUTH_ACCOUNT_DISABLED, defends against zombie tokens after archive),
+ * and (3) the role claim is exactly `Role.ADMIN`. Anything else — including
+ * missing `role` (legacy token, hand-crafted JWT, etc.) — falls through to
+ * 403 FORBIDDEN by the fail-safe contract in `role.ts`.
+ *
+ * Returns the verified accountId so the caller can use it for audit
+ * payloads without a fourth round trip.
+ */
+export async function requireAdmin(
+  req: FastifyRequest,
+  prisma: PrismaClient,
+  secrets: TokenSecrets,
+): Promise<string> {
+  // Step 1+3 together — single verify hit, read role from same claim set.
+  const claims = await requireAccessClaims(req, secrets)
+  // Step 2 — lifecycle gate. We could short-circuit on non-admin first, but
+  // that would leak "this token's role is X" via timing; the DB check is
+  // O(index) on a UUID PK so the cost is irrelevant for any role.
+  const account = await prisma.account.findUnique({
+    where: { id: claims.sub },
+    select: { archivedAt: true, deletedAt: true },
+  })
+  if (!account || account.archivedAt !== null || account.deletedAt !== null) {
+    throw new UnauthorizedError({
+      code: ErrorCode.AUTH_ACCOUNT_DISABLED,
+      message: 'Account is disabled',
+    })
+  }
+  if (claims.role !== Role.ADMIN) {
+    throw new ForbiddenError({
+      message: 'Admin role required',
+    })
+  }
+  return claims.sub
 }

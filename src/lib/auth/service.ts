@@ -32,6 +32,7 @@ import {
 } from './login-lock.js'
 import { hash as hashPassword, needsRehash, verify as verifyPassword } from './password.js'
 import type { PasswordHashOpts } from './password.js'
+import { loadAccountRole } from './role.js'
 import {
   createRefreshStore,
   signAccessToken,
@@ -112,8 +113,12 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
   const loginLock = createLoginLockClient(deps.redis, deps.loginLockOpts)
 
   async function issueBundle(accountId: string): Promise<TokenBundle> {
+    // Spec 020 v0.2 §2.3 — re-read role on every issuance (register +
+    // login + refresh + change-password) so a demoted admin keeps role=0
+    // for at most one access-token TTL.
+    const role = await loadAccountRole(deps.prisma, accountId)
     const [access, refresh] = await Promise.all([
-      signAccessToken(accountId, deps.tokenSecrets),
+      signAccessToken(accountId, deps.tokenSecrets, role),
       signRefreshToken(accountId, deps.tokenSecrets),
     ])
     await refreshStore.store({

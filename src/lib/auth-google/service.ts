@@ -16,6 +16,7 @@ import {
 } from '../errors/index.js'
 import {
   createRefreshStore,
+  loadAccountRole,
   signAccessToken,
   signRefreshToken,
   type TokenSecrets,
@@ -135,8 +136,10 @@ export function createGoogleAuthService(deps: GoogleAuthDeps): GoogleAuthService
   }
 
   async function issueBundle(accountId: string): Promise<TokenBundle> {
+    // Spec 020 v0.2 §2.3 — fresh role read on every Google login issuance.
+    const role = await loadAccountRole(deps.prisma, accountId)
     const [access, refresh] = await Promise.all([
-      signAccessToken(accountId, deps.tokenSecrets),
+      signAccessToken(accountId, deps.tokenSecrets, role),
       signRefreshToken(accountId, deps.tokenSecrets),
     ])
     await refreshStore.store({

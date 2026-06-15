@@ -17,7 +17,9 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 
 import { authPlugin } from './lib/auth/index.js'
+import type { TokenSecrets } from './lib/auth/index.js'
 import { googleAuthPlugin } from './lib/auth-google/index.js'
+import { type Clock, systemClock } from './lib/clock.js'
 import { errorHandlerPlugin } from './lib/errors/index.js'
 import { healthPlugin } from './lib/health/index.js'
 import { httpResponsePlugin } from './lib/http/index.js'
@@ -31,6 +33,8 @@ import { corsPlugin, helmetPlugin } from './lib/security/index.js'
 import { registerCategoryRoutes } from './routes/v1/donation/categories/index.js'
 import { registerCharityRoutes } from './routes/v1/donation/charities/index.js'
 import { registerDonationProjectRoutes } from './routes/v1/donation/donation-projects/index.js'
+import { registerAdminOrderRoutes } from './routes/v1/admin/orders/index.js'
+import { registerOrderRoutes } from './routes/v1/donation/orders/index.js'
 import { registerSaleItemRoutes } from './routes/v1/donation/sale-items/index.js'
 import { registerPresignUploadRoute } from './routes/v1/donation/uploads/presign.js'
 import type { Config } from './config/schema.js'
@@ -38,6 +42,13 @@ import type { Config } from './config/schema.js'
 declare module 'fastify' {
   interface FastifyInstance {
     config: Config
+    // spec 021 §7.7 / spec 022 §4.0 — clock seam; route handlers forward
+    // `req.server.clock` to services as `deps.clock`. Production = systemClock,
+    // tests override via app.decorate('clock', ...) before buildApp returns.
+    clock: Clock
+    // spec 020 v0.2 §2.3 — admin routes pull token secrets to verify
+    // role=0 access tokens. Set by authPlugin.
+    tokenSecrets: TokenSecrets
   }
 }
 
@@ -56,9 +67,21 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
     logger: createLogger(config),
     trustProxy,
     disableRequestLogging: true,
+    // Spec 022 §4.0 / §5.1 — body schemas set `additionalProperties: false`
+    // and rely on Ajv rejecting unknown properties. Fastify 5's default
+    // `removeAdditional: 'all'` would silently strip them and quietly let
+    // `additionalProperties: false` pass, so we disable removal globally.
+    // Safe because no existing schema in this codebase depends on silent
+    // stripping (only order bodies set `additionalProperties` at all).
+    ajv: {
+      customOptions: {
+        removeAdditional: false,
+      },
+    },
   })
 
   app.decorate('config', config)
+  app.decorate('clock', systemClock)
 
   await app.register(loggerPolicyPlugin)
   await app.register(errorHandlerPlugin)
@@ -87,6 +110,10 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(registerCharityRoutes)
   await app.register(registerDonationProjectRoutes)
   await app.register(registerSaleItemRoutes)
+  // Donation order create endpoints (spec 022 Phase 2).
+  await app.register(registerOrderRoutes)
+  // Admin order endpoints (spec 022 Phase 4, role=0 gated).
+  await app.register(registerAdminOrderRoutes)
 
   return app
 }

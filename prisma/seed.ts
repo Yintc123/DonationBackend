@@ -22,6 +22,7 @@ import { PutObjectCommand } from '@aws-sdk/client-s3'
 import { PrismaClient } from '@prisma/client'
 
 import { loadConfig } from '../src/config/load.js'
+import { hashPassword, type PasswordHashOpts, Role } from '../src/lib/auth/index.js'
 import { composeDatabaseUrl } from '../src/lib/db/compose-database-url.js'
 import {
   createS3Client,
@@ -116,6 +117,14 @@ async function main(): Promise<void> {
     await prisma.charity.deleteMany({})
     await prisma.category.deleteMany({})
 
+    // Spec 020 v0.2 §14 OQ #10 — bootstrap admin account.
+    // Idempotent upsert on username='admin'. Password from
+    // BOOTSTRAP_ADMIN_PASSWORD env, with a clearly-marked dev default. In
+    // production the deployment script provides the env; seed is dev/CI
+    // only, so a leaked default isn't a vulnerability — but it's still
+    // logged loudly so operators notice if they forget to override.
+    await bootstrapAdmin(prisma, config)
+
     console.log('→ seeding 16 categories')
     const categoryIdByKey = await seedCategories(prisma)
 
@@ -180,6 +189,52 @@ async function main(): Promise<void> {
   } finally {
     s3.destroy()
     await prisma.$disconnect()
+  }
+}
+
+async function bootstrapAdmin(
+  prisma: PrismaClient,
+  config: ReturnType<typeof loadConfig>,
+): Promise<void> {
+  const username = 'admin'
+  const password = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? 'admin-dev-password-change-me'
+  if (password === 'admin-dev-password-change-me') {
+    console.warn(
+      '⚠  using default BOOTSTRAP_ADMIN_PASSWORD — set env to override (dev/CI only acceptable)',
+    )
+  }
+  const opts: PasswordHashOpts = {
+    memoryCost: config.PASSWORD_HASH_MEMORY_COST,
+    timeCost: config.PASSWORD_HASH_TIME_COST,
+    parallelism: config.PASSWORD_HASH_PARALLELISM,
+    minLength: config.PASSWORD_MIN_LENGTH,
+  }
+  const hashedPassword = await hashPassword(password, opts)
+  const existing = await prisma.account.findUnique({ where: { username } })
+  if (existing === null) {
+    await prisma.account.create({
+      data: {
+        username,
+        role: Role.ADMIN,
+        passwordCredential: { create: { hashedPassword, hashAlgo: 'argon2id' } },
+      },
+    })
+    console.log(`→ created admin account (username=${username})`)
+  } else {
+    // Keep admin role but refresh password (idempotent re-seed).
+    await prisma.account.update({
+      where: { id: existing.id },
+      data: {
+        role: Role.ADMIN,
+        passwordCredential: {
+          upsert: {
+            create: { hashedPassword, hashAlgo: 'argon2id' },
+            update: { hashedPassword, hashAlgo: 'argon2id' },
+          },
+        },
+      },
+    })
+    console.log(`→ refreshed admin account (username=${username})`)
   }
 }
 

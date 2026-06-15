@@ -43,6 +43,12 @@ model Account {
   id            String     @id @default(uuid())
   username      String?    @unique
   email         String?    @unique
+  // Spec 020 v0.2 §2.3 — role gate for admin write endpoints.
+  // `0 = ADMIN`, `1 = USER` (literal const in src/lib/auth/role.ts, not a
+  // Prisma enum — demo-stable role set; future MODERATOR / SUPPORT splits
+  // will upgrade to an enum at that time). Default 1 so any new register
+  // path is USER; existing rows are backfilled to 1 by the migration.
+  role          Int        @default(1)
   displayOrder  Int        @default(0)
   archivedAt    DateTime?
   deletedAt     DateTime?
@@ -117,31 +123,34 @@ model GoogleCredential {
 // =============================================================================
 
 model Charity {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid())
   // 多語系欄位(ADR 004 — Pattern A suffix columns)
-  name            String   @db.VarChar(120)
-  description     String   @db.VarChar(500)
-  nameEn          String?  @db.VarChar(120)
-  descriptionEn   String?  @db.VarChar(500)
+  name            String    @db.VarChar(120)
+  description     String    @db.VarChar(500)
+  nameEn          String?   @db.VarChar(120)
+  descriptionEn   String?   @db.VarChar(500)
   // 圖片(spec 018 §5.1 key pattern;API 層 objectUrl() 拼 URL)
-  logoKey         String?  @db.VarChar(512)
+  logoKey         String?   @db.VarChar(512)
   // 補件揭露欄位(IMG_4876)
-  contactPhone    String?  @db.VarChar(40)
-  contactEmail    String?  @db.VarChar(254)
-  officialWebsite String?  @db.VarChar(2048)
-  approvalNo      String?  @db.VarChar(80)
+  contactPhone    String?   @db.VarChar(40)
+  contactEmail    String?   @db.VarChar(254)
+  officialWebsite String?   @db.VarChar(2048)
+  approvalNo      String?   @db.VarChar(80)
   // Lifecycle 欄位(ADR 006)
-  displayOrder    Int      @default(0)
+  displayOrder    Int       @default(0)
   archivedAt      DateTime?
   deletedAt       DateTime?
   publishStartAt  DateTime?
   publishEndAt    DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   donationProjects DonationProject[]
   saleItems        SaleItem[]
   categories       CharityOnCategory[]
+  // spec 021 §3.1 — reverse relation for OrderLine.charityId. Pure
+  // Prisma-client concept (no SQL DDL emitted).
+  orderLines       OrderLine[]
 
   // Public list 主路徑(whereLive 通過後 ORDER BY displayOrder, createdAt, id)
   @@index([displayOrder, createdAt(sort: Desc), id(sort: Desc)])
@@ -153,31 +162,33 @@ model Charity {
 }
 
 model DonationProject {
-  id                  String   @id @default(uuid())
-  charityId           String
+  id                String    @id @default(uuid())
+  charityId         String
   // 多語系欄位
-  name                String   @db.VarChar(120)
-  description         String   @db.VarChar(500)
-  nameEn              String?  @db.VarChar(120)
-  descriptionEn       String?  @db.VarChar(500)
+  name              String    @db.VarChar(120)
+  description       String    @db.VarChar(500)
+  nameEn            String?   @db.VarChar(120)
+  descriptionEn     String?   @db.VarChar(500)
   // 圖片
-  logoKey             String?  @db.VarChar(512)
-  coverImageKey       String?  @db.VarChar(512)
+  logoKey           String?   @db.VarChar(512)
+  coverImageKey     String?   @db.VarChar(512)
   // 詳情頁長文 + 字號
-  content             String   @db.Text
-  contentEn           String?  @db.Text
-  raisingApprovalNo   String?  @db.VarChar(80)
-  reliefApprovalNo    String?  @db.VarChar(80)
+  content           String    @db.Text
+  contentEn         String?   @db.Text
+  raisingApprovalNo String?   @db.VarChar(80)
+  reliefApprovalNo  String?   @db.VarChar(80)
   // Lifecycle
-  displayOrder        Int      @default(0)
-  archivedAt          DateTime?
-  deletedAt           DateTime?
-  publishStartAt      DateTime?
-  publishEndAt        DateTime?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  displayOrder      Int       @default(0)
+  archivedAt        DateTime?
+  deletedAt         DateTime?
+  publishStartAt    DateTime?
+  publishEndAt      DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  charity Charity @relation(fields: [charityId], references: [id], onDelete: Restrict)
+  charity    Charity     @relation(fields: [charityId], references: [id], onDelete: Restrict)
+  // spec 021 §3.1 — reverse relation for OrderLine.donationProjectId.
+  orderLines OrderLine[]
 
   // FK lookup(`include: { charity: true }` 用)
   @@index([charityId])
@@ -191,32 +202,34 @@ model DonationProject {
 }
 
 model SaleItem {
-  id                  String   @id @default(uuid())
-  charityId           String
+  id                String    @id @default(uuid())
+  charityId         String
   // 多語系欄位
-  name                String   @db.VarChar(120)
-  description         String   @db.VarChar(500)
-  nameEn              String?  @db.VarChar(120)
-  descriptionEn       String?  @db.VarChar(500)
+  name              String    @db.VarChar(120)
+  description       String    @db.VarChar(500)
+  nameEn            String?   @db.VarChar(120)
+  descriptionEn     String?   @db.VarChar(500)
   // 圖片
-  logoKey             String?  @db.VarChar(512)
-  coverImageKey       String?  @db.VarChar(512)
+  logoKey           String?   @db.VarChar(512)
+  coverImageKey     String?   @db.VarChar(512)
   // 義賣商品專屬
-  priceTwd            Int
-  content             String   @db.Text
-  contentEn           String?  @db.Text
-  raisingApprovalNo   String?  @db.VarChar(80)
-  reliefApprovalNo    String?  @db.VarChar(80)
+  priceTwd          Int
+  content           String    @db.Text
+  contentEn         String?   @db.Text
+  raisingApprovalNo String?   @db.VarChar(80)
+  reliefApprovalNo  String?   @db.VarChar(80)
   // Lifecycle
-  displayOrder        Int      @default(0)
-  archivedAt          DateTime?
-  deletedAt           DateTime?
-  publishStartAt      DateTime?
-  publishEndAt        DateTime?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  displayOrder      Int       @default(0)
+  archivedAt        DateTime?
+  deletedAt         DateTime?
+  publishStartAt    DateTime?
+  publishEndAt      DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  charity Charity @relation(fields: [charityId], references: [id], onDelete: Restrict)
+  charity    Charity     @relation(fields: [charityId], references: [id], onDelete: Restrict)
+  // spec 021 §3.1 — reverse relation for OrderLine.saleItemId.
+  orderLines OrderLine[]
 
   @@index([charityId])
   @@index([charityId, displayOrder, createdAt(sort: Desc), id(sort: Desc)])
@@ -227,15 +240,15 @@ model SaleItem {
 
 // 分類字典表(spec 015 §7.1 16 筆固定;不加 publish 時間 — 字典表無合作期限)
 model Category {
-  id             String   @id @default(uuid())
-  key            String   @unique @db.VarChar(40)
-  displayName    String   @db.VarChar(80)
-  displayNameEn  String?  @db.VarChar(80)
-  displayOrder   Int      @default(0)
-  archivedAt     DateTime?
-  deletedAt      DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id            String    @id @default(uuid())
+  key           String    @unique @db.VarChar(40)
+  displayName   String    @db.VarChar(80)
+  displayNameEn String?   @db.VarChar(80)
+  displayOrder  Int       @default(0)
+  archivedAt    DateTime?
+  deletedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   charities CharityOnCategory[]
 
@@ -259,4 +272,154 @@ model CharityOnCategory {
   @@id([charityId, categoryId])
   @@index([categoryId])
   @@map("charity_categories")
+}
+
+// =============================================================================
+// Spec 021 v0.7 — Donation Order domain (Order header + OrderLine pattern)
+//
+// Order(header) ── 1..N OrderLine(線項,本期僅 1 條,spec 022 §11 OQ #3)
+//
+// OrderLine 走 polymorphic FK + subjectType discriminator(spec 021 §2.2):
+//   subjectType = CHARITY          → charityId 非 null
+//   subjectType = DONATION_PROJECT → donationProjectId 非 null
+//   subjectType = SALE_ITEM        → saleItemId 非 null
+// 三 FK 互斥(application-level invariant,validators.ts;見 spec 021 §7.1)
+//
+// 訂單匿名(spec 021 §2.1):Order 不關聯 Account,donorName 自由字串。
+// Account 表此後僅服務 admin(role=0,spec 020)。
+//
+// Hard delete(spec 021 §10 OQ #7):訂單為事實紀錄,無 archive / restore;
+// admin DELETE 直接從 DB 移除(Cascade 刪 OrderLine)。
+// =============================================================================
+
+// spec 021 §3 — 訂單狀態 state machine(spec 021 §5):
+//   PENDING → PAID(confirm-payment) | CANCELLED(user cancel)
+//   PAID    → REFUNDED(admin PATCH)
+//   FAILED  — 本期不主動觸發,留欄位給未來真 gateway timeout
+enum OrderStatus {
+  PENDING
+  PAID
+  CANCELLED
+  FAILED
+  REFUNDED
+}
+
+// spec 021 §3 — OrderLine.subjectType discriminator。
+// 新增 subject type 走 schema migration:加 enum value + 加 nullable FK(在
+// OrderLine 上)+ 加 validators.ts 的 switch case。Order 表不動(§2.2)。
+enum OrderSubjectType {
+  CHARITY
+  DONATION_PROJECT
+  SALE_ITEM
+}
+
+// spec 021 §3 — 單次 vs 月扣。對 SALE_ITEM 必為 null(§7.2 invariant)。
+enum DonationFrequency {
+  ONE_TIME
+  RECURRING
+}
+
+// spec 021 §3 — RECURRING 訂閱的月扣款日(對應 Figma IMG_4885/4886 三選一)。
+// 只有三個日期(6 / 16 / 26),所有月份都存在,本期不需處理 31 號 edge case。
+enum BillingDay {
+  DAY_6
+  DAY_16
+  DAY_26
+}
+
+// spec 021 §3 / IMG_4888-4890 — 收據開立方式。
+// CHARITY / DONATION_PROJECT 必填;SALE_ITEM 必為 null(§7.5 invariant,
+// 且由 spec 022 §4.3 / §5.1 在 TypeBox 層 additionalProperties: false 擋下)。
+enum ReceiptOption {
+  NONE
+  INDIVIDUAL
+  CORPORATE
+  GOVERNMENT_DONATION
+  DEFER
+}
+
+// spec 021 §3 — Order header(entity-agnostic;subject 細節下到 OrderLine)。
+model Order {
+  id     String      @id @default(uuid())
+  status OrderStatus @default(PENDING)
+
+  // 訂單匿名 — 自由字串,不引用 Account.id(§2.1)。
+  donorName String @db.VarChar(120)
+
+  // 三類訂單共用 isAnonymous(IMG_4890 checkbox)。影響 public display(由
+  // BFF / UI 端做 anonymization,backend response 一律回原樣,見 spec 022 §4.6)。
+  isAnonymous Boolean @default(false)
+
+  // 收據開立方式 — CHARITY/PROJECT 必填,SALE_ITEM 必為 null(§7.5)。
+  receiptOption ReceiptOption?
+
+  // 訂單備注(整單共用,**不** per-line)。service 層 trim 後空白 → null(spec 022 §5.2)。
+  note String? @db.VarChar(500)
+
+  // 下次扣款日 — 僅 RECURRING 有值,backend 算 + 存(§7.7),本期不做 cron 扣款。
+  // create 時算一次,後續任何 PATCH 都不重算(§7.7 重算規約)。
+  nextChargeAt DateTime?
+
+  // 訂單總金額(denormalized:= sum(OrderLine.subtotalTwd))。
+  // 本期 OrderLine immutable post-create,所以 amountTwd 算一次就鎖。
+  amountTwd Int
+
+  paidAt      DateTime?
+  cancelledAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lines OrderLine[]
+
+  // Admin list `?status=X` + ORDER BY createdAt(spec 022 §4.7)。
+  @@index([status, createdAt])
+  // 未來 cron「找出今日該扣款的 order」走此 index(本期 cron 不存在)。
+  @@index([nextChargeAt])
+  @@map("orders")
+}
+
+// spec 021 §3 — OrderLine 線項。
+// 本期 1 條/單(spec 021 §1.4 + §7.4 invariant);未來 cart 開放 N 條。
+model OrderLine {
+  id      String @id @default(uuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  // Subject 多型對應(§2.2 polymorphic FK 方案)。
+  subjectType OrderSubjectType
+
+  // Polymorphic FK — 三 nullable typed columns 保 DB integrity。
+  // onDelete: Restrict — 訂單一旦引用,charity 等不可 hard delete;
+  // 這是會計層需求(訂單事實紀錄不能變孤兒)。
+  charityId String?
+  charity   Charity? @relation(fields: [charityId], references: [id], onDelete: Restrict)
+
+  donationProjectId String?
+  donationProject   DonationProject? @relation(fields: [donationProjectId], references: [id], onDelete: Restrict)
+
+  saleItemId String?
+  saleItem   SaleItem? @relation(fields: [saleItemId], references: [id], onDelete: Restrict)
+
+  // 線項基本資料(application-level: quantity 1..100;§7.3 算術 invariant)。
+  quantity     Int
+  // CHARITY/PROJECT:= 用戶輸入金額;SALE_ITEM:= SaleItem.priceTwd 建單時 snapshot(spec 021 §3.2)。
+  unitPriceTwd Int
+  // = quantity × unitPriceTwd(本期 quantity 對 donation 永遠 1)。
+  subtotalTwd  Int
+
+  // 捐款 specific — 僅 subjectType ∈ {CHARITY, DONATION_PROJECT} 設(§7.2 invariant)。
+  donationFrequency DonationFrequency?
+  // RECURRING 必設;ONE_TIME / SALE_ITEM 必為 null。
+  billingDay        BillingDay?
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+  @@index([charityId])
+  @@index([donationProjectId])
+  @@index([saleItemId])
+  // admin filter「過去 X 天的某 subjectType」(spec 022 §4.7)。
+  @@index([subjectType, createdAt])
+  @@map("order_lines")
 }

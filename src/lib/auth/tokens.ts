@@ -23,6 +23,8 @@ import type { Redis } from 'ioredis'
 
 import { buildKey } from '../redis/index.js'
 
+import { type RoleValue } from './role.js'
+
 export interface TokenSecrets {
   accessSecret: string
   refreshSecret: string
@@ -43,6 +45,12 @@ interface BaseClaims {
   type: 'access' | 'refresh'
   iss: string
   aud?: string
+  // Spec 020 v0.2 §2.3 — access tokens carry the caller's Account.role so
+  // `requireAdmin` does not have to round-trip to the DB on every gated
+  // request. Refresh tokens deliberately do NOT carry role: spec 020 §2.3
+  // requires re-reading Account.role on every refresh so an admin who is
+  // demoted has at most one access-token TTL (≤ 3h) of zombie privilege.
+  role?: RoleValue
 }
 
 const decoder = createDecoder()
@@ -66,6 +74,7 @@ export function decodeJwtUnsafe(token: string): DecodedClaims {
 export async function signAccessToken(
   accountId: string,
   secrets: TokenSecrets,
+  role: RoleValue,
 ): Promise<IssuedToken> {
   const jti = randomUUID()
   const signer = createSigner({
@@ -76,7 +85,7 @@ export async function signAccessToken(
     jti,
     expiresIn: secrets.accessTtlSec * 1000,
   })
-  const payload: BaseClaims = { sub: accountId, type: 'access', iss: secrets.issuer }
+  const payload: BaseClaims = { sub: accountId, type: 'access', iss: secrets.issuer, role }
   const token = signer(payload) as string
   return { token, tokenId: jti, expiresIn: secrets.accessTtlSec }
 }
@@ -104,6 +113,12 @@ export interface VerifiedAccessClaims extends DecodedClaims {
   sub: string
   type: 'access'
   jti: string
+  // Spec 020 v0.2 §2.3 — present on every token signed by this service.
+  // Optional in the type because a future deserialised wire format (or
+  // an upgrade window) may still surface a roleless token; `requireAdmin`
+  // treats `undefined` as non-admin per the fail-safe contract in
+  // src/lib/auth/role.ts.
+  role?: RoleValue
 }
 
 export interface VerifiedRefreshClaims extends DecodedClaims {

@@ -106,6 +106,16 @@ export const ErrorCode = Object.freeze({
   CHARITY_NOT_FOUND: 'CHARITY_NOT_FOUND',
   DONATION_PROJECT_NOT_FOUND: 'DONATION_PROJECT_NOT_FOUND',
   SALE_ITEM_NOT_FOUND: 'SALE_ITEM_NOT_FOUND',
+
+  // ── §4.2.* donation order (spec 022 §7) ────────────────────────────────
+  // Phase 2 introduces the create endpoints; INVALID_BILLING_DAY is the
+  // only one this phase actually throws (TypeBox catches lines-required /
+  // too-many at the schema layer with VALIDATION_FAILED). ORDER_NOT_FOUND
+  // / ORDER_STATUS_INVALID land with Phase 3 (confirm-payment / cancel /
+  // GET / admin PATCH).
+  INVALID_BILLING_DAY: 'INVALID_BILLING_DAY',
+  ORDER_NOT_FOUND: 'ORDER_NOT_FOUND',
+  ORDER_STATUS_INVALID: 'ORDER_STATUS_INVALID',
 } as const)
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode]
@@ -157,6 +167,9 @@ export const ErrorCodeStatus: Readonly<Record<ErrorCodeValue, number>> = Object.
   [ErrorCode.CHARITY_NOT_FOUND]: 404,
   [ErrorCode.DONATION_PROJECT_NOT_FOUND]: 404,
   [ErrorCode.SALE_ITEM_NOT_FOUND]: 404,
+  [ErrorCode.INVALID_BILLING_DAY]: 400,
+  [ErrorCode.ORDER_NOT_FOUND]: 404,
+  [ErrorCode.ORDER_STATUS_INVALID]: 409,
   [ErrorCode.S3_BUCKET_MISCONFIGURED]: 500,
   [ErrorCode.S3_ACCESS_DENIED]: 500,
   [ErrorCode.S3_TIMEOUT]: 503,

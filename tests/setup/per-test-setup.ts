@@ -17,6 +17,12 @@ const TRUNCATE_TABLES = [
   'google_credentials',
   'password_credentials',
   'accounts',
+  // Donation order domain (spec 021 v0.7)
+  // Listed before charities/projects/sale_items because OrderLine has FK
+  // Restrict to those tables — CASCADE handles dependency order even so,
+  // listing first is just intent-signalling.
+  'order_lines',
+  'orders',
   // Donation domain (spec 015 v0.9)
   'sale_items',
   'donation_projects',

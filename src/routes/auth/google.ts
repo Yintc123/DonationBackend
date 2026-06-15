@@ -12,6 +12,7 @@ import {
   UnauthorizedError,
 } from '../../lib/errors/index.js'
 import {
+  loadAccountRole,
   signAccessToken,
   signRefreshToken,
   verifyRefreshToken,
@@ -257,8 +258,10 @@ export async function registerGoogleAuthRoutes(
   })
 
   async function issueBundle(accountId: string): Promise<TokenBundle> {
+    // Spec 020 v0.2 §2.3 — fresh role read on refresh path too.
+    const role = await loadAccountRole(app.prisma, accountId)
     const [access, refresh] = await Promise.all([
-      signAccessToken(accountId, tokenSecrets),
+      signAccessToken(accountId, tokenSecrets, role),
       signRefreshToken(accountId, tokenSecrets),
     ])
     await refreshStore.store({
