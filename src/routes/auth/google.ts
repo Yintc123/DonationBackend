@@ -5,7 +5,7 @@
 // converts failures to VALIDATION_FAILED RFC 7807.
 
 import { Type } from '@sinclair/typebox'
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance } from 'fastify'
 
 import {
   ErrorCode,
