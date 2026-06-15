@@ -21,6 +21,7 @@
     "test:e2e": "vitest run --project=e2e",
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",
+    "prepare": "git config core.hooksPath .githooks || true",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
