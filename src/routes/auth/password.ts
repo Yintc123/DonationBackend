@@ -112,7 +112,8 @@ export async function registerAuthRoutes(
         { event: 'auth_register_password', audit: true },
         'password account registered',
       )
-      return reply.created(`/auth/accounts/me`, tokens)
+      // Location → /auth/me (spec 008 §6.3 v0.4 — self-service profile read).
+      return reply.created('/auth/me', tokens)
     },
   })
 

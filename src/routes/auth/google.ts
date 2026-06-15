@@ -14,12 +14,16 @@ import {
 import {
   signAccessToken,
   signRefreshToken,
-  verifyAccessToken,
   verifyRefreshToken,
   createRefreshStore,
   type TokenSecrets,
   type TokenBundle,
 } from '../../lib/auth/index.js'
+import {
+  extractBearer,
+  isExpiryError,
+  requireAccessAccountId,
+} from '../../lib/auth/bearer.js'
 import type { GoogleAuthService } from '../../lib/auth-google/service.js'
 import type { LimitWindow } from '../../lib/rate-limit/index.js'
 
@@ -273,46 +277,5 @@ export async function registerGoogleAuthRoutes(
   }
 }
 
-function extractBearer(req: FastifyRequest): string {
-  const authHeader = req.headers.authorization
-  if (typeof authHeader !== 'string' || !/^bearer /i.test(authHeader)) {
-    throw new UnauthorizedError({
-      code: ErrorCode.UNAUTHORIZED,
-      message: 'Missing or malformed Authorization header',
-    })
-  }
-  const token = authHeader.slice(7).trim()
-  if (token.length === 0) {
-    throw new UnauthorizedError({
-      code: ErrorCode.UNAUTHORIZED,
-      message: 'Missing bearer token',
-    })
-  }
-  return token
-}
-
-async function requireAccessAccountId(
-  req: FastifyRequest,
-  secrets: TokenSecrets,
-): Promise<string> {
-  const token = extractBearer(req)
-  try {
-    const claims = await verifyAccessToken(token, secrets)
-    return claims.sub
-  } catch (err) {
-    const code = isExpiryError(err)
-      ? ErrorCode.AUTH_TOKEN_EXPIRED
-      : ErrorCode.UNAUTHORIZED
-    throw new UnauthorizedError({
-      code,
-      message: code === ErrorCode.AUTH_TOKEN_EXPIRED ? 'Token expired' : 'Unauthorized',
-      cause: err,
-    })
-  }
-}
-
-function isExpiryError(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null) return false
-  const e = err as { code?: unknown }
-  return e.code === 'FAST_JWT_EXPIRED'
-}
+// `extractBearer`, `requireAccessAccountId`, `isExpiryError` lifted to
+// `src/lib/auth/bearer.ts` so /auth/me/* can reuse the same verify path.

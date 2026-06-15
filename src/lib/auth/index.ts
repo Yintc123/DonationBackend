@@ -7,6 +7,7 @@
 import type { FastifyInstance } from 'fastify'
 import fp from 'fastify-plugin'
 
+import { registerMeRoutes } from '../../routes/auth/me.js'
 import { registerAuthRoutes } from '../../routes/auth/password.js'
 
 import type { PasswordHashOpts } from './password.js'
@@ -82,6 +83,7 @@ export const authPlugin = fp(
     })
 
     await registerAuthRoutes(app, { service })
+    await registerMeRoutes(app, { tokenSecrets })
   },
   {
     name: 'auth-password',
