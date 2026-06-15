@@ -4,10 +4,19 @@
 // then re-creates from the per-table seed scripts. We do NOT touch
 // accounts / credentials (spec 007 / 008 owns those).
 //
-// S3 placeholder images:
-//   For every row that declares hasLogo / hasCover, the seed scripts call
-//   `uploadAsset(key)` which puts a 1×1 PNG to LocalStack (or real S3 — same
-//   API). The image bytes are placeholder; UI just needs a non-404 URL.
+// S3 image strategy (spec 015 v0.8):
+//   - Charity logos: ONLY the featured row (`taiwan-stray-animal`) gets a
+//     real image — sourced from `prisma/assets/charity-placeholder.png`,
+//     the same file the frontend serves at `public/figma/charity-placeholder.png`.
+//     The other 29 charities have `logoKey: null` so the frontend falls back
+//     to its default avatar UI.
+//   - Project / sale-item covers: still 1×1 placeholder PNG/JPG via
+//     `uploadPlaceholder(key)` — UI on those endpoints still needs a non-404
+//     URL until featured imagery exists for those entities too.
+
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { PutObjectCommand } from '@aws-sdk/client-s3'
 import { PrismaClient } from '@prisma/client'
@@ -21,7 +30,10 @@ import {
 } from '../src/lib/s3/index.js'
 
 import { seedCategories } from './seed/categories.js'
-import { seedCharities } from './seed/charities.js'
+import {
+  seedCharities,
+  type CharityLogoAsset,
+} from './seed/charities.js'
 import { seedDonationProjects } from './seed/donation-projects.js'
 import { seedSaleItems } from './seed/sale-items.js'
 
@@ -56,6 +68,22 @@ async function uploadPlaceholder(
   else throw new Error(`seed: unsupported placeholder extension for key ${key}`)
 }
 
+// Slug whitelist of charities that get a real (non-placeholder) logo image.
+// Currently a single featured row (spec 015 v0.8); easy to extend by adding
+// more entries here. The asset file ships in `prisma/assets/`.
+const FEATURED_CHARITY_SLUG = 'taiwan-stray-animal'
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const FEATURED_LOGO_PATH = join(__dirname, 'assets', 'charity-placeholder.png')
+
+function loadCharityLogos(): ReadonlyMap<string, CharityLogoAsset> {
+  // Fail loudly if the asset is missing — better than silently shipping a
+  // null logoKey for the featured row.
+  const body = readFileSync(FEATURED_LOGO_PATH)
+  return new Map<string, CharityLogoAsset>([
+    [FEATURED_CHARITY_SLUG, { body, contentType: 'image/png', ext: 'png' }],
+  ])
+}
+
 async function main(): Promise<void> {
   const config = loadConfig({ readDotenv: true })
   const prisma = new PrismaClient({ datasourceUrl: composeDatabaseUrl(config) })
@@ -73,7 +101,8 @@ async function main(): Promise<void> {
       }),
     )
   }
-  const uploadAsset = (key: string): Promise<void> => uploadPlaceholder(put, key)
+  const uploadPlaceholderAsset = (key: string): Promise<void> =>
+    uploadPlaceholder(put, key)
 
   try {
     // FK-safe truncate order: sale_items + donation_projects (children) →
@@ -90,25 +119,29 @@ async function main(): Promise<void> {
     console.log('→ seeding 16 categories')
     const categoryIdByKey = await seedCategories(prisma)
 
-    console.log(`→ seeding charities (and uploading placeholder logos to ${s3Config.bucket})`)
-    const charities = await seedCharities(prisma, categoryIdByKey, uploadAsset)
+    const slugLogos = loadCharityLogos()
+    console.log(
+      `→ seeding charities (uploading ${slugLogos.size.toString()} featured logo(s) to ${s3Config.bucket})`,
+    )
+    const charities = await seedCharities(prisma, categoryIdByKey, {
+      put,
+      slugLogos,
+    })
 
     console.log(`→ seeding donation projects under ${charities.length.toString()} charities`)
-    await seedDonationProjects(prisma, charities, uploadAsset)
+    await seedDonationProjects(prisma, charities, uploadPlaceholderAsset)
 
     console.log(`→ seeding sale items`)
-    await seedSaleItems(prisma, charities, uploadAsset)
+    await seedSaleItems(prisma, charities, uploadPlaceholderAsset)
 
     // Post-condition checks (spec 015 §6.4 — verify constraints).
-    // `completeCharities` enforces the 9-field bar set on 2026-06-14: every
-    // UI / i18n / IMG_4876 compliance field non-null AND no lifecycle dates.
-    // If this drops below 30 the seed surface has lost coverage and the demo
-    // detail page will start showing holes.
+    // `completeCharities` enforces the 8-field bar (spec 015 v0.8 — logoKey
+    // dropped from the requirement: only the featured charity carries a real
+    // logo, the rest render via frontend default UI).
     const completeCharities = await prisma.charity.count({
       where: {
         nameEn: { not: null },
         descriptionEn: { not: null },
-        logoKey: { not: null },
         contactPhone: { not: null },
         contactEmail: { not: null },
         officialWebsite: { not: null },
@@ -117,10 +150,14 @@ async function main(): Promise<void> {
         deletedAt: null,
       },
     })
+    const charitiesWithRealLogo = await prisma.charity.count({
+      where: { logoKey: { not: null } },
+    })
     const counts = {
       categories: await prisma.category.count(),
       charities: await prisma.charity.count(),
       completeCharities,
+      charitiesWithRealLogo,
       donationProjects: await prisma.donationProject.count(),
       saleItems: await prisma.saleItem.count(),
       charityCategories: await prisma.charityOnCategory.count(),
@@ -131,6 +168,10 @@ async function main(): Promise<void> {
     if (counts.charities < 30) throw new Error('seed post-condition: need ≥ 30 charities')
     if (counts.completeCharities < 30)
       throw new Error('seed post-condition: need ≥ 30 fully-populated charities')
+    if (counts.charitiesWithRealLogo !== slugLogos.size)
+      throw new Error(
+        `seed post-condition: expected exactly ${slugLogos.size.toString()} charity logo(s) uploaded, got ${counts.charitiesWithRealLogo.toString()}`,
+      )
     if (counts.donationProjects < 49)
       throw new Error('seed post-condition: need ≥ 49 donation projects')
     if (counts.saleItems < 49) throw new Error('seed post-condition: need ≥ 49 sale items')

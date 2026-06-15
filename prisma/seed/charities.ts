@@ -383,14 +383,33 @@ export interface SeededCharity {
   liveAtRef: boolean
 }
 
+export interface CharityLogoAsset {
+  body: Buffer
+  contentType: string
+  /** Extension used for the S3 key — drives `buildKey({ ext })`. */
+  ext: 'png' | 'jpg'
+}
+
+export interface SeedCharitiesOpts {
+  /**
+   * Map from seed slug → real logo asset. Only the slugs in the map get a
+   * logo uploaded + `logoKey` set; everything else stays null and the
+   * frontend renders its default avatar (spec 015 v0.8 — featured-only
+   * imagery, no per-row 1×1 placeholders).
+   */
+  slugLogos: ReadonlyMap<string, CharityLogoAsset>
+  put: (key: string, body: Buffer, contentType: string) => Promise<void>
+}
+
 export async function seedCharities(
   prisma: PrismaClient,
   categoryIdByKey: Map<CategoryKey, string>,
-  uploadLogo: (key: string) => Promise<void>,
+  opts: SeedCharitiesOpts,
 ): Promise<SeededCharity[]> {
   const seeded: SeededCharity[] = []
 
-  // Complete rows: always upload a logo and always have all 9 fields filled.
+  // Complete rows: 9 UI / i18n / compliance fields always filled. Logo is
+  // OPTIONAL — only slugs in `opts.slugLogos` get a real image uploaded.
   for (let i = 0; i < COMPLETE_CHARITIES.length; i += 1) {
     const c = COMPLETE_CHARITIES[i]!
     const fake = fakeContact(c.slug, i + 1)
@@ -410,9 +429,17 @@ export async function seedCharities(
       },
     })
 
-    const key = buildKey({ entity: 'charities', id: row.id, purpose: 'logo', ext: 'png' })
-    await uploadLogo(key)
-    await prisma.charity.update({ where: { id: row.id }, data: { logoKey: key } })
+    const logo = opts.slugLogos.get(c.slug)
+    if (logo) {
+      const key = buildKey({
+        entity: 'charities',
+        id: row.id,
+        purpose: 'logo',
+        ext: logo.ext,
+      })
+      await opts.put(key, logo.body, logo.contentType)
+      await prisma.charity.update({ where: { id: row.id }, data: { logoKey: key } })
+    }
 
     for (const ck of c.categoryKeys) {
       const categoryId = categoryIdByKey.get(ck)
