@@ -31,16 +31,16 @@ describe('KEY_PURPOSES', () => {
 })
 
 describe('buildKey', () => {
-  it('joins purpose + segments with colons and prefixes with app', () => {
-    expect(buildKey('cache', ['profile', '42'])).toBe('jkod:cache:profile:42')
+  it('joins purpose + segments with colons (no app prefix — ioredis adds it)', () => {
+    expect(buildKey('cache', ['profile', '42'])).toBe('cache:profile:42')
   })
 
   it('supports a single-segment identifier', () => {
-    expect(buildKey('lock', ['donation:7'])).toBe('jkod:lock:donation:7')
+    expect(buildKey('lock', ['donation:7'])).toBe('lock:donation:7')
   })
 
   it('accepts the auth tier example from spec 006 §4.2', () => {
-    expect(buildKey('auth', ['refresh', 'tok_abc'])).toBe('jkod:auth:refresh:tok_abc')
+    expect(buildKey('auth', ['refresh', 'tok_abc'])).toBe('auth:refresh:tok_abc')
   })
 
   it('throws when any segment is empty (spec 006 §4.3 — log readability)', () => {

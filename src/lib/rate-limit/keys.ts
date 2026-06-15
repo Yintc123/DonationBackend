@@ -1,20 +1,21 @@
 // Spec 010 §4 — rate-limit key builders.
 //
 // All keys live under the `jkod:rate:*` namespace (spec 006 §5 — `rate` tier).
-// Layer key shapes (§4):
+// Stored layer key shapes (§4) — the `jkod:` prefix is applied by ioredis:
 //   L1 global per-IP        jkod:rate:global:ip:{ip}:{windowStart}
 //   L2 per-route per-IP     jkod:rate:route:{routeId}:ip:{ip}:{windowStart}
 //   L3 per-route per-user   jkod:rate:route:{routeId}:user:{userId}:{windowStart}
 //   L4 per-purpose          jkod:rate:purpose:{purposeName}:{identifierHash}:{windowStart}
 //
-// We use the existing buildKey() from src/lib/redis so the `jkod:` app prefix
-// and the segment validation regex (no whitespace, no SCAN metacharacters)
-// stay in one place. IPv6 colons would collide with the segment separator, so
-// we normalise colons → dots before handing the IP to buildKey().
+// We use the existing buildKey() from src/lib/redis so the segment validation
+// regex (no whitespace, no SCAN metacharacters) stays in one place. The
+// `jkod:` app prefix is applied by ioredis via `keyPrefix`, NOT by buildKey
+// or by us. IPv6 colons would collide with the segment separator, so we
+// normalise colons → dots before handing the IP to buildKey().
 
 import { createHash } from 'node:crypto'
 
-import { APP_PREFIX, buildKey } from '../redis/index.js'
+import { buildKey } from '../redis/index.js'
 
 // Spec 006 §4.3 forbids whitespace + SCAN metacharacters (* ? [ ]). The
 // generic buildKey() validator is conservative and also rejects `/`, which
@@ -115,7 +116,7 @@ export function rateLimitKey(args: RateLimitKeyArgs): string {
         throw new Error('rateLimitKey(route-ip): routeId and ip are required')
       }
       assertRouteSafe(args.routeId, 'route-ip')
-      return `${APP_PREFIX}:rate:route:${args.routeId}:ip:${ipToSegment(args.ip)}:${win}`
+      return `rate:route:${args.routeId}:ip:${ipToSegment(args.ip)}:${win}`
     }
     case 'route-user': {
       if (!args.routeId || !args.userId) {
@@ -123,7 +124,7 @@ export function rateLimitKey(args: RateLimitKeyArgs): string {
       }
       assertRouteSafe(args.routeId, 'route-user')
       assertRouteSafe(args.userId, 'route-user')
-      return `${APP_PREFIX}:rate:route:${args.routeId}:user:${args.userId}:${win}`
+      return `rate:route:${args.routeId}:user:${args.userId}:${win}`
     }
     case 'purpose': {
       if (!args.purposeName || !args.identifierHash) {

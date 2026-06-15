@@ -157,10 +157,11 @@ describe('auth-google integration (spec 007)', () => {
     it('persists state / nonce / codeVerifier in Redis under jkod:auth:oauth:{sid}', async () => {
       app = await buildGoogleApp()
       const { sid } = await authorizeInit(app)
-      // Read back via the same prefixed `app.redis` client the store uses,
-      // so test does not need to know how many `jkod:` layers ioredis adds
-      // (the production code reads/writes with the same path).
-      const stored = await app.redis.hgetall(`jkod:auth:oauth:${sid}`)
+      // Read via the same prefixed `app.redis` client the store uses —
+      // ioredis transparently prepends `jkod:`, so the lookup string here
+      // is the un-prefixed form `auth:oauth:{sid}` and the actual stored
+      // key in Redis is `jkod:auth:oauth:{sid}` (spec 006 §3).
+      const stored = await app.redis.hgetall(`auth:oauth:${sid}`)
       expect(stored.state?.length ?? 0).toBeGreaterThan(0)
       expect(stored.nonce?.length ?? 0).toBeGreaterThan(0)
       expect(stored.codeVerifier?.length ?? 0).toBeGreaterThan(0)
@@ -170,14 +171,14 @@ describe('auth-google integration (spec 007)', () => {
     it('drops an off-domain returnTo at the trust boundary (spec §13.8)', async () => {
       app = await buildGoogleApp()
       const { sid } = await authorizeInit(app, { returnTo: 'https://evil.com/steal' })
-      const stored = await app.redis.hgetall(`jkod:auth:oauth:${sid}`)
+      const stored = await app.redis.hgetall(`auth:oauth:${sid}`)
       expect(stored.returnTo).toBeUndefined()
     })
 
     it('keeps a relative-path returnTo (spec §13.8)', async () => {
       app = await buildGoogleApp()
       const { sid } = await authorizeInit(app, { returnTo: '/dashboard' })
-      const stored = await app.redis.hgetall(`jkod:auth:oauth:${sid}`)
+      const stored = await app.redis.hgetall(`auth:oauth:${sid}`)
       expect(stored.returnTo).toBe('/dashboard')
     })
 
@@ -276,7 +277,7 @@ describe('auth-google integration (spec 007)', () => {
         url: '/auth/google/exchange',
         payload: { sid, code: 'authz-code', state },
       })
-      const remaining = await app.redis.hgetall(`jkod:auth:oauth:${sid}`)
+      const remaining = await app.redis.hgetall(`auth:oauth:${sid}`)
       expect(remaining).toEqual({})
     })
   })

@@ -79,13 +79,14 @@ describe('routeIdFromRequest', () => {
 })
 
 describe('rateLimitKey (spec 010 §4)', () => {
+  // Returned values are the un-prefixed portion — ioredis prepends `jkod:`.
   it('builds the L1 global per-IP key', () => {
     const key = rateLimitKey({
       layer: 'global',
       ip: '203.0.113.4',
       windowStartMs: 60_000,
     })
-    expect(key).toBe('jkod:rate:global:ip:203.0.113.4:60000')
+    expect(key).toBe('rate:global:ip:203.0.113.4:60000')
   })
 
   it('builds the L2 per-route per-IP key', () => {
@@ -95,7 +96,7 @@ describe('rateLimitKey (spec 010 §4)', () => {
       ip: '203.0.113.4',
       windowStartMs: 60_000,
     })
-    expect(key).toBe('jkod:rate:route:POST:/v1/auth/login:ip:203.0.113.4:60000')
+    expect(key).toBe('rate:route:POST:/v1/auth/login:ip:203.0.113.4:60000')
   })
 
   it('builds the L3 per-route per-user key', () => {
@@ -105,7 +106,7 @@ describe('rateLimitKey (spec 010 §4)', () => {
       userId: 'acc_42',
       windowStartMs: 60_000,
     })
-    expect(key).toBe('jkod:rate:route:GET:/v1/profile:user:acc_42:60000')
+    expect(key).toBe('rate:route:GET:/v1/profile:user:acc_42:60000')
   })
 
   it('builds the L4 per-purpose key with hashed identifier', () => {
@@ -115,6 +116,6 @@ describe('rateLimitKey (spec 010 §4)', () => {
       identifierHash: '0123456789abcdef',
       windowStartMs: 3_600_000,
     })
-    expect(key).toBe('jkod:rate:purpose:login_email:0123456789abcdef:3600000')
+    expect(key).toBe('rate:purpose:login_email:0123456789abcdef:3600000')
   })
 })
