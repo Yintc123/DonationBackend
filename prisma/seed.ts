@@ -198,14 +198,33 @@ async function bootstrapAdmin(
 ): Promise<void> {
   const username = 'admin'
   const DEFAULT_PASSWORD = 'admin-dev-password-change-me'
-  const password = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? DEFAULT_PASSWORD
+  const rawEnv = process.env.BOOTSTRAP_ADMIN_PASSWORD
+  const isProduction = process.env.NODE_ENV === 'production'
+
+  // Spec 020 §14 OQ #10 — bootstrap admin policy:
+  //
+  //   production + env unset      → SKIP (recurring deploys don't rotate
+  //                                  admin; operator sets env explicitly
+  //                                  on the one-shot first-deploy run)
+  //   production + env = default  → FAIL-LOUD (refuses to seed leaked default)
+  //   production + env = real     → upsert
+  //   dev / CI   + env unset      → default + warn
+  //   dev / CI   + env set        → upsert
+  //
+  // The asymmetry intentionally keeps recurring production deploys idempotent
+  // for the admin row (they touch donation data only), while still preventing
+  // an operator from accidentally shipping the dev default to prod.
+  if (isProduction && (rawEnv === undefined || rawEnv === '')) {
+    console.log(
+      '→ skipping admin bootstrap (BOOTSTRAP_ADMIN_PASSWORD not set in production; set the env on a one-shot run to create or rotate)',
+    )
+    return
+  }
+  const password = rawEnv ?? DEFAULT_PASSWORD
   if (password === DEFAULT_PASSWORD) {
-    // Spec 020 §14 OQ #10 — production MUST provide BOOTSTRAP_ADMIN_PASSWORD.
-    // We fail-loud here so a production seed never silently ships the
-    // dev-default credentials. Dev / CI / staging fall through with a warning.
-    if (process.env.NODE_ENV === 'production') {
+    if (isProduction) {
       throw new Error(
-        'bootstrapAdmin: BOOTSTRAP_ADMIN_PASSWORD env var is required in production — refusing to seed default credentials',
+        'bootstrapAdmin: refusing to seed dev default credentials in production — set BOOTSTRAP_ADMIN_PASSWORD to a real password (or unset to skip)',
       )
     }
     console.warn(
