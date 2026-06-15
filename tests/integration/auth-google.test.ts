@@ -309,6 +309,42 @@ describe('auth-google integration (spec 007)', () => {
       expect(ts).toBeLessThanOrEqual(Date.now() + 1000)
     })
 
+    it('rejects disabled account with 401 AUTH_ACCOUNT_DISABLED (spec 007 §10.9 v0.4)', async () => {
+      app = await buildGoogleApp()
+      await app.prisma.account.create({
+        data: {
+          email: 'disabled-google@example.com',
+          archivedAt: new Date(),
+          googleCredential: {
+            create: {
+              externalId: 'sub-disabled-google',
+              email: 'disabled-google@example.com',
+            },
+          },
+        },
+      })
+
+      const { sid, authUrl } = await authorizeInit(app)
+      const nonce = extractAuthParam(authUrl, 'nonce')
+      const state = extractAuthParam(authUrl, 'state')
+      const idToken = google.signIdToken(
+        defaultIdTokenPayload({
+          nonce,
+          sub: 'sub-disabled-google',
+          email: 'disabled-google@example.com',
+        }),
+      )
+      google.enqueueTokenResponse(idToken)
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/google/exchange',
+        payload: { sid, code: 'authz-code', state },
+      })
+      expect(res.statusCode).toBe(401)
+      expect((res.json() as ProblemResponse).code).toBe('AUTH_ACCOUNT_DISABLED')
+    })
+
     it('existing-account login updates lastLoginAt to a newer timestamp (GOOGLE)', async () => {
       app = await buildGoogleApp()
       const ancientTs = new Date('2026-01-01T00:00:00.000Z')

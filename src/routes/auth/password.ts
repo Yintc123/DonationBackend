@@ -13,14 +13,19 @@ import { decodeJwtUnsafe } from '../../lib/auth/tokens.js'
 import type { AuthService } from '../../lib/auth/service.js'
 import type { LimitWindow } from '../../lib/rate-limit/index.js'
 import { emailKeyHash } from '../../lib/auth/login-lock.js'
+import {
+  MAX_USERNAME_LENGTH,
+  MIN_USERNAME_LENGTH,
+} from '../../lib/auth/username.js'
 
 interface RegisterBody {
-  email: string
+  username?: string
+  email?: string
   password: string
 }
 
 interface LoginBody {
-  email: string
+  identifier: string
   password: string
 }
 
@@ -61,7 +66,20 @@ export async function registerAuthRoutes(
     url: '/auth/register',
     schema: {
       body: Type.Object({
-        email: Type.String({ format: 'email', maxLength: 254 }),
+        // Spec 008 §4 v0.3 — at least one of (username, email) required.
+        // TypeBox can't express "at-least-one" cleanly, so both are optional
+        // in the schema and the service throws AUTH_IDENTIFIER_REQUIRED if
+        // both are missing.
+        username: Type.Optional(
+          Type.String({
+            minLength: MIN_USERNAME_LENGTH,
+            maxLength: MAX_USERNAME_LENGTH,
+            // Accept mixed case at the boundary; service lowercases. Same
+            // pattern as `normalizeEmail` — store lower, accept any case.
+            pattern: '^[a-zA-Z0-9_-]+$',
+          }),
+        ),
+        email: Type.Optional(Type.String({ format: 'email', maxLength: 254 })),
         password: Type.String({ minLength: app.config.PASSWORD_MIN_LENGTH, maxLength: 256 }),
       }),
     },
@@ -73,7 +91,14 @@ export async function registerAuthRoutes(
             name: REGISTER_EMAIL_PURPOSE.name,
             limit: REGISTER_EMAIL_PURPOSE.limit,
             windowMs: REGISTER_EMAIL_PURPOSE.windowMs,
-            identifier: (req) => emailKeyHash((req.body as RegisterBody).email.toLowerCase().trim()),
+            // Hash whichever identifier the caller supplied; both reduce to a
+            // 16-char hex segment, so the per-identifier quota holds whether
+            // they signed up via username or email.
+            identifier: (req) => {
+              const body = req.body as RegisterBody
+              const key = (body.email ?? body.username ?? '').toLowerCase().trim()
+              return emailKeyHash(key)
+            },
           },
         ],
       },
@@ -97,7 +122,10 @@ export async function registerAuthRoutes(
     url: '/auth/login',
     schema: {
       body: Type.Object({
-        email: Type.String({ format: 'email', maxLength: 254 }),
+        // Spec 008 §5 v0.3 — single identifier field; service-layer sniffing
+        // routes by presence of `@`. Length bound is the maximum of email
+        // (254) and username (30), so 254 is the safe upper limit.
+        identifier: Type.String({ minLength: 1, maxLength: 254 }),
         password: Type.String({ minLength: 1, maxLength: 256 }),
       }),
     },

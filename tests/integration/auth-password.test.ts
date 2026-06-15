@@ -148,7 +148,7 @@ describe('auth/password integration (spec 008 §13.2)', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/auth/login',
-        payload: { email: 'Carol@Example.com', password: 'rainbow-unicorn-7' },
+        payload: { identifier: 'Carol@Example.com', password: 'rainbow-unicorn-7' },
       })
       expect(res.statusCode).toBe(200)
       const body = res.json() as TokenBundleResponse
@@ -161,7 +161,7 @@ describe('auth/password integration (spec 008 §13.2)', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/auth/login',
-        payload: { email: 'ghost@example.com', password: 'any-password-here' },
+        payload: { identifier: 'ghost@example.com', password: 'any-password-here' },
       })
       expect(res.statusCode).toBe(401)
       const body = res.json() as ProblemResponse
@@ -175,7 +175,7 @@ describe('auth/password integration (spec 008 §13.2)', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/auth/login',
-        payload: { email: 'dave@example.com', password: 'completely-wrong-pw' },
+        payload: { identifier: 'dave@example.com', password: 'completely-wrong-pw' },
       })
       expect(res.statusCode).toBe(401)
       const body = res.json() as ProblemResponse
@@ -191,7 +191,7 @@ describe('auth/password integration (spec 008 §13.2)', () => {
         const r = await app.inject({
           method: 'POST',
           url: '/auth/login',
-          payload: { email: 'eve@example.com', password: `wrong-pass-${i}-x` },
+          payload: { identifier: 'eve@example.com', password: `wrong-pass-${i}-x` },
         })
         // The 3rd failure crosses the threshold and may surface AUTH_ACCOUNT_LOCKED.
         expect([401, 429]).toContain(r.statusCode)
@@ -201,7 +201,7 @@ describe('auth/password integration (spec 008 §13.2)', () => {
       const locked = await app.inject({
         method: 'POST',
         url: '/auth/login',
-        payload: { email: 'eve@example.com', password: 'the-right-passcode-9' },
+        payload: { identifier: 'eve@example.com', password: 'the-right-passcode-9' },
       })
       expect(locked.statusCode).toBe(429)
       const body = locked.json() as ProblemResponse
@@ -217,14 +217,14 @@ describe('auth/password integration (spec 008 §13.2)', () => {
         await app.inject({
           method: 'POST',
           url: '/auth/login',
-          payload: { email: 'frank@example.com', password: 'wrong-attempt-99' },
+          payload: { identifier: 'frank@example.com', password: 'wrong-attempt-99' },
         })
       }
       // Successful login clears the counter.
       const ok = await app.inject({
         method: 'POST',
         url: '/auth/login',
-        payload: { email: 'frank@example.com', password: 'the-real-pass-word-1' },
+        payload: { identifier: 'frank@example.com', password: 'the-real-pass-word-1' },
       })
       expect(ok.statusCode).toBe(200)
 
@@ -232,12 +232,12 @@ describe('auth/password integration (spec 008 §13.2)', () => {
       const bad1 = await app.inject({
         method: 'POST',
         url: '/auth/login',
-        payload: { email: 'frank@example.com', password: 'still-wrong-aaa' },
+        payload: { identifier: 'frank@example.com', password: 'still-wrong-aaa' },
       })
       const bad2 = await app.inject({
         method: 'POST',
         url: '/auth/login',
-        payload: { email: 'frank@example.com', password: 'still-wrong-bbb' },
+        payload: { identifier: 'frank@example.com', password: 'still-wrong-bbb' },
       })
       expect(bad1.statusCode).toBe(401)
       expect(bad2.statusCode).toBe(401)
@@ -308,14 +308,14 @@ describe('auth/password integration (spec 008 §13.2)', () => {
       const loginNew = await app.inject({
         method: 'POST',
         url: '/auth/login',
-        payload: { email: 'ivan@example.com', password: 'brand-new-passphrase-7' },
+        payload: { identifier: 'ivan@example.com', password: 'brand-new-passphrase-7' },
       })
       expect(loginNew.statusCode).toBe(200)
 
       const loginOld = await app.inject({
         method: 'POST',
         url: '/auth/login',
-        payload: { email: 'ivan@example.com', password: 'original-passphrase-9' },
+        payload: { identifier: 'ivan@example.com', password: 'original-passphrase-9' },
       })
       expect(loginOld.statusCode).toBe(401)
     })
@@ -385,7 +385,7 @@ describe('auth/password integration (spec 008 §13.2)', () => {
       const login = await app.inject({
         method: 'POST',
         url: '/auth/login',
-        payload: { email: 'liam@example.com', password: 'first-login-test-1' },
+        payload: { identifier: 'liam@example.com', password: 'first-login-test-1' },
       })
       expect(login.statusCode).toBe(200)
 
@@ -413,7 +413,7 @@ describe('auth/password integration (spec 008 §13.2)', () => {
       const bad = await app.inject({
         method: 'POST',
         url: '/auth/login',
-        payload: { email: 'mia@example.com', password: 'wrong-passphrase-x' },
+        payload: { identifier: 'mia@example.com', password: 'wrong-passphrase-x' },
       })
       expect(bad.statusCode).toBe(401)
 
@@ -452,6 +452,199 @@ describe('auth/password integration (spec 008 §13.2)', () => {
         where: { email: 'nina@example.com' },
       })
       expect(after?.lastLoginAt?.getTime() ?? 0).toBe(tsBefore)
+    })
+  })
+
+  // ── Username identifier (spec 008 §4 / §5 v0.3) ─────────────────────────
+  describe('username as primary identifier', () => {
+    it('register accepts username + password (no email) and stores lowercased', async () => {
+      app = await buildAuthApp()
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { username: 'StreetPanda', password: 'wonder-cricket-99' },
+      })
+      expect(res.statusCode).toBe(201)
+
+      const stored = await app.prisma.account.findUnique({
+        where: { username: 'streetpanda' },
+      })
+      expect(stored).not.toBeNull()
+      expect(stored?.email).toBeNull()
+      expect(stored?.username).toBe('streetpanda')
+    })
+
+    it('register accepts both username + email together', async () => {
+      app = await buildAuthApp()
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: {
+          username: 'dualcat',
+          email: 'dual@example.com',
+          password: 'wonder-cricket-99',
+        },
+      })
+      expect(res.statusCode).toBe(201)
+      const stored = await app.prisma.account.findUnique({
+        where: { username: 'dualcat' },
+      })
+      expect(stored?.email).toBe('dual@example.com')
+    })
+
+    it('register rejects body with neither username nor email (400 VALIDATION_FAILED via password length, or 401 AUTH_IDENTIFIER_REQUIRED)', async () => {
+      // TypeBox schema marks both username + email optional. If the caller
+      // provides neither (and provides a valid-length password), service
+      // throws AUTH_IDENTIFIER_REQUIRED → 401.
+      app = await buildAuthApp()
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { password: 'minimal-length-pw-1' },
+      })
+      expect(res.statusCode).toBe(401)
+      const body = res.json() as ProblemResponse
+      expect(body.code).toBe('AUTH_IDENTIFIER_REQUIRED')
+    })
+
+    it('register rejects duplicate username with 409 AUTH_USERNAME_TAKEN', async () => {
+      app = await buildAuthApp()
+      const first = await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { username: 'oneandonly', password: 'wonder-cricket-99' },
+      })
+      expect(first.statusCode).toBe(201)
+      const dup = await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { username: 'oneandonly', password: 'different-password' },
+      })
+      expect(dup.statusCode).toBe(409)
+      expect((dup.json() as ProblemResponse).code).toBe('AUTH_USERNAME_TAKEN')
+    })
+
+    it('register rejects invalid username format with 400 VALIDATION_FAILED', async () => {
+      app = await buildAuthApp()
+      const bad = await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { username: 'no spaces here', password: 'pw-format-12345' },
+      })
+      expect(bad.statusCode).toBe(400)
+      expect((bad.json() as ProblemResponse).code).toBe('VALIDATION_FAILED')
+    })
+
+    it('login accepts username as identifier', async () => {
+      app = await buildAuthApp()
+      await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { username: 'logaroo', password: 'wonder-cricket-99' },
+      })
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { identifier: 'logaroo', password: 'wonder-cricket-99' },
+      })
+      expect(res.statusCode).toBe(200)
+    })
+
+    it('login accepts email as identifier (back-compat for email-only accounts)', async () => {
+      app = await buildAuthApp()
+      await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { email: 'just-mail@example.com', password: 'wonder-cricket-99' },
+      })
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { identifier: 'just-mail@example.com', password: 'wonder-cricket-99' },
+      })
+      expect(res.statusCode).toBe(200)
+    })
+
+    it('login with unknown username → 401 AUTH_INVALID_CREDENTIALS (no enumeration)', async () => {
+      app = await buildAuthApp()
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { identifier: 'nosuchuser', password: 'doesnt-matter-1234' },
+      })
+      expect(res.statusCode).toBe(401)
+      expect((res.json() as ProblemResponse).code).toBe('AUTH_INVALID_CREDENTIALS')
+    })
+  })
+
+  // ── Disabled account (spec 007 §10.9 v0.4) ───────────────────────────────
+  describe('archived / deleted accounts cannot sign in (AUTH_ACCOUNT_DISABLED)', () => {
+    async function seedAndDisable(
+      instance: FastifyInstance,
+      slug: string,
+      patch: { archivedAt?: Date; deletedAt?: Date },
+    ): Promise<void> {
+      await instance.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { username: slug, password: 'wonder-cricket-99' },
+      })
+      await instance.prisma.account.update({
+        where: { username: slug },
+        data: patch,
+      })
+    }
+
+    it('login rejects archived account with 401 AUTH_ACCOUNT_DISABLED', async () => {
+      app = await buildAuthApp()
+      await seedAndDisable(app, 'archpanda', { archivedAt: new Date() })
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { identifier: 'archpanda', password: 'wonder-cricket-99' },
+      })
+      expect(res.statusCode).toBe(401)
+      expect((res.json() as ProblemResponse).code).toBe('AUTH_ACCOUNT_DISABLED')
+    })
+
+    it('login rejects deleted account with 401 AUTH_ACCOUNT_DISABLED', async () => {
+      app = await buildAuthApp()
+      await seedAndDisable(app, 'delpanda', { deletedAt: new Date() })
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { identifier: 'delpanda', password: 'wonder-cricket-99' },
+      })
+      expect(res.statusCode).toBe(401)
+      expect((res.json() as ProblemResponse).code).toBe('AUTH_ACCOUNT_DISABLED')
+    })
+
+    it('refresh rejects disabled account with 401 AUTH_ACCOUNT_DISABLED + revokes other refreshes', async () => {
+      app = await buildAuthApp()
+      const reg = await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { username: 'refpanda', password: 'wonder-cricket-99' },
+      })
+      const { refreshToken } = reg.json() as TokenBundleResponse
+
+      // Disable the account AFTER tokens were issued.
+      await app.prisma.account.update({
+        where: { username: 'refpanda' },
+        data: { archivedAt: new Date() },
+      })
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/refresh',
+        headers: { authorization: `Bearer ${refreshToken}` },
+      })
+      expect(res.statusCode).toBe(401)
+      expect((res.json() as ProblemResponse).code).toBe('AUTH_ACCOUNT_DISABLED')
     })
   })
 })

@@ -15,17 +15,37 @@ datasource db {
 }
 
 // Spec 007 §10.1 — the canonical "person" in the service.
-// Email is unique and serves as the human-facing identifier.
 //
-// v0.2 (spec 007 §10.2 / spec 008 §5.4) — interactive-login audit columns.
-// `lastLoginAt` / `lastLoginType` set on register, password login, and
-// successful Google exchange (login intent and new-account branches).
-// Refresh, change-password, set-password, link-only intent do NOT touch
-// them (those aren't interactive auth events). Both nullable so existing
-// accounts created pre-v0.2 read as "never logged in" rather than fake-now.
+// Identifier model (v0.4 — spec 007 §10.1):
+//   - `username` is the primary identifier for password registration. Both
+//     `username` and `email` are nullable to support multiple registration
+//     paths (username-only password register, email-only Google sign-in).
+//     A new password account ALWAYS sets `username`; a new Google account
+//     ALWAYS sets `email`. The application enforces "at least one of
+//     username or email" at the registration handlers; the DB allows null
+//     on either column to keep both paths additive.
+//   - Both columns are unique when present (PG treats multiple nulls as
+//     non-conflicting).
+//
+// Audit columns (v0.2 — spec 007 §10.8):
+//   - `lastLoginAt` / `lastLoginType` set on register, password login,
+//     successful Google exchange (login intent / new-account branches).
+//
+// Lifecycle columns (v0.4 — spec 007 §10.9):
+//   - `displayOrder` for the (future) admin user-list UI. No domain
+//     semantics today; kept aligned with the Charity / Project / SaleItem
+//     pattern so the admin table renderer can reuse one sort helper.
+//   - `archivedAt` / `deletedAt` represent "account disabled" — login and
+//     refresh paths reject either non-null with 401 AUTH_ACCOUNT_DISABLED.
+//     We do NOT eagerly sweep refresh tokens; the per-request check on
+//     /auth/refresh catches them on next use (spec 007 §10.9).
 model Account {
   id            String     @id @default(uuid())
-  email         String     @unique
+  username      String?    @unique
+  email         String?    @unique
+  displayOrder  Int        @default(0)
+  archivedAt    DateTime?
+  deletedAt     DateTime?
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
   lastLoginAt   DateTime?

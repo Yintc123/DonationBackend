@@ -182,6 +182,22 @@ export async function registerGoogleAuthRoutes(
           message: 'Refresh token reuse detected; please sign in again',
         })
       }
+      // Spec 007 §10.9 v0.4 — reject disabled accounts on refresh. We don't
+      // sweep their refresh tokens at archive/delete time, so the per-request
+      // check is the catch-net. Also revoke all their existing refresh
+      // tokens so subsequent attempts fail loud rather than the same path.
+      const account = await app.prisma.account.findUnique({
+        where: { id: outcome.accountId },
+        select: { archivedAt: true, deletedAt: true },
+      })
+      if (!account || account.archivedAt !== null || account.deletedAt !== null) {
+        await refreshStore.revokeAll(outcome.accountId)
+        throw new UnauthorizedError({
+          code: ErrorCode.AUTH_ACCOUNT_DISABLED,
+          message: 'Account is disabled',
+        })
+      }
+
       // Spec §5.1 — mint a fresh bundle.
       const bundle = await issueBundle(outcome.accountId)
       req.log.info(

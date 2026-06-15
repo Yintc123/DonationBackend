@@ -310,7 +310,20 @@ export function createGoogleAuthService(deps: GoogleAuthDeps): GoogleAuthService
         let accountId: string
         if (resolution.action === 'login') {
           accountId = resolution.accountId
-          // Spec 007 §10.2 — successful Google login is an interactive auth
+          // Spec 007 §10.9 v0.4 — disabled accounts can't sign in via Google
+          // either. Check is "fail BEFORE we touch state" — no lastLogin
+          // stamping for a disabled account.
+          const target = await deps.prisma.account.findUnique({
+            where: { id: accountId },
+            select: { archivedAt: true, deletedAt: true },
+          })
+          if (!target || target.archivedAt !== null || target.deletedAt !== null) {
+            throw new UnauthorizedError({
+              code: ErrorCode.AUTH_ACCOUNT_DISABLED,
+              message: 'Account is disabled',
+            })
+          }
+          // Spec 007 §10.8 — successful Google login is an interactive auth
           // event. Stamp lastLogin so future audits see "last interactive
           // login was via Google at <ts>". Refresh / link don't touch this.
           await deps.prisma.account.update({

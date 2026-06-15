@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.3 |
+| 版本 | 0.4 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/src/routes/auth/*`、`backend/src/lib/auth/*` |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`(BFF 邊界)、`docs/decisions/004-auth-token-strategy.md`(access + refresh) |
@@ -440,12 +440,14 @@ const { payload } = await jwtVerify(idToken, JWKS, {
 
 本節定義本服務的身分識別抽象,供本 spec(Google)與 spec 008(帳密)共用。具體欄位與資料表結構由資料模型 spec 擁有,**本節只規範形式**。
 
-### 10.1 兩層結構:Account ↔ Credential
+### 10.1 兩層結構:Account ↔ Credential(v0.4 — username 為新主鍵)
 
 ```
 Account 1 ─────── N Credential
        │
-       │ id, email (unique), createdAt, ...
+       │ id, username? (unique), email? (unique),
+       │ displayOrder, archivedAt?, deletedAt?,
+       │ createdAt, updatedAt, lastLoginAt?, lastLoginType?
        │
        └── Credential (one row per authentication method)
            ├── PasswordCredential   (spec 008):  { accountId, hashedPassword, hashAlgo, updatedAt }
@@ -454,7 +456,7 @@ Account 1 ─────── N Credential
 
 - **Account**:服務內的「人」,唯一識別碼是 `id`(UUID)
 - **Credential**:一次認證手段;一個 account 可有 0 或多筆 credential
-- **`Account.email`** 為 unique,作為主要對外識別與帳密登入主鍵
+- **`Account.username` / `Account.email` 皆 nullable + unique**;**至少需要其中一個**有值(應用層 register / linking 流程強制,DB 不設 CHECK constraint)。username 主要供帳密註冊用,email 主要供 Google sign-in 用;兩者並存也合法。pre-v0.4 既有 account 皆為 email-only,可後續補 username
 - **Credential 由 `provider` 區分**(`'google'` / `'password'`),同一 account 同一 provider **最多一筆**(unique constraint on `(accountId, provider)`)
 - **Google `sub`** 全域 unique(unique constraint on `(provider='google', externalId)`),確保同一 Google 帳號不能連結到多個 Account
 
@@ -465,7 +467,7 @@ Account 1 ─────── N Credential
 | 流程 | 對應規則 |
 |---|---|
 | **Google sign-in** | 查 `(provider='google', externalId=sub)`;見 §10.3 |
-| **帳密 sign-in** | 查 `Account.email` 後比對 PasswordCredential(spec 008) |
+| **帳密 sign-in** | 客戶端傳單一 `identifier` 欄位(v0.4),含 `@` → 查 `Account.email`,否則 → 查 `Account.username`,後比對 PasswordCredential(spec 008 §5) |
 | **建立新 account** | 兩種來源(Google 首登 / 帳密註冊)皆走 §10.4 規則,擇一發起 |
 | **手動連結** | 已登入 account 將另一 provider 的 credential 加入;見 §10.6 |
 
@@ -587,6 +589,53 @@ else:
 3. Link 仍維持「caller 已登入,不觸發 lastLogin」原則
 
 不需要動其他既有 endpoint。
+
+### 10.9 Account lifecycle 與 disabled 政策(v0.4)
+
+`Account` 帶 3 個 lifecycle 欄位(對齊 Charity / Project / SaleItem 的同 5-set 但去掉 `publishStartAt` / `publishEndAt` — account 沒有上下架時程):
+
+| 欄位 | 用途 |
+|---|---|
+| `displayOrder Int @default(0)` | 未來 admin 後台 user list 的排序權重;**目前無 endpoint 消費**,純預留 |
+| `archivedAt DateTime?` | 管理員「凍結」帳號(可恢復) |
+| `deletedAt DateTime?` | 軟刪 |
+
+#### Disabled = archivedAt 或 deletedAt 任一非 null
+
+服務內 helper `isDisabled(account)` 統一判斷;**任一**非 null 即視為 disabled,拒絕互動式 auth。
+
+#### Endpoint 行為
+
+| Endpoint | Disabled account 行為 | 錯誤碼 |
+|---|---|---|
+| `POST /auth/login`(spec 008) | 仍跑 dummy hash 避免 timing oracle,**之後**返回 disabled 錯誤 | 401 `AUTH_ACCOUNT_DISABLED` |
+| `POST /auth/google/exchange` login intent | resolveGoogleLogin 找到既有 account → 檢查 disabled → 401 | 401 `AUTH_ACCOUNT_DISABLED` |
+| `POST /auth/google/exchange` login intent **new-account 分支** | 不適用(此 case 在創 account,無既有 disabled 狀態) | n/a |
+| `POST /auth/google/exchange` link intent | (caller 已有 JWT;若被 disable 的 caller 嘗試 link → 該 access JWT 短期內仍有效但無實質 link 用途;policy 由 §10.6 守) | n/a |
+| `POST /auth/refresh` | consume refresh OK → 查 account → 若 disabled → revoke 所有 refreshes + 401 | 401 `AUTH_ACCOUNT_DISABLED` |
+| `POST /auth/password/change` / `password/set` | 透過 JWT 驗證,若 caller 短期內帶 valid access token 仍可呼叫(由 access token TTL 兜底,3h);長期可由未來 admin 主動 logout-all 補強 | n/a |
+
+#### 為什麼是 endpoint-level check 而非 DB filter
+
+考慮過用一個 `whereLive` 樣的 helper 把 archived/deleted filter 進 `findUnique` 的 where。否決理由:
+
+- account lookup 多處(login / refresh / link / password-change)分別需要不同邏輯(login 要跑 dummy hash、refresh 要 revoke);把它包成 filter 反而模糊了「為什麼這次拒絕」
+- 明文的 `if (isDisabled(account)) throw disabledError()` 比 silent 404 更利 audit / 客戶端 UX(知道是被 disabled 而非帳密錯)
+
+#### 為什麼不在 archive/delete 時主動 sweep refresh tokens
+
+- 寫入路徑(管理員 archive / delete account)尚未實作 → 沒有自然的 sweep 觸發點
+- refresh 路徑的 per-request check 是 catch-net,最壞延遲 = refresh interval(通常 ≤ 3h access TTL)
+- 若日後管理員 endpoint 落地,可以順手呼叫 `refreshStore.revokeAll(accountId)`,但**不**先做(spec 019 §6 / ADR 011 同樣的「不為假設場景設計」原則)
+
+#### Active access token 在 archive 後的視窗
+
+archive 之後,舊 access JWT 在剩餘 TTL 內(最多 3h,ADR 004)仍能呼叫 `/password/change` 等帶 JWT 驗證的 endpoint。這是 ADR 004「短 access TTL」設計的明示 trade-off:
+
+- 不做 JWT blacklist(會把 stateful 帶回 access path,違反 spec 007 §11)
+- 接受 ≤ 3h 的「殭屍 session」視窗
+
+要更嚴格的話,access TTL 縮短或引入 stateful access store(本期不做)。
 
 ---
 
@@ -835,3 +884,4 @@ jkod:auth:blacklist:{jti}          STRING "1"
 | 0.1 | 2026-06-13 | 初版 |
 | 0.2 | 2026-06-13 | 引入 Account ↔ Credential identity 模型(§10),供 spec 008(帳密)共用;Google sign-in 邏輯改為查 GoogleCredential,email 衝突走嚴格手動連結(無自動連結);新增 §10.5 連結政策、§10.6 手動連結 Google 流程(`intent=link`);§7 端點規格擴充 intent 區分;§12 新增 4 個錯誤碼(`AUTH_EMAIL_OWNED_BY_OTHER_ACCOUNT` / `AUTH_GOOGLE_ALREADY_LINKED` / `AUTH_CREDENTIAL_EXISTS` / `AUTH_LINK_SESSION_MISMATCH`);§15 新增 6 個 event;§17 更新開放問題(account linking 變成 unlink、email 驗證留作未來);移除「帳密不支援」「account linking 不支援」字眼(已分別由 spec 008 與 §10.6 涵蓋) |
 | 0.3 | 2026-06-15 | §10 加 §10.8 `Account.lastLoginAt` / `lastLoginType` 兩個 audit 欄位(nullable + `LoginType` enum `PASSWORD` / `GOOGLE`);明文寫入 / 不寫入規則 — register / login 成功 / Google exchange login intent 兩條路徑寫入,link intent / change-password / set-password / refresh / logout / 失敗登入皆不寫入。新增 Prisma migration `add_account_last_login` + service 層 `account.update / create` 對應 2 處(`auth/service.ts` register + login,`auth-google/service.ts` existing-account login + new-account 分支)。spec 008 §5.4 同步引用 |
+| 0.4 | 2026-06-15 | §10.1 改寫:`username` 為新主鍵,`email` 變 optional(兩者皆 nullable + unique,應用層強制「至少一個」);§10.2 帳密 sign-in 改用單一 `identifier` 欄位 + `@` sniff;新增 §10.9 Account lifecycle policy(`displayOrder` / `archivedAt` / `deletedAt`,任一 lifecycle stamp 非 null 即 disabled,login / refresh / Google exchange 全 401 `AUTH_ACCOUNT_DISABLED`,refresh 觸發 `revokeAll`);3 個新 error code(`AUTH_USERNAME_TAKEN` / `AUTH_IDENTIFIER_REQUIRED` / `AUTH_ACCOUNT_DISABLED`);Prisma migration `account_username_and_lifecycle`。spec 008 §3.4 / §4 / §5 同步引用 |

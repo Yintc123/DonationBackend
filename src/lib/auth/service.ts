@@ -38,6 +38,19 @@ import {
   signRefreshToken,
   type TokenSecrets,
 } from './tokens.js'
+import { classifyIdentifier, normalizeUsername } from './username.js'
+
+/** Spec 007 §10.9 — Account is "disabled" when either lifecycle stamp is set. */
+function isDisabled(account: { archivedAt: Date | null; deletedAt: Date | null }): boolean {
+  return account.archivedAt !== null || account.deletedAt !== null
+}
+
+function disabledError(): UnauthorizedError {
+  return new UnauthorizedError({
+    code: ErrorCode.AUTH_ACCOUNT_DISABLED,
+    message: 'Account is disabled',
+  })
+}
 
 // Spec §5.4 — fixed dummy hash run when the account / credential is missing
 // so the response time is independent of the lookup path.
@@ -60,12 +73,19 @@ export interface TokenBundle {
 }
 
 export interface RegisterInput {
-  email: string
+  /** Spec 007 §10.1 v0.4 — username is the primary identifier for password registration. */
+  username?: string
+  /** Optional secondary identifier. At least one of (username, email) is required. */
+  email?: string
   password: string
 }
 
 export interface LoginInput {
-  email: string
+  /**
+   * Spec 008 §5 v0.3 — single identifier field; we sniff for `@` to decide
+   * email vs username. BFF doesn't have to ask the user which kind it is.
+   */
+  identifier: string
   password: string
 }
 
@@ -113,14 +133,26 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
 
   return {
     async registerAccount(input) {
-      const email = normalizeEmail(input.email)
+      // Spec 007 §10.1 v0.4 — at least one of (username, email) required.
+      // Both nullable in DB, but registration always provides one or both.
+      const username =
+        input.username !== undefined ? normalizeUsername(input.username) : undefined
+      const email = input.email !== undefined ? normalizeEmail(input.email) : undefined
+      if (username === undefined && email === undefined) {
+        throw new UnauthorizedError({
+          code: ErrorCode.AUTH_IDENTIFIER_REQUIRED,
+          message: 'At least one of username or email is required',
+        })
+      }
+
       const hashed = await hashPassword(input.password, deps.passwordHashOpts)
       try {
-        // Spec 007 §10.2 / spec 008 §5.4 — register IS an interactive auth
+        // Spec 007 §10.8 / spec 008 §5.4 — register IS an interactive auth
         // event (we issue a token bundle immediately on success), so seed the
         // audit columns at create time. Avoids a redundant UPDATE round-trip.
         const account = await deps.prisma.account.create({
           data: {
+            username,
             email,
             lastLoginAt: new Date(),
             lastLoginType: 'PASSWORD',
@@ -134,8 +166,15 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         })
         return await issueBundle(account.id)
       } catch (err) {
-        // Spec §4.1 — unique constraint on email surfaces as AUTH_EMAIL_TAKEN
-        // rather than the generic CONFLICT from mapPrismaError.
+        // Spec §4.1 — unique constraint on email / username surfaces as
+        // dedicated codes rather than the generic CONFLICT from mapPrismaError.
+        if (isUniqueViolation(err, 'username')) {
+          throw new ConflictError({
+            code: ErrorCode.AUTH_USERNAME_TAKEN,
+            message: 'Username already in use',
+            cause: err,
+          })
+        }
         if (isUniqueViolation(err, 'email')) {
           throw new ConflictError({
             code: ErrorCode.AUTH_EMAIL_TAKEN,
@@ -148,11 +187,15 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
     },
 
     async loginWithPassword(input) {
-      const email = normalizeEmail(input.email)
+      // Spec 008 §5 v0.3 — identifier sniffing: `@` → email, else → username.
+      const kind = classifyIdentifier(input.identifier)
+      const lookupValue =
+        kind === 'email' ? normalizeEmail(input.identifier) : normalizeUsername(input.identifier)
 
-      // Spec §5.3 — block ahead of the password compare when the email is
-      // already locked. We still run a dummy hash so timing is uniform.
-      const count = await loginLock.getCount(email)
+      // Spec §5.3 — block ahead of the password compare when the identifier
+      // is already locked. We still run a dummy hash so timing is uniform.
+      const lockKey = lookupValue
+      const count = await loginLock.getCount(lockKey)
       if (isLocked(count, deps.loginLockOpts)) {
         await runDummyHash()
         throw new TooManyRequestsError({
@@ -162,7 +205,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       }
 
       const account = await deps.prisma.account.findUnique({
-        where: { email },
+        where: kind === 'email' ? { email: lookupValue } : { username: lookupValue },
         include: { passwordCredential: true },
       })
 
@@ -170,15 +213,23 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         // Spec §5.2 — equalise timing across "no account" / "no credential"
         // / "wrong password" so timing oracles cannot leak which is which.
         await runDummyHash()
-        // We do not record this as a per-email failure because the email
-        // might not exist; still, the IP-tier rate-limit catches enumeration.
+        // We do not record this as a per-identifier failure because the
+        // identifier might not exist; still, the IP-tier rate-limit catches
+        // enumeration.
         throw invalidCredentials()
       }
 
+      // Spec 007 §10.9 v0.4 — disabled accounts fail loud BEFORE password
+      // check so attackers can't tell "right password but disabled" vs
+      // "wrong password". We DO still run the password compare for timing,
+      // then map success/failure both to the disabled error.
       const credential = account.passwordCredential
       const ok = await verifyPassword(input.password, credential.hashedPassword)
+      if (isDisabled(account)) {
+        throw disabledError()
+      }
       if (!ok) {
-        const newCount = await loginLock.recordFailure(email)
+        const newCount = await loginLock.recordFailure(lockKey)
         if (isLocked(newCount, deps.loginLockOpts)) {
           throw new TooManyRequestsError({
             code: ErrorCode.AUTH_ACCOUNT_LOCKED,
@@ -197,7 +248,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         })
       }
 
-      // Spec 007 §10.2 / spec 008 §5.4 — successful login is an interactive
+      // Spec 007 §10.8 / spec 008 §5.4 — successful login is an interactive
       // auth event. Stamp BEFORE issueBundle so an issueBundle failure
       // doesn't leave the audit stale; the user retries the whole login.
       await deps.prisma.account.update({
@@ -205,7 +256,7 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         data: { lastLoginAt: new Date(), lastLoginType: 'PASSWORD' },
       })
 
-      await loginLock.reset(email)
+      await loginLock.reset(lockKey)
       return issueBundle(account.id)
     },
 
