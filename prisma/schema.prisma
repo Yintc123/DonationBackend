@@ -346,8 +346,10 @@ model Order {
   // 訂單匿名 — 自由字串,不引用 Account.id(§2.1)。
   donorName String @db.VarChar(120)
 
-  // 三類訂單共用 isAnonymous(IMG_4890 checkbox)。影響 public display(由
-  // BFF / UI 端做 anonymization,backend response 一律回原樣,見 spec 022 §4.6)。
+  // 三類訂單共用 isAnonymous — Charity 捐款 (IMG_4888「我要匿名捐款」
+  // checkbox) / DonationProject 捐款 (IMG_4889 同位置) / SaleItem 購買
+  // (IMG_4890 同位置) 都掛此選項。影響 public display(由 BFF / UI 端
+  // 依旗標顯示「匿名捐款者」,backend response 一律回原樣,spec 022 §4.6)。
   isAnonymous Boolean @default(false)
 
   // 收據開立方式 — CHARITY/PROJECT 必填,SALE_ITEM 必為 null(§7.5)。

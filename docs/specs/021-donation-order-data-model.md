@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.7 |
+| 版本 | 0.8 |
 | 日期 | 2026-06-15 |
 | 適用範圍 | `backend/prisma/schema.prisma`(Order / OrderLine / 4 enum 新增)、`backend/prisma/migrations/<ts>_add_donation_orders/`(新)、`backend/src/domain/order/*`(新 directory)、`backend/src/lib/clock.ts`(新,§7.7 Clock 注入)|
 | 相關 ADR | 待補(預計 `docs/decisions/013-donation-order-model.md`)|
@@ -211,7 +211,9 @@ model Order {
 
   donorName   String      @db.VarChar(120)
 
-  // v0.5 — 是否匿名捐款(IMG_4890「我要匿名捐款」checkbox;三類訂單共用)
+  // v0.5 — 是否匿名捐款。Charity 捐款 (IMG_4888「我要匿名捐款」
+  // checkbox) / DonationProject 捐款 (IMG_4889 同位置) / SaleItem 購買
+  // (IMG_4890 同位置) 三類訂單共用此選項(v0.8 釐清:不限 SaleItem)。
   // 影響 public display(隱去 donorName 改顯示「匿名捐款者」);收據仍用 donorName
   isAnonymous Boolean     @default(false)
 
@@ -627,3 +629,4 @@ create 時驗對應 entity 通過 `whereLive` / `whereLiveWithParent`:
 | 0.5 | 2026-06-15 | 根據 IMG_4888/4889/4890「確認捐款資訊」頁補 3 個欄位 + 1 enum:(1) `isAnonymous Boolean @default(false)` — 三類訂單共用(IMG_4890「我要匿名捐款」checkbox);(2) `receiptOption ReceiptOption?` — CHARITY/PROJECT_DONATION 必填,SALE_ITEM 必為 null(§7.5 invariant);(3) `nextChargeAt DateTime?` — RECURRING 必有,backend 算 + 存(§7.7 計算邏輯)、加 `@@index([nextChargeAt])` 未來 cron 用;(4) `ReceiptOption` enum 5 值。§10 OQ +2(收據收件資訊、cart 混合單 receiptOption)。對應 spec 022 v0.5 同步 |
 | 0.6 | 2026-06-15 | §7.7 補 `nextChargeAt` 重算規約 — **只在 create 時算一次,任何 PATCH 都不重算**(confirm / cancel / admin PATCH 都不動;未來 cron 上線後由 cron 推進)。對應 spec 022 v0.6 同步補 response TypeBox 樣板 + inflated subject 欄位範圍 + 公開 GET anonymous 行為 |
 | 0.7 | 2026-06-15 | §7.7 補 **Clock 注入** — `computeNextChargeAt` 為純函式,service 層不可直接 `new Date()`,production 透過 Fastify decorator `app.clock()`,test 透過 `vi.useFakeTimers` / fixed `Date`,呼應 backend CLAUDE.md。對應 spec 022 v0.7 補:(1) request body TypeBox 一律 `additionalProperties: false`;(2) admin list inflate(與 detail 一致,Prisma 一次 `include` 避 N+1);(3) `isAnonymous` 缺值 service 層 fallback `false`(不靠 Ajv `useDefaults`);(4) SALE_ITEM 帶 `receiptOption` 由 schema 層擋 → `VALIDATION_FAILED`,**移除** `RECEIPT_OPTION_NOT_APPLICABLE` error code;(5) cancel endpoint 風險納入 §2.1 風險表 |
+| 0.8 | 2026-06-15 | §3 `isAnonymous` 註解釐清 — **Charity 捐款 (IMG_4888) / DonationProject 捐款 (IMG_4889) / SaleItem 購買 (IMG_4890) 三類訂單都掛「我要匿名捐款」checkbox**(原 v0.5 文字偏重 IMG_4890 易誤解為僅 SaleItem 可匿名)。code 自 v0.5 起 schema + Charity/Project/SaleItem body / service / admin list filter / admin PATCH 已全面支援(零 code 改動),本版純文件對齊。對應 spec 022 v0.9 |

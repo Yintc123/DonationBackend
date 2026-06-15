@@ -423,6 +423,28 @@ describe('POST /v1/donation/orders/project-donation (spec 022 §4.2)', () => {
     expect(res.statusCode).toBe(404)
     expect(res.json()).toMatchObject({ code: 'DONATION_PROJECT_NOT_FOUND' })
   })
+
+  it('respects isAnonymous=true on project-donation (spec 021 v0.8 — three subjects share the flag)', async () => {
+    const charity = await seedCharity()
+    const project = await seedProject(charity.id)
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/donation/orders/project-donation',
+      payload: {
+        donorName: '匿名專案捐款者',
+        isAnonymous: true,
+        receiptOption: 'NONE',
+        donationProjectId: project.id,
+        donationFrequency: 'ONE_TIME',
+        amountTwd: 500,
+      },
+    })
+    expect(res.statusCode).toBe(201)
+    const body = res.json() as OrderJson
+    expect(body.isAnonymous).toBe(true)
+    const row = await app.prisma.order.findUnique({ where: { id: body.id } })
+    expect(row?.isAnonymous).toBe(true)
+  })
 })
 
 // ── POST /v1/donation/orders/sale-item-purchase (§4.3) ─────────────────────
@@ -527,6 +549,25 @@ describe('POST /v1/donation/orders/sale-item-purchase (spec 022 §4.3)', () => {
     const row = await app.prisma.order.findUnique({ where: { id: body.id }, include: { lines: true } })
     expect(row?.lines[0]?.unitPriceTwd).toBe(100)
     expect(row?.amountTwd).toBe(300)
+  })
+
+  it('respects isAnonymous=true on sale-item-purchase (spec 021 v0.8)', async () => {
+    const charity = await seedCharity()
+    const item = await seedSaleItem(charity.id)
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/donation/orders/sale-item-purchase',
+      payload: {
+        donorName: '匿名買家',
+        isAnonymous: true,
+        items: [{ saleItemId: item.id, quantity: 1 }],
+      },
+    })
+    expect(res.statusCode).toBe(201)
+    const body = res.json() as OrderJson
+    expect(body.isAnonymous).toBe(true)
+    const row = await app.prisma.order.findUnique({ where: { id: body.id } })
+    expect(row?.isAnonymous).toBe(true)
   })
 })
 

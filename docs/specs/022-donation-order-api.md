@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.8 |
+| 版本 | 0.9 |
 | 日期 | 2026-06-15 |
 | 適用範圍 | `backend/src/routes/v1/donation/orders/*`(新)、`backend/src/routes/v1/admin/orders/*`(新)、`backend/src/domain/order/*`(spec 021 共享)、`backend/src/lib/clock.ts`(spec 021 §7.7 共享) |
 | 相關 ADR | 待補 |
@@ -138,7 +138,7 @@
 ```jsonc
 Body {
   "donorName": "張三",                              // required, 1-120 字
-  "isAnonymous": false,                              // v0.5 — optional, default false
+  "isAnonymous": false,                              // v0.5 — optional, default false(IMG_4888「我要匿名捐款」checkbox)
   "note": "無名氏捐款,請勿公開",                       // optional, 0-500 字;空字串視同 null
   "receiptOption": "NONE",                          // v0.5 — CHARITY/PROJECT 必填,5 個 enum 值
   "charityId": "<uuid>",                            // required, Charity 必須 live
@@ -361,7 +361,7 @@ app.route<{ Body: CharityDonationBodyT }>({
 
 ### 4.2 `POST /v1/donation/orders/project-donation`
 
-同 4.1,把 `charityId` 換 `donationProjectId`、`subjectType: DONATION_PROJECT`、`whereLiveWithParent` 驗證(parent Charity 也 live)。`note` / `isAnonymous` / `receiptOption` / `nextChargeAt` 同 4.1 處理。
+同 4.1,把 `charityId` 換 `donationProjectId`、`subjectType: DONATION_PROJECT`、`whereLiveWithParent` 驗證(parent Charity 也 live)。`note` / `isAnonymous`(對應 IMG_4889「我要匿名捐款」checkbox)/ `receiptOption` / `nextChargeAt` 同 4.1 處理。
 
 #### Response 的 inflated subject(對應 IMG_4889「捐款專案」「捐款對象」)
 
@@ -880,3 +880,4 @@ Body {
 | 0.6 | 2026-06-15 | 收尾「足夠開發」的最後 4 個細節:(1) §4.1 補完整 **Response TypeBox 樣板**(`OrderResponse` / `OrderLineResponse` / `InflatedCharity` / `InflatedDonationProject` / `InflatedSaleItem`)+ Fastify route 註冊範例;(2) §4.1 鎖 **inflated subject 欄位範圍**(對齊 IMG_4888-4890 最小集,不含 spec 017 detail 全欄;附理由表);(3) §4.6 補 **`isAnonymous` 對 response 的影響** — backend 一律回原樣,masking 責任在 BFF / UI;(4) 對應 spec 021 v0.6 §7.7 補 `nextChargeAt` 不重算規約 |
 | 0.7 | 2026-06-15 | 補 6 個最佳實踐落點(回應「足夠開發?」review):(1) §4.0 共通慣例 + §5.1 規約 **所有 request body `Type.Object` 設 `additionalProperties: false`**(strict mode,拒未宣告欄位);(2) §4.0 + spec 021 §7.7 規範 **Clock 注入**:service 接收 `deps.clock: () => Date`,production 從 Fastify decorator,test 用 `vi.useFakeTimers` / fixed Date;(3) §4.7 補 **admin list inflate 行為** — 與 detail 同 shape,Prisma 一次 `include` 帶 charity/project/saleItem 避 N+1,logoKey → logoUrl batch 過 spec 018;(4) §5.2 釐清 **`isAnonymous` 缺值 service 層 fallback `false`**(不依賴 Ajv `useDefaults`);(5) §5.2 釐清 **`note` trim 落點 = service 層**;(6) §2.1 風險表補 **cancel endpoint 風險**(任何拿 orderId 者可 cancel,本期接受 UUID 視同擁有者,未來改 manageToken)。**移除** `RECEIPT_OPTION_NOT_APPLICABLE` error code(v0.5 加,v0.7 改由 schema 層擋成 `VALIDATION_FAILED`,避免雙層校驗);§10 新加 3 個 integration test case(unknown property / clock 邊界 / admin list inflate)。對應 spec 021 v0.7 |
 | 0.8 | 2026-06-15 | spec drift 收斂(回應「規格 vs code 對齊」audit):**移除** `ORDER_LINES_REQUIRED` / `ORDER_TOO_MANY_LINES` error code(v0.2 加但從未實作 — TypeBox `items: { minItems: 1, maxItems: 1 }` 已涵蓋 → `VALIDATION_FAILED`)。§4.3 sale-item-purchase 錯誤段、§5.2 service 層 rule 表、§7 error code 表三處同步更新;對應 backend codes.ts 從未定義這兩個 code,本版本是消除規格與 code 漂移的純文件改動 |
+| 0.9 | 2026-06-15 | §4.1 / §4.2 註解釐清:**`isAnonymous` 三類訂單(Charity / DonationProject / SaleItem)都掛 checkbox** — Charity 對應 IMG_4888、Project 對應 IMG_4889、SaleItem 對應 IMG_4890(原 v0.5 文字偏重 IMG_4890,易誤解為僅 SaleItem 可匿名)。code 自 v0.5 起 schema + 三個 body / service / admin filter / admin PATCH 已全面支援,本版純文件對齊 + integration test 補強(Project / SaleItem 各加 isAnonymous=true 持久化驗證)。對應 spec 021 v0.8 |
