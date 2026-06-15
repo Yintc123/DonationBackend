@@ -664,6 +664,33 @@ describe('POST /v1/donation/orders/:id/confirm-payment (spec 022 §4.4)', () => 
     expect(res.statusCode).toBe(404)
     expect(res.json()).toMatchObject({ code: 'ORDER_NOT_FOUND' })
   })
+
+  it('atomic claim: concurrent confirm-payment yields exactly one transition (spec 022 §4.4)', async () => {
+    // spec 022 §4.4 / lifecycle-services.ts updateMany conditional update —
+    // load-bearing claim that two simultaneous confirms cannot both win.
+    // Test by issuing N=5 parallel confirms against the same PENDING order;
+    // expect 5×200 (idempotent), a single paidAt timestamp in DB, and only
+    // one row state transition (the others land on the "already PAID" idempotent
+    // branch).
+    const created = await createPendingCharityOrder()
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        app.inject({
+          method: 'POST',
+          url: `/v1/donation/orders/${created.id}/confirm-payment`,
+        }),
+      ),
+    )
+    expect(responses.every((r) => r.statusCode === 200)).toBe(true)
+    expect(responses.every((r) => (r.json() as OrderJson).status === 'PAID')).toBe(true)
+    // Every response should show the SAME paidAt — the winner's timestamp.
+    const paidAts = new Set(responses.map((r) => (r.json() as OrderJson).paidAt))
+    expect(paidAts.size).toBe(1)
+    // DB row authoritative check.
+    const row = await app.prisma.order.findUnique({ where: { id: created.id } })
+    expect(row?.status).toBe('PAID')
+    expect(row?.paidAt).not.toBe(null)
+  })
 })
 
 // ── POST /:id/cancel (§4.5) ────────────────────────────────────────────────

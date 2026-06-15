@@ -18,8 +18,7 @@ import type { Redis } from 'ioredis'
 
 import { BadRequestError, ErrorCode, NotFoundError } from '../../lib/errors/index.js'
 import { invalidateDonationEntity } from '../../lib/cache/invalidate-donation.js'
-import { assertValidObjectKey } from '../../lib/s3/index.js'
-import type { Clock } from '../../lib/clock.js'
+import { assertS3KeyBinding, assertValidObjectKey } from '../../lib/s3/index.js'
 import { type Locale, pickLocalised } from '../../lib/i18n/index.js'
 
 import { inflateCategories } from './list-helpers.js'
@@ -31,7 +30,6 @@ export interface CharityWriteDeps {
   prisma: PrismaClient
   redis: Redis
   logger: FastifyBaseLogger
-  clock: Clock
   locale: Locale
   objectUrl: ObjectUrl
 }
@@ -113,14 +111,20 @@ async function assertCategoriesLive(
 }
 
 /**
- * spec 020 §2.8 / §9 — backend does NOT verify S3 object existence (one round
- * trip + spec 018 §11 alignment). We only verify the key shape matches the
- * donation/{entity}/{id}/{purpose}.{ext} contract. Entity / id binding is
- * left loose (admin demo scope — see ADR 013 trade-off discussion).
+ * spec 020 §2.8 / §10 — verify (a) the key shape matches
+ * donation/{entity}/{uuid}/{purpose}.{ext} and (b) the entity segment is
+ * `charities`. PATCH callers also pass `expectedId` so a previously-uploaded
+ * key cannot be reassigned onto a different row (spec 020 §10
+ * INVALID_S3_KEY_BINDING).
+ *
+ * We do NOT verify the S3 object physically exists (one extra round trip +
+ * spec 018 §11 alignment; orphan keys fall back to the public-bucket 404 →
+ * UI default avatar).
  */
-function assertLogoKeyShape(key: string | null | undefined): void {
+function assertLogoKeyBinding(key: string | null | undefined, expectedId?: string): void {
   if (key == null) return
   assertValidObjectKey(key, '/logoKey')
+  assertS3KeyBinding(key, 'charities', '/logoKey', expectedId)
 }
 
 function parseDate(iso: string | null | undefined): Date | null | undefined {
@@ -181,7 +185,7 @@ export async function createCharity(
   input: CharityCreateInput,
 ): Promise<CharityDetailT> {
   assertPublishRange(input.publishStartAt, input.publishEndAt)
-  assertLogoKeyShape(input.logoKey)
+  assertLogoKeyBinding(input.logoKey)
 
   const categoryIds = input.categoryIds ?? []
   await assertCategoriesLive(deps.prisma, categoryIds)
@@ -235,7 +239,8 @@ export async function updateCharity(
   input: CharityPatchInput,
 ): Promise<CharityDetailT> {
   assertPublishRange(input.publishStartAt, input.publishEndAt)
-  assertLogoKeyShape(input.logoKey)
+  // PATCH knows the target row id — enforce key↔row binding (§10).
+  assertLogoKeyBinding(input.logoKey, id)
   if (input.categoryIds !== undefined) {
     await assertCategoriesLive(deps.prisma, input.categoryIds)
   }

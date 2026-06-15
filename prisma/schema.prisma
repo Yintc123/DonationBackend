@@ -372,8 +372,11 @@ model Order {
 
   lines OrderLine[]
 
-  // Admin list `?status=X` + ORDER BY createdAt(spec 022 §4.7)。
-  @@index([status, createdAt])
+  // Admin list `?status=X` + ORDER BY createdAt DESC, id DESC
+  // (spec 022 §4.7 cursor tiebreaker). Match the (Desc, Desc) pattern
+  // used by Charity / DonationProject / SaleItem so PG can index-scan the
+  // descending sort without a separate sort step.
+  @@index([status, createdAt(sort: Desc), id(sort: Desc)])
   // 未來 cron「找出今日該扣款的 order」走此 index(本期 cron 不存在)。
   @@index([nextChargeAt])
   @@map("orders")

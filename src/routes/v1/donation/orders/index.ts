@@ -11,7 +11,6 @@
 import type { FastifyInstance } from 'fastify'
 import { Type, type Static } from '@sinclair/typebox'
 
-import { systemClock } from '../../../../lib/clock.js'
 import {
   createCharityDonation,
   createProjectDonation,
@@ -73,7 +72,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
     config: { rateLimit: { purposes: [ORDER_CREATE_PURPOSE] } },
     handler: async (req, reply) => {
       const order = await createCharityDonation(
-        { prisma: app.prisma, clock: app.clock ?? systemClock, logger: req.log },
+        { prisma: app.prisma, clock: app.clock, logger: req.log },
         req.body,
       )
       return reply.created(`/v1/donation/orders/${order.id}`, serializeOrder(order, app.objectUrl))
@@ -91,7 +90,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
     config: { rateLimit: { purposes: [ORDER_CREATE_PURPOSE] } },
     handler: async (req, reply) => {
       const order = await createProjectDonation(
-        { prisma: app.prisma, clock: app.clock ?? systemClock, logger: req.log },
+        { prisma: app.prisma, clock: app.clock, logger: req.log },
         req.body,
       )
       return reply.created(`/v1/donation/orders/${order.id}`, serializeOrder(order, app.objectUrl))
@@ -109,7 +108,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
     config: { rateLimit: { purposes: [ORDER_CREATE_PURPOSE] } },
     handler: async (req, reply) => {
       const order = await createSaleItemPurchase(
-        { prisma: app.prisma, clock: app.clock ?? systemClock, logger: req.log },
+        { prisma: app.prisma, clock: app.clock, logger: req.log },
         req.body,
       )
       return reply.created(`/v1/donation/orders/${order.id}`, serializeOrder(order, app.objectUrl))
@@ -142,7 +141,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
     config: { rateLimit: { purposes: [ORDER_LIFECYCLE_PURPOSE] } },
     handler: async (req, reply) => {
       const order = await confirmPayment(
-        { prisma: app.prisma, clock: app.clock ?? systemClock, logger: req.log },
+        { prisma: app.prisma, clock: app.clock, logger: req.log },
         req.params.id,
       )
       return reply.ok(serializeOrder(order, app.objectUrl))
@@ -160,7 +159,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
     config: { rateLimit: { purposes: [ORDER_LIFECYCLE_PURPOSE] } },
     handler: async (req, reply) => {
       const order = await cancelOrder(
-        { prisma: app.prisma, clock: app.clock ?? systemClock, logger: req.log },
+        { prisma: app.prisma, clock: app.clock, logger: req.log },
         req.params.id,
       )
       return reply.ok(serializeOrder(order, app.objectUrl))

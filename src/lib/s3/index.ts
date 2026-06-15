@@ -16,6 +16,7 @@ export { mapS3Error } from './errors.js'
 export { createStorageProbe, type StorageProbeResult } from './health.js'
 export {
   ALLOWED_EXTS,
+  assertS3KeyBinding,
   assertValidObjectKey,
   buildKey,
   ENTITIES,

@@ -13,6 +13,7 @@ import {
   listOrdersForAdmin,
   patchOrderAsAdmin,
 } from '../../../../domain/order/admin-services.js'
+import { normalizeNote } from '../../../../domain/order/normalize.js'
 import { getOrderByIdOrFail } from '../../../../domain/order/query-services.js'
 import { serializeOrder } from '../../../../domain/order/serialize.js'
 import { requireAdmin } from '../../../../lib/auth/index.js'
@@ -34,21 +35,19 @@ const OrderIdParams = Type.Object({
 })
 type OrderIdParamsT = Static<typeof OrderIdParams>
 
-// spec 022 §8.2 — admin endpoints carry both per-user and per-IP buckets.
-const ADMIN_LIST_PURPOSE = {
-  name: 'admin-order-list',
-  limit: 600,
-  windowMs: 60 * 60 * 1000,
+// spec 022 §8.2 — admin endpoints dual-layer (per-user + per-IP).
+const HOUR = 60 * 60 * 1000
+const ADMIN_LIST_LIMITS = {
+  perUser: { limit: 600, windowMs: HOUR },
+  perIp: { limit: 1200, windowMs: HOUR },
 }
-const ADMIN_DETAIL_PURPOSE = {
-  name: 'admin-order-detail',
-  limit: 1200,
-  windowMs: 60 * 60 * 1000,
+const ADMIN_DETAIL_LIMITS = {
+  perUser: { limit: 1200, windowMs: HOUR },
+  perIp: { limit: 2400, windowMs: HOUR },
 }
-const ADMIN_WRITE_PURPOSE = {
-  name: 'admin-order-write',
-  limit: 60,
-  windowMs: 60 * 60 * 1000,
+const ADMIN_WRITE_LIMITS = {
+  perUser: { limit: 60, windowMs: HOUR },
+  perIp: { limit: 300, windowMs: HOUR },
 }
 
 export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<void> {
@@ -62,7 +61,7 @@ export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<vo
       querystring: AdminListQuery,
       response: { 200: paginatedSchema(OrderResponse) },
     },
-    config: { rateLimit: { purposes: [ADMIN_LIST_PURPOSE] } },
+    config: { rateLimit: ADMIN_LIST_LIMITS },
     handler: async (req, reply) => {
       await requireAdmin(req, app.prisma, tokenSecrets)
       const q = req.query
@@ -98,7 +97,7 @@ export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<vo
       params: OrderIdParams,
       response: { 200: OrderResponse },
     },
-    config: { rateLimit: { purposes: [ADMIN_DETAIL_PURPOSE] } },
+    config: { rateLimit: ADMIN_DETAIL_LIMITS },
     handler: async (req, reply) => {
       await requireAdmin(req, app.prisma, tokenSecrets)
       const order = await getOrderByIdOrFail({ prisma: app.prisma }, req.params.id)
@@ -115,19 +114,10 @@ export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<vo
       body: AdminPatchBody,
       response: { 200: OrderResponse },
     },
-    config: { rateLimit: { purposes: [ADMIN_WRITE_PURPOSE] } },
+    config: { rateLimit: ADMIN_WRITE_LIMITS },
     handler: async (req, reply) => {
       const accountId = await requireAdmin(req, app.prisma, tokenSecrets)
       const body = req.body
-      // Note normalisation symmetric with create services.
-      const normalizedNote =
-        body.note === undefined
-          ? undefined
-          : body.note === null
-            ? null
-            : body.note.trim() === ''
-              ? null
-              : body.note.trim()
       const order = await patchOrderAsAdmin(
         { prisma: app.prisma, logger: req.log },
         accountId,
@@ -136,7 +126,7 @@ export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<vo
           status: body.status,
           donorName: body.donorName,
           isAnonymous: body.isAnonymous,
-          note: normalizedNote,
+          note: normalizeNote(body.note),
           receiptOption: body.receiptOption,
           paidAt:
             body.paidAt === undefined ? undefined : body.paidAt === null ? null : new Date(body.paidAt),
@@ -159,7 +149,7 @@ export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<vo
     schema: {
       params: OrderIdParams,
     },
-    config: { rateLimit: { purposes: [ADMIN_WRITE_PURPOSE] } },
+    config: { rateLimit: ADMIN_WRITE_LIMITS },
     handler: async (req, reply) => {
       const accountId = await requireAdmin(req, app.prisma, tokenSecrets)
       await deleteOrderAsAdmin(

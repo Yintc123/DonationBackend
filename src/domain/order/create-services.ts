@@ -39,6 +39,7 @@ import {
   type OrderLineCreateInput,
 } from './line-builder.js'
 import { computeNextChargeAt } from './next-charge-at.js'
+import { normalizeNote } from './normalize.js'
 import { assertOrderInvariants } from './validators.js'
 
 import type {
@@ -57,16 +58,8 @@ export interface OrderServiceDeps {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-/**
- * Spec 022 §5.2 — note normalisation rule:
- * trim whitespace; empty (or whitespace-only) string collapses to `null`
- * so the DB never carries the dual "" / null "no note" representation.
- */
-function normalizeNote(raw: string | null | undefined): string | null {
-  if (raw == null) return null
-  const trimmed = raw.trim()
-  return trimmed === '' ? null : trimmed
-}
+// Spec 022 §5.2 — normalizeNote moved to ./normalize.ts so admin PATCH +
+// future internal callers share one source of truth.
 
 /**
  * Spec 022 §5.2 — RECURRING ⇔ billingDay biconditional. TypeBox keeps

@@ -197,8 +197,17 @@ async function bootstrapAdmin(
   config: ReturnType<typeof loadConfig>,
 ): Promise<void> {
   const username = 'admin'
-  const password = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? 'admin-dev-password-change-me'
-  if (password === 'admin-dev-password-change-me') {
+  const DEFAULT_PASSWORD = 'admin-dev-password-change-me'
+  const password = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? DEFAULT_PASSWORD
+  if (password === DEFAULT_PASSWORD) {
+    // Spec 020 §14 OQ #10 — production MUST provide BOOTSTRAP_ADMIN_PASSWORD.
+    // We fail-loud here so a production seed never silently ships the
+    // dev-default credentials. Dev / CI / staging fall through with a warning.
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'bootstrapAdmin: BOOTSTRAP_ADMIN_PASSWORD env var is required in production — refusing to seed default credentials',
+      )
+    }
     console.warn(
       '⚠  using default BOOTSTRAP_ADMIN_PASSWORD — set env to override (dev/CI only acceptable)',
     )

@@ -106,6 +106,10 @@ export const ErrorCode = Object.freeze({
   CHARITY_NOT_FOUND: 'CHARITY_NOT_FOUND',
   DONATION_PROJECT_NOT_FOUND: 'DONATION_PROJECT_NOT_FOUND',
   SALE_ITEM_NOT_FOUND: 'SALE_ITEM_NOT_FOUND',
+  // Spec 020 §5.4 / §10 — Category is a dictionary entity owned by spec 015;
+  // we surface a dedicated 404 so admin UI can distinguish "category missing"
+  // from the generic NOT_FOUND used by routing-misses.
+  CATEGORY_NOT_FOUND: 'CATEGORY_NOT_FOUND',
 
   // ── §4.2.* donation order (spec 022 §7) ────────────────────────────────
   // Phase 2 introduces the create endpoints; INVALID_BILLING_DAY is the
@@ -172,6 +176,7 @@ export const ErrorCodeStatus: Readonly<Record<ErrorCodeValue, number>> = Object.
   [ErrorCode.CHARITY_NOT_FOUND]: 404,
   [ErrorCode.DONATION_PROJECT_NOT_FOUND]: 404,
   [ErrorCode.SALE_ITEM_NOT_FOUND]: 404,
+  [ErrorCode.CATEGORY_NOT_FOUND]: 404,
   [ErrorCode.INVALID_BILLING_DAY]: 400,
   [ErrorCode.ORDER_NOT_FOUND]: 404,
   [ErrorCode.ORDER_STATUS_INVALID]: 409,

@@ -52,7 +52,7 @@ export async function updateCategory(
 ): Promise<CategoryAdminResponseT> {
   const existing = await deps.prisma.category.findUnique({ where: { id }, select: { id: true } })
   if (existing === null) {
-    throw new NotFoundError({ resource: 'category', id, code: ErrorCode.NOT_FOUND })
+    throw new NotFoundError({ resource: 'category', id, code: ErrorCode.CATEGORY_NOT_FOUND })
   }
 
   const updated = await deps.prisma.category.update({

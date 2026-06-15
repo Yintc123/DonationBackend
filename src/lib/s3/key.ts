@@ -8,7 +8,7 @@
 // path-structure leakage; for public donation assets that's acceptable
 // (spec 018 §5.4).
 
-import { ErrorCode, ValidationError } from '../errors/index.js'
+import { BadRequestError, ErrorCode, ValidationError } from '../errors/index.js'
 
 export const ENTITIES = Object.freeze([
   'charities',
@@ -156,5 +156,53 @@ export function assertValidObjectKey(key: string, fieldPath = '/objectKey'): voi
         },
       ],
     })
+  }
+}
+
+/**
+ * Spec 020 §10 INVALID_S3_KEY_BINDING — beyond shape, assert the key's
+ * entity segment matches `expectedEntity`. PATCH callers can additionally
+ * pass `expectedId` so a client cannot reassign a previously-uploaded key
+ * onto a different row.
+ *
+ * Why entity is enforced but id is optional:
+ *   - On POST, the row id is server-generated; the client uploaded with a
+ *     client-generated uuid placeholder (or a previously-reserved id), so
+ *     id binding cannot be enforced until that flow is spec'd (spec 018
+ *     §14 OQ).
+ *   - On PATCH, the row already has an id — passing it in catches the
+ *     "drag a logoKey from row A onto row B" mistake explicitly.
+ */
+export function assertS3KeyBinding(
+  key: string,
+  expectedEntity: UploadEntity,
+  fieldPath: string,
+  expectedId?: string,
+): void {
+  const match = OBJECT_KEY_REGEX.exec(key)
+  if (match === null) {
+    // Shape failure already a 400 via assertValidObjectKey; this branch is
+    // defensive — callers usually invoke assertValidObjectKey first.
+    assertValidObjectKey(key, fieldPath)
+    return
+  }
+  const keyEntity = match[1]
+  if (keyEntity !== expectedEntity) {
+    throw new BadRequestError({
+      code: ErrorCode.INVALID_S3_KEY_BINDING,
+      message: `${fieldPath} entity segment "${keyEntity}" does not match "${expectedEntity}"`,
+      details: { fieldPath, expectedEntity, actualEntity: keyEntity },
+    })
+  }
+  if (expectedId !== undefined) {
+    // Path: donation/{entity}/{id}/{purpose}.{ext} — third segment.
+    const id = key.split('/')[2]
+    if (id !== expectedId) {
+      throw new BadRequestError({
+        code: ErrorCode.INVALID_S3_KEY_BINDING,
+        message: `${fieldPath} id segment does not match the resource id`,
+        details: { fieldPath, expectedId, actualId: id },
+      })
+    }
   }
 }

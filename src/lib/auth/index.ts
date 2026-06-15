@@ -58,6 +58,7 @@ export {
   requireAdmin,
   requireLiveAccountId,
 } from './bearer.js'
+export { authContextPlugin } from './context.js'
 export {
   createAuthService,
   type AuthService,

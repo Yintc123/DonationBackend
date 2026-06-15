@@ -16,7 +16,7 @@
 
 import Fastify, { type FastifyInstance } from 'fastify'
 
-import { authPlugin } from './lib/auth/index.js'
+import { authContextPlugin, authPlugin } from './lib/auth/index.js'
 import type { TokenSecrets } from './lib/auth/index.js'
 import { googleAuthPlugin } from './lib/auth-google/index.js'
 import { type Clock, systemClock } from './lib/clock.js'
@@ -101,6 +101,10 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(redisPlugin)
   await app.register(rateLimitPlugin)
   await app.register(authPlugin)
+  // Spec 020 §11 / spec 022 §8.2 — best-effort JWT decode into req.user on
+  // every request (onRequest hook). Must register AFTER authPlugin (depends
+  // on app.tokenSecrets); the rate-limit per-user layer reads req.user.sub.
+  await app.register(authContextPlugin)
   await app.register(googleAuthPlugin)
   // Spec 018 §3 — s3Plugin owns app.s3 / s3Config / s3HealthProbe. Placed
   // AFTER rate-limit so the presign route inherits the global preHandler,

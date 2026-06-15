@@ -115,6 +115,16 @@ export async function requireLiveAccountId(
  *
  * Returns the verified accountId so the caller can use it for audit
  * payloads without a fourth round trip.
+ *
+ * **Known accepted limitation (spec 020 §2.3):**
+ *   The role claim comes from the JWT, not a fresh DB read. If an admin
+ *   was demoted *after* the access token was issued, that token will
+ *   still pass for up to one access-token TTL (≤ 3h, ADR 004) — the
+ *   "zombie ADMIN" window. We do not maintain an access-token blacklist;
+ *   demote re-issuance happens at the next /auth/refresh boundary
+ *   (issueBundle re-reads `Account.role` via `loadAccountRole`).
+ *   The lifecycle check above does close the matching "archived but
+ *   token alive" hole, which is the higher-impact case.
  */
 export async function requireAdmin(
   req: FastifyRequest,

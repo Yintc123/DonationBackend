@@ -7,8 +7,7 @@ import type { Redis } from 'ioredis'
 
 import { BadRequestError, ErrorCode, NotFoundError } from '../../lib/errors/index.js'
 import { invalidateDonationEntity } from '../../lib/cache/invalidate-donation.js'
-import { assertValidObjectKey } from '../../lib/s3/index.js'
-import type { Clock } from '../../lib/clock.js'
+import { assertS3KeyBinding, assertValidObjectKey } from '../../lib/s3/index.js'
 import { type Locale, pickLocalised } from '../../lib/i18n/index.js'
 
 import type { SaleItemDetailT } from '../../schemas/donation-item/detail.js'
@@ -19,7 +18,6 @@ export interface SaleItemWriteDeps {
   prisma: PrismaClient
   redis: Redis
   logger: FastifyBaseLogger
-  clock: Clock
   locale: Locale
   objectUrl: ObjectUrl
 }
@@ -69,9 +67,18 @@ function assertPublishRange(start: string | null | undefined, end: string | null
   }
 }
 
-function assertImageKeys(input: { logoKey?: string | null; coverImageKey?: string | null }): void {
-  if (input.logoKey != null) assertValidObjectKey(input.logoKey, '/logoKey')
-  if (input.coverImageKey != null) assertValidObjectKey(input.coverImageKey, '/coverImageKey')
+function assertImageKeys(
+  input: { logoKey?: string | null; coverImageKey?: string | null },
+  expectedId?: string,
+): void {
+  if (input.logoKey != null) {
+    assertValidObjectKey(input.logoKey, '/logoKey')
+    assertS3KeyBinding(input.logoKey, 'sale-items', '/logoKey', expectedId)
+  }
+  if (input.coverImageKey != null) {
+    assertValidObjectKey(input.coverImageKey, '/coverImageKey')
+    assertS3KeyBinding(input.coverImageKey, 'sale-items', '/coverImageKey', expectedId)
+  }
 }
 
 async function assertParentCharityExists(
@@ -218,7 +225,8 @@ export async function updateSaleItem(
   input: SaleItemPatchInput,
 ): Promise<SaleItemDetailT> {
   assertPublishRange(input.publishStartAt, input.publishEndAt)
-  assertImageKeys(input)
+  // PATCH knows the row id — bind keys to this exact row (spec 020 §10).
+  assertImageKeys(input, id)
 
   const existing = await deps.prisma.saleItem.findUnique({
     where: { id },

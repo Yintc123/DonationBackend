@@ -127,6 +127,14 @@ export function donationCacheKeysFor(input: {
       return out
 
     case 'category':
+      // Spec 020 §8.1 + §14 OQ — Category PATCH (displayName / displayOrder)
+      // technically influences EVERY hydrated charity / project / sale
+      // detail key that inflates the category, but enumerating those would
+      // mean walking three M:N relations under load. We accept the worst-
+      // case staleness of one TTL (30-60s) because (a) category edits are
+      // rare, (b) the cat:list invalidate below ensures the dictionary
+      // dropdown itself is correct, (c) detail pages auto-refresh via
+      // public-read TTL. Revisit if category-rename frequency rises.
       for (const loc of LOCALES) {
         out.push(buildCacheKey('cat:list:v1', [loc]))
       }

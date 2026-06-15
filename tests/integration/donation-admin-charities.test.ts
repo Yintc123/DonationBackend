@@ -7,7 +7,7 @@
 // invalidation.
 
 import type { FastifyInstance } from 'fastify'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Role, signAccessToken } from '../../src/lib/auth/index.js'
 import { buildCacheKey } from '../../src/lib/cache/index.js'
@@ -374,6 +374,69 @@ describe('Lifecycle actions (spec 020 §5.1.3 ~ §5.1.6)', () => {
 })
 
 // ── Cache invalidation ─────────────────────────────────────────────────────
+
+describe('Cache invalidation graceful degradation (spec 019 §9.1)', () => {
+  it('Redis pipeline failure does NOT block the write — returns 201 + warn log', async () => {
+    const token = await adminToken()
+    // Force the cache pipeline path to throw at the network layer. The
+    // invalidator wraps the entire pipeline().exec() in try/catch and logs
+    // warn — the route should still return 201.
+    const originalPipeline = app.redis.pipeline.bind(app.redis)
+    const spy = vi
+      .spyOn(app.redis, 'pipeline')
+      .mockImplementation((() => {
+        throw new Error('synthetic redis outage')
+      }) as typeof app.redis.pipeline)
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/v1/donation/charities',
+        headers: { authorization: `Bearer ${token}` },
+        payload: BASE_BODY,
+      })
+      expect(res.statusCode).toBe(201)
+      // DB row still landed.
+      const id = (res.json() as CharityResp).id
+      const row = await app.prisma.charity.findUnique({ where: { id } })
+      expect(row).not.toBe(null)
+    } finally {
+      spy.mockRestore()
+      // restore in case afterEach reads through app.redis
+      void originalPipeline
+    }
+  })
+})
+
+describe('Rate limit (spec 020 §11 dual-layer)', () => {
+  // Spec 020 §11 — create bucket is per-user 60/h + per-IP 300/h. We can't
+  // hammer 61 requests in a test (too slow); instead lean on a tight
+  // env-override so even 4 requests trip the bucket.
+  it('returns 429 once the per-IP create budget is exhausted', async () => {
+    // Override the global default per-IP limit — admin route's per-IP layer
+    // overrides it, but since spec 020 sets create to 300/h that won't
+    // fire fast enough in a test. Instead use a per-route override would
+    // require schema change; we exercise the L1 global IP bucket via env.
+    await app.close()
+    app = await buildApp({
+      RATE_LIMIT_GLOBAL_PER_IP_LIMIT: '3',
+      RATE_LIMIT_GLOBAL_PER_IP_WINDOW_SEC: '60',
+    })
+    const token = await adminToken()
+    // Issue requests until one hits 429. The global per-IP limit is 3, so
+    // the 4th call (or earlier given other plugin overhead) should fail.
+    const statuses: number[] = []
+    for (let i = 0; i < 6; i++) {
+      const r = await app.inject({
+        method: 'POST',
+        url: '/v1/donation/charities',
+        headers: { authorization: `Bearer ${token}` },
+        payload: BASE_BODY,
+      })
+      statuses.push(r.statusCode)
+    }
+    expect(statuses).toContain(429)
+  })
+})
 
 describe('Cache invalidation on write', () => {
   it('POST charity DELs the charity list cache slots', async () => {

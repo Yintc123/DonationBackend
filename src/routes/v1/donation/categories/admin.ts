@@ -1,18 +1,11 @@
-// Spec 020 §5.4 — Category admin endpoints (5 routes; no create).
+// Spec 020 §5.4 — Category admin endpoints (PATCH + 4 lifecycle; no create).
 
 import type { FastifyInstance } from 'fastify'
 import { Type, type Static } from '@sinclair/typebox'
 
 import { updateCategory } from '../../../../domain/category/write.js'
-import {
-  archive as lifecycleArchive,
-  exists as lifecycleExists,
-  restore as lifecycleRestore,
-  softDelete as lifecycleSoftDelete,
-  unarchive as lifecycleUnarchive,
-} from '../../../../domain/donation-item/lifecycle-actions.js'
 import { requireAdmin } from '../../../../lib/auth/index.js'
-import { ErrorCode, NotFoundError } from '../../../../lib/errors/index.js'
+import { ErrorCode } from '../../../../lib/errors/index.js'
 import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
 import {
   CategoryAdminResponse,
@@ -20,24 +13,20 @@ import {
   type CategoryPatchBodyT,
 } from '../../../../schemas/category/admin.js'
 
+import { registerLifecycleRoutes } from '../lifecycle-routes-helper.js'
+
 const UUID_V4_PATTERN =
   '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
 
 const IdParams = Type.Object({ id: Type.String({ pattern: UUID_V4_PATTERN }) })
 type IdParamsT = Static<typeof IdParams>
 
-// Spec 020 §11 — Category lives in a tighter bucket than the other entities
-// (dictionary table, edits are rare).
-const CATEGORY_WRITE_PURPOSE = {
-  name: 'donation-category-write',
-  limit: 30,
-  windowMs: 60 * 60 * 1000,
-}
-
-async function requireExisting(app: FastifyInstance, id: string): Promise<void> {
-  if (!(await lifecycleExists(app.prisma.category, id))) {
-    throw new NotFoundError({ resource: 'category', id, code: ErrorCode.NOT_FOUND })
-  }
+// Spec 020 §11 — Category lives in a tighter dual-layer bucket (dictionary
+// table, edits are rare).
+const HOUR = 60 * 60 * 1000
+const CATEGORY_LIMITS = {
+  perUser: { limit: 30, windowMs: HOUR },
+  perIp: { limit: 100, windowMs: HOUR },
 }
 
 export async function registerCategoryAdminRoutes(app: FastifyInstance): Promise<void> {
@@ -50,7 +39,7 @@ export async function registerCategoryAdminRoutes(app: FastifyInstance): Promise
       body: CategoryPatchBody,
       response: { 200: CategoryAdminResponse },
     },
-    config: { rateLimit: { purposes: [CATEGORY_WRITE_PURPOSE] } },
+    config: { rateLimit: CATEGORY_LIMITS },
     handler: async (req, reply) => {
       await requireAdmin(req, app.prisma, app.tokenSecrets)
       const locale = parseAcceptLanguage(req.headers['accept-language'])
@@ -63,75 +52,14 @@ export async function registerCategoryAdminRoutes(app: FastifyInstance): Promise
     },
   })
 
-  app.route<{ Params: IdParamsT }>({
-    method: 'POST',
-    url: '/v1/donation/categories/:id/archive',
-    schema: { params: IdParams },
-    config: { rateLimit: { purposes: [CATEGORY_WRITE_PURPOSE] } },
-    handler: async (req, reply) => {
-      await requireAdmin(req, app.prisma, app.tokenSecrets)
-      const id = req.params.id
-      await requireExisting(app, id)
-      await lifecycleArchive(
-        app.prisma.category,
-        { redis: app.redis, logger: req.log, now: app.clock() },
-        { entity: 'category', id, auditEvent: 'donation_category_archived' },
-      )
-      return reply.noContent()
-    },
-  })
-
-  app.route<{ Params: IdParamsT }>({
-    method: 'POST',
-    url: '/v1/donation/categories/:id/unarchive',
-    schema: { params: IdParams },
-    config: { rateLimit: { purposes: [CATEGORY_WRITE_PURPOSE] } },
-    handler: async (req, reply) => {
-      await requireAdmin(req, app.prisma, app.tokenSecrets)
-      const id = req.params.id
-      await requireExisting(app, id)
-      await lifecycleUnarchive(
-        app.prisma.category,
-        { redis: app.redis, logger: req.log, now: app.clock() },
-        { entity: 'category', id, auditEvent: 'donation_category_unarchived' },
-      )
-      return reply.noContent()
-    },
-  })
-
-  app.route<{ Params: IdParamsT }>({
-    method: 'DELETE',
-    url: '/v1/donation/categories/:id',
-    schema: { params: IdParams },
-    config: { rateLimit: { purposes: [CATEGORY_WRITE_PURPOSE] } },
-    handler: async (req, reply) => {
-      await requireAdmin(req, app.prisma, app.tokenSecrets)
-      const id = req.params.id
-      await requireExisting(app, id)
-      await lifecycleSoftDelete(
-        app.prisma.category,
-        { redis: app.redis, logger: req.log, now: app.clock() },
-        { entity: 'category', id, auditEvent: 'donation_category_deleted' },
-      )
-      return reply.noContent()
-    },
-  })
-
-  app.route<{ Params: IdParamsT }>({
-    method: 'POST',
-    url: '/v1/donation/categories/:id/restore',
-    schema: { params: IdParams },
-    config: { rateLimit: { purposes: [CATEGORY_WRITE_PURPOSE] } },
-    handler: async (req, reply) => {
-      await requireAdmin(req, app.prisma, app.tokenSecrets)
-      const id = req.params.id
-      await requireExisting(app, id)
-      await lifecycleRestore(
-        app.prisma.category,
-        { redis: app.redis, logger: req.log, now: app.clock() },
-        { entity: 'category', id, auditEvent: 'donation_category_restored' },
-      )
-      return reply.noContent()
-    },
+  registerLifecycleRoutes({
+    app,
+    basePath: '/v1/donation/categories',
+    delegate: app.prisma.category,
+    entity: 'category',
+    notFoundResource: 'category',
+    notFoundCode: ErrorCode.CATEGORY_NOT_FOUND,
+    auditPrefix: 'donation_category',
+    rateLimit: CATEGORY_LIMITS,
   })
 }
