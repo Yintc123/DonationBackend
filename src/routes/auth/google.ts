@@ -26,7 +26,6 @@ import {
   requireAccessAccountId,
 } from '../../lib/auth/bearer.js'
 import type { GoogleAuthService } from '../../lib/auth-google/service.js'
-import { registerWithV1Alias } from '../../lib/http/index.js'
 import type { LimitWindow } from '../../lib/rate-limit/index.js'
 
 const REFRESH_IP: LimitWindow = { limit: 30, windowMs: 60 * 1000 }
@@ -60,7 +59,7 @@ export async function registerGoogleAuthRoutes(
   const refreshStore = createRefreshStore(app.redis)
 
   // ── POST /auth/google/authorize-init (spec §7.1) ────────────────────────
-  registerWithV1Alias<{ Body: AuthorizeInitBody; Querystring: { intent?: 'login' | 'link' } }>(app, {
+  app.route<{ Body: AuthorizeInitBody; Querystring: { intent?: 'login' | 'link' } }>({
     method: 'POST',
     url: '/auth/google/authorize-init',
     schema: {
@@ -98,7 +97,7 @@ export async function registerGoogleAuthRoutes(
   })
 
   // ── POST /auth/google/exchange (spec §7.2) ──────────────────────────────
-  registerWithV1Alias<{ Body: ExchangeBody }>(app, {
+  app.route<{ Body: ExchangeBody }>({
     method: 'POST',
     url: '/auth/google/exchange',
     schema: {
@@ -147,7 +146,7 @@ export async function registerGoogleAuthRoutes(
   })
 
   // ── POST /auth/refresh (spec §7.3) ──────────────────────────────────────
-  registerWithV1Alias(app, {
+  app.route({
     method: 'POST',
     url: '/auth/refresh',
     config: { rateLimit: { perIp: REFRESH_IP } },
@@ -215,7 +214,7 @@ export async function registerGoogleAuthRoutes(
   })
 
   // ── POST /auth/logout (spec §7.4) ───────────────────────────────────────
-  registerWithV1Alias<{ Body: LogoutBody }>(app, {
+  app.route<{ Body: LogoutBody }>({
     method: 'POST',
     url: '/auth/logout',
     schema: {
@@ -244,7 +243,7 @@ export async function registerGoogleAuthRoutes(
   })
 
   // ── POST /auth/logout-all (spec §7.5) ───────────────────────────────────
-  registerWithV1Alias(app, {
+  app.route({
     method: 'POST',
     url: '/auth/logout-all',
     handler: async (req, reply) => {

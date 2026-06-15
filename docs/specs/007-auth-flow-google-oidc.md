@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.6 |
+| 版本 | 0.5 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/src/routes/auth/*`、`backend/src/lib/auth/*` |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`(BFF 邊界)、`docs/decisions/004-auth-token-strategy.md`(access + refresh) |
@@ -312,35 +312,6 @@ Backend:
 ## 7. 端點規格
 
 > Path 前綴與版本由 API 公開規格 spec 統一(預設 `/v1`),本 spec 寫相對路徑。
-
-### 7.0 URL versioning compat(v0.6)
-
-歷史脈絡:
-
-- spec 007 / 008 在 spec 015 訂出 `/v1/donation/*` 命名之前就 ship 了,路徑長期是 `/auth/*`(無前綴)。
-- BFF / 外部 caller 為了與 donation domain 對齊,逐步改打 `/v1/auth/*`。
-
-backend 對所有 spec 007 端點同時掛**兩條路徑**:
-
-```
-POST /auth/google/authorize-init     ←─┐
-                                       ├─ same handler / schema / rate-limit
-POST /v1/auth/google/authorize-init  ←─┘
-```
-
-落地細節:
-
-- 共用 helper `registerWithV1Alias(app, opts)`(`src/lib/http/v1-alias.ts`)— 對同一個 `app.route` opts 物件呼叫兩次,canonical URL + `/v1` 前綴版各一個。
-- handler / schema / rate-limit config **完全相同**,行為對等(integration test `tests/integration/auth-v1-alias.test.ts` 對等驗證)。
-- Logs / metrics 仍可從 `routerPath` 區分 client 實際打哪條路徑,未來想 deprecate `/auth/*` 形式可從這裡量化遷移進度。
-- spec 008(password)同樣模式;統一規約寫在這裡,spec 008 §8.0 cross-ref 此節。
-
-為什麼不用 308 redirect:
-1. POST + body 在某些 fetch 實作(Next.js route handler 等)會在 redirect 後遺失 body。
-2. `/v1` alias 本來就是長期支援的形式,沒必要付 redirect 一次 RTT。
-3. dual-register 對應同一個 handler,行為差異 = 0,故無 deprecate 緊迫性。
-
-下面 §7.1-§7.5 列的 path 為 canonical 路徑;**對等地,client 也可改打 `/v1` 前綴版,backend 同等對待**。
 
 ### 7.1 `POST /auth/google/authorize-init`
 
@@ -971,4 +942,3 @@ jkod:auth:blacklist:{jti}          STRING "1"
 | 0.3 | 2026-06-15 | §10 加 §10.8 `Account.lastLoginAt` / `lastLoginType` 兩個 audit 欄位(nullable + `LoginType` enum `PASSWORD` / `GOOGLE`);明文寫入 / 不寫入規則 — register / login 成功 / Google exchange login intent 兩條路徑寫入,link intent / change-password / set-password / refresh / logout / 失敗登入皆不寫入。新增 Prisma migration `add_account_last_login` + service 層 `account.update / create` 對應 2 處(`auth/service.ts` register + login,`auth-google/service.ts` existing-account login + new-account 分支)。spec 008 §5.4 同步引用 |
 | 0.4 | 2026-06-15 | §10.1 改寫:`username` 為新主鍵,`email` 變 optional(兩者皆 nullable + unique,應用層強制「至少一個」);§10.2 帳密 sign-in 改用單一 `identifier` 欄位 + `@` sniff;新增 §10.9 Account lifecycle policy(`displayOrder` / `archivedAt` / `deletedAt`,任一 lifecycle stamp 非 null 即 disabled,login / refresh / Google exchange 全 401 `AUTH_ACCOUNT_DISABLED`,refresh 觸發 `revokeAll`);3 個新 error code(`AUTH_USERNAME_TAKEN` / `AUTH_IDENTIFIER_REQUIRED` / `AUTH_ACCOUNT_DISABLED`);Prisma migration `account_username_and_lifecycle`。spec 008 §3.4 / §4 / §5 同步引用 |
 | 0.5 | 2026-06-15 | §10.1 Account ER box 加 `role`(Int @default(1));新增 §10.10「Account.role 與後台授權」 — 引入 `src/lib/auth/role.ts` const(`ADMIN=0` / `USER=1`)、寫入時機、`requireAdmin` preHandler 規約;§11.1 access JWT claims 加 `role`,refresh path 重新從 DB 讀(避免「中途降權但 access TTL 內仍有效」);後台 = spec 020 §3 的 23 個寫入端點 + spec 018 presign。spec 008 §4.2 同步寫 register 預設 `role=1`;spec 020 §2.3 / §11 / §14 OQ #1 收束 |
-| 0.6 | 2026-06-16 | §7.0 新增「URL versioning compat」— backend 對所有 §7.1-§7.5 端點同時掛 `/auth/*`(canonical)+ `/v1/auth/*`(alias),共用同一個 handler / schema / rate-limit,經 `src/lib/http/v1-alias.ts` `registerWithV1Alias()` helper 落地。背景:spec 015 起 donation domain 採 `/v1/donation/*` 命名,BFF / 外部 caller 逐步改打 `/v1/auth/*` 對齊,本期一律同等接受。不採 308 redirect(POST body 在某些 fetch 實作會在 redirect 後遺失)。spec 008 §8.0 cross-ref 本節。Integration test `auth-v1-alias.test.ts` 對等驗證 |

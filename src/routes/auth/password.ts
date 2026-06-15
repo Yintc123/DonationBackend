@@ -9,7 +9,6 @@ import { Type } from '@sinclair/typebox'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 
 import { ErrorCode, UnauthorizedError } from '../../lib/errors/index.js'
-import { registerWithV1Alias } from '../../lib/http/index.js'
 import { decodeJwtUnsafe } from '../../lib/auth/tokens.js'
 import type { AuthService } from '../../lib/auth/service.js'
 import type { LimitWindow } from '../../lib/rate-limit/index.js'
@@ -62,7 +61,7 @@ export async function registerAuthRoutes(
   const { service } = deps
 
   // ── POST /auth/register (spec §4 / §8.1) ────────────────────────────────
-  registerWithV1Alias<{ Body: RegisterBody }>(app, {
+  app.route<{ Body: RegisterBody }>({
     method: 'POST',
     url: '/auth/register',
     schema: {
@@ -119,7 +118,7 @@ export async function registerAuthRoutes(
   })
 
   // ── POST /auth/login (spec §5 / §8.2) ───────────────────────────────────
-  registerWithV1Alias<{ Body: LoginBody }>(app, {
+  app.route<{ Body: LoginBody }>({
     method: 'POST',
     url: '/auth/login',
     schema: {
@@ -147,7 +146,7 @@ export async function registerAuthRoutes(
   })
 
   // ── POST /auth/password/change (spec §6.1 / §8.3) ───────────────────────
-  registerWithV1Alias<{ Body: ChangePasswordBody }>(app, {
+  app.route<{ Body: ChangePasswordBody }>({
     method: 'POST',
     url: '/auth/password/change',
     schema: {
@@ -181,7 +180,7 @@ export async function registerAuthRoutes(
   })
 
   // ── POST /auth/password/set (spec §6.2 / §8.4) ──────────────────────────
-  registerWithV1Alias<{ Body: SetPasswordBody }>(app, {
+  app.route<{ Body: SetPasswordBody }>({
     method: 'POST',
     url: '/auth/password/set',
     schema: {

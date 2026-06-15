@@ -14,4 +14,3 @@ export {
   type PaginatedEnvelope,
   type PaginatedInput,
 } from './pagination.js'
-export { registerWithV1Alias } from './v1-alias.js'
