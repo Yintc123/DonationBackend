@@ -6,16 +6,16 @@ import { Type, type Static } from '@sinclair/typebox'
 import { paginatedEnvelope } from '../../../../lib/http/index.js'
 import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
 import { parseCategoryKey } from '../../../../domain/category/keys.js'
-import {
-  getDonationProjectById,
-  listDonationProjects,
-} from '../../../../domain/donation-item/index.js'
 import { ProjectDetail } from '../../../../schemas/donation-item/detail.js'
 import { ProjectListResponse } from '../../../../schemas/donation-item/list-item.js'
 import {
   ListQueryWithCharityId,
   type ListQueryWithCharity,
 } from '../../../../schemas/donation-item/shared.js'
+import {
+  getCachedDonationProjectById,
+  listCachedDonationProjects,
+} from '../../../../services/cached-donation-project.js'
 
 import { sendDetail, setI18nHeaders, setNoCache } from '../headers.js'
 
@@ -38,8 +38,10 @@ export async function registerDonationProjectRoutes(app: FastifyInstance): Promi
     handler: async (req, reply) => {
       const locale = parseAcceptLanguage(req.headers['accept-language'])
       const category = parseCategoryKey(req.query.category)
-      const result = await listDonationProjects({
+      const result = await listCachedDonationProjects({
         prisma: app.prisma,
+        redis: app.redis,
+        logger: req.log,
         now: new Date(),
         locale,
         objectUrl: app.objectUrl,
@@ -60,8 +62,10 @@ export async function registerDonationProjectRoutes(app: FastifyInstance): Promi
     },
     handler: async (req, reply) => {
       const locale = parseAcceptLanguage(req.headers['accept-language'])
-      const result = await getDonationProjectById({
+      const result = await getCachedDonationProjectById({
         prisma: app.prisma,
+        redis: app.redis,
+        logger: req.log,
         now: new Date(),
         locale,
         objectUrl: app.objectUrl,

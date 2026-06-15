@@ -6,16 +6,16 @@ import { Type, type Static } from '@sinclair/typebox'
 import { paginatedEnvelope } from '../../../../lib/http/index.js'
 import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
 import { parseCategoryKey } from '../../../../domain/category/keys.js'
-import {
-  getSaleItemById,
-  listSaleItems,
-} from '../../../../domain/donation-item/index.js'
 import { SaleItemDetail } from '../../../../schemas/donation-item/detail.js'
 import { SaleItemListResponse } from '../../../../schemas/donation-item/list-item.js'
 import {
   ListQueryWithCharityId,
   type ListQueryWithCharity,
 } from '../../../../schemas/donation-item/shared.js'
+import {
+  getCachedSaleItemById,
+  listCachedSaleItems,
+} from '../../../../services/cached-sale-item.js'
 
 import { sendDetail, setI18nHeaders, setNoCache } from '../headers.js'
 
@@ -38,8 +38,10 @@ export async function registerSaleItemRoutes(app: FastifyInstance): Promise<void
     handler: async (req, reply) => {
       const locale = parseAcceptLanguage(req.headers['accept-language'])
       const category = parseCategoryKey(req.query.category)
-      const result = await listSaleItems({
+      const result = await listCachedSaleItems({
         prisma: app.prisma,
+        redis: app.redis,
+        logger: req.log,
         now: new Date(),
         locale,
         objectUrl: app.objectUrl,
@@ -60,8 +62,10 @@ export async function registerSaleItemRoutes(app: FastifyInstance): Promise<void
     },
     handler: async (req, reply) => {
       const locale = parseAcceptLanguage(req.headers['accept-language'])
-      const result = await getSaleItemById({
+      const result = await getCachedSaleItemById({
         prisma: app.prisma,
+        redis: app.redis,
+        logger: req.log,
         now: new Date(),
         locale,
         objectUrl: app.objectUrl,

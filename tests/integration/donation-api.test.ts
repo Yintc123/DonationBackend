@@ -342,6 +342,13 @@ describe('GET /v1/donation/donation-projects (spec 016 + cascading visibility)',
 
     await app.prisma.charity.update({ where: { id: c.id }, data: { publishEndAt: future(30) } })
 
+    // Spec 019 §8.3 — when admin PATCH charity, the cascading invalidation
+    // includes the project list cache (cascading visibility). This test
+    // documents the formula side (ADR 006 §3) so we simulate the write-path
+    // DEL here (admin endpoint pending; otherwise TTL 30s would mask renewal).
+    await app.redis.del('cache:proj:list:v1:ALL:ALL:zh-TW')
+    await app.redis.del('cache:proj:list:v1:ALL:ALL:en')
+
     res = await app.inject({ method: 'GET', url: '/v1/donation/donation-projects' })
     expect((res.json() as JsonBody).items.map((i) => i.name)).toContain('reborn project')
   })
@@ -575,6 +582,14 @@ describe('GET /v1/donation/{resource}/:id detail (spec 017)', () => {
 
     // Bump the parent's updatedAt by renaming.
     await app.prisma.charity.update({ where: { id: c.id }, data: { name: 'parent v2' } })
+
+    // Spec 019 §8 — with Redis cache in front, the project detail key is
+    // still serving the pre-update body until TTL expires (60s) or admin
+    // invalidation. This test asserts the ETag *formula* (spec 017 §4.3) —
+    // so we simulate the admin-write invalidation path (spec 019 §8.3) by
+    // deleting both locale variants of the cached project detail key.
+    await app.redis.del(`cache:proj:detail:v1:${p.id}:zh-TW`)
+    await app.redis.del(`cache:proj:detail:v1:${p.id}:en`)
 
     const second = await app.inject({
       method: 'GET',

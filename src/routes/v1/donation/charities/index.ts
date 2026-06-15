@@ -7,16 +7,16 @@ import { paginatedEnvelope } from '../../../../lib/http/index.js'
 import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
 import { parseCategoryKey } from '../../../../domain/category/keys.js'
 import {
-  getCharityById,
-  listCharities,
-} from '../../../../domain/donation-item/index.js'
-import {
   CharityDetail,
 } from '../../../../schemas/donation-item/detail.js'
 import {
   CharityListResponse,
 } from '../../../../schemas/donation-item/list-item.js'
 import { ListQueryBase, type ListQuery } from '../../../../schemas/donation-item/shared.js'
+import {
+  getCachedCharityById,
+  listCachedCharities,
+} from '../../../../services/cached-charity.js'
 
 import { sendDetail, setI18nHeaders, setNoCache } from '../headers.js'
 
@@ -39,8 +39,10 @@ export async function registerCharityRoutes(app: FastifyInstance): Promise<void>
     handler: async (req, reply) => {
       const locale = parseAcceptLanguage(req.headers['accept-language'])
       const category = parseCategoryKey(req.query.category)
-      const result = await listCharities({
+      const result = await listCachedCharities({
         prisma: app.prisma,
+        redis: app.redis,
+        logger: req.log,
         now: new Date(),
         locale,
         objectUrl: app.objectUrl,
@@ -61,8 +63,10 @@ export async function registerCharityRoutes(app: FastifyInstance): Promise<void>
     },
     handler: async (req, reply) => {
       const locale = parseAcceptLanguage(req.headers['accept-language'])
-      const result = await getCharityById({
+      const result = await getCachedCharityById({
         prisma: app.prisma,
+        redis: app.redis,
+        logger: req.log,
         now: new Date(),
         locale,
         objectUrl: app.objectUrl,
