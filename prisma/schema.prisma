@@ -16,16 +16,34 @@ datasource db {
 
 // Spec 007 §10.1 — the canonical "person" in the service.
 // Email is unique and serves as the human-facing identifier.
+//
+// v0.2 (spec 007 §10.2 / spec 008 §5.4) — interactive-login audit columns.
+// `lastLoginAt` / `lastLoginType` set on register, password login, and
+// successful Google exchange (login intent and new-account branches).
+// Refresh, change-password, set-password, link-only intent do NOT touch
+// them (those aren't interactive auth events). Both nullable so existing
+// accounts created pre-v0.2 read as "never logged in" rather than fake-now.
 model Account {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String     @id @default(uuid())
+  email         String     @unique
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  lastLoginAt   DateTime?
+  lastLoginType LoginType?
 
   passwordCredential PasswordCredential?
   googleCredential   GoogleCredential?
 
   @@map("accounts")
+}
+
+// Spec 007 §10.2 — enum for `Account.lastLoginType`. Add new values when
+// a new credential type ships (e.g. Apple, GitHub) — both a schema change
+// AND a migration step. Prefer enum over string for type-safety at the
+// Prisma client surface; the value set is short and rarely changes.
+enum LoginType {
+  PASSWORD
+  GOOGLE
 }
 
 // Spec 008 §4 / spec 007 §10.1 — one PasswordCredential per Account.

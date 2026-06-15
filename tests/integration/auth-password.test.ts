@@ -343,4 +343,115 @@ describe('auth/password integration (spec 008 §13.2)', () => {
       expect(body.code).toBe('AUTH_PASSWORD_ALREADY_SET')
     })
   })
+
+  // ── lastLoginAt / lastLoginType audit (spec 007 §10.2 / spec 008 §5.4) ──
+  describe('Account.lastLogin* audit columns', () => {
+    it('register sets lastLoginAt + lastLoginType=PASSWORD on the new row', async () => {
+      app = await buildAuthApp()
+      const before = Date.now()
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { email: 'kelly@example.com', password: 'register-passwd-9' },
+      })
+      expect(res.statusCode).toBe(201)
+
+      const account = await app.prisma.account.findUnique({
+        where: { email: 'kelly@example.com' },
+      })
+      expect(account?.lastLoginType).toBe('PASSWORD')
+      const ts = account?.lastLoginAt?.getTime() ?? 0
+      expect(ts).toBeGreaterThanOrEqual(before)
+      expect(ts).toBeLessThanOrEqual(Date.now() + 1000)
+    })
+
+    it('login updates lastLoginAt to a newer timestamp (PASSWORD)', async () => {
+      app = await buildAuthApp()
+      await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { email: 'liam@example.com', password: 'first-login-test-1' },
+      })
+      const accountAfterRegister = await app.prisma.account.findUnique({
+        where: { email: 'liam@example.com' },
+      })
+      const tsAfterRegister = accountAfterRegister?.lastLoginAt?.getTime() ?? 0
+      expect(tsAfterRegister).toBeGreaterThan(0)
+
+      // Ensure the next call happens after enough delay that DB precision
+      // (millisecond) can distinguish the two timestamps.
+      await new Promise((r) => setTimeout(r, 10))
+
+      const login = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { email: 'liam@example.com', password: 'first-login-test-1' },
+      })
+      expect(login.statusCode).toBe(200)
+
+      const accountAfterLogin = await app.prisma.account.findUnique({
+        where: { email: 'liam@example.com' },
+      })
+      expect(accountAfterLogin?.lastLoginType).toBe('PASSWORD')
+      const tsAfterLogin = accountAfterLogin?.lastLoginAt?.getTime() ?? 0
+      expect(tsAfterLogin).toBeGreaterThan(tsAfterRegister)
+    })
+
+    it('failed login does NOT update lastLoginAt', async () => {
+      app = await buildAuthApp()
+      await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { email: 'mia@example.com', password: 'correct-passphrase-7' },
+      })
+      const before = await app.prisma.account.findUnique({
+        where: { email: 'mia@example.com' },
+      })
+      const tsBefore = before?.lastLoginAt?.getTime() ?? 0
+
+      await new Promise((r) => setTimeout(r, 10))
+      const bad = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { email: 'mia@example.com', password: 'wrong-passphrase-x' },
+      })
+      expect(bad.statusCode).toBe(401)
+
+      const after = await app.prisma.account.findUnique({
+        where: { email: 'mia@example.com' },
+      })
+      expect(after?.lastLoginAt?.getTime() ?? 0).toBe(tsBefore)
+    })
+
+    it('changePassword does NOT update lastLoginAt (rotation is not a login event)', async () => {
+      app = await buildAuthApp()
+      const reg = await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { email: 'nina@example.com', password: 'original-pw-aaaa1' },
+      })
+      const { accessToken } = reg.json() as TokenBundleResponse
+      const before = await app.prisma.account.findUnique({
+        where: { email: 'nina@example.com' },
+      })
+      const tsBefore = before?.lastLoginAt?.getTime() ?? 0
+
+      await new Promise((r) => setTimeout(r, 10))
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/password/change',
+        headers: { authorization: `Bearer ${accessToken}` },
+        payload: {
+          currentPassword: 'original-pw-aaaa1',
+          newPassword: 'rotated-pw-bbbb22',
+        },
+      })
+      expect(res.statusCode).toBe(200)
+
+      const after = await app.prisma.account.findUnique({
+        where: { email: 'nina@example.com' },
+      })
+      expect(after?.lastLoginAt?.getTime() ?? 0).toBe(tsBefore)
+    })
+  })
 })

@@ -310,11 +310,22 @@ export function createGoogleAuthService(deps: GoogleAuthDeps): GoogleAuthService
         let accountId: string
         if (resolution.action === 'login') {
           accountId = resolution.accountId
+          // Spec 007 §10.2 — successful Google login is an interactive auth
+          // event. Stamp lastLogin so future audits see "last interactive
+          // login was via Google at <ts>". Refresh / link don't touch this.
+          await deps.prisma.account.update({
+            where: { id: accountId },
+            data: { lastLoginAt: new Date(), lastLoginType: 'GOOGLE' },
+          })
         } else {
           // Spec §10.4 — Account + GoogleCredential in one transaction.
+          // Seed lastLogin at create time — register-via-Google IS an
+          // interactive auth event (we issue a bundle below).
           const created = await deps.prisma.account.create({
             data: {
               email: resolution.email,
+              lastLoginAt: new Date(),
+              lastLoginType: 'GOOGLE',
               googleCredential: {
                 create: {
                   externalId: resolution.sub,

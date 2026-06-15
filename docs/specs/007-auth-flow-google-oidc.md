@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.2 |
+| 版本 | 0.3 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/src/routes/auth/*`、`backend/src/lib/auth/*` |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`(BFF 邊界)、`docs/decisions/004-auth-token-strategy.md`(access + refresh) |
@@ -549,6 +549,45 @@ else:
 
 本 §10 描述**形式**(兩層結構 + unique constraint 部位 + 識別流程);**實際**的 column 名、type、index 設計、soft-delete 政策、外鍵 ON DELETE 行為,由資料模型 spec 擁有。本 spec 與 spec 008 引用本節的形式描述。
 
+### 10.8 Interactive-login audit columns(v0.3)
+
+`Account` 上保留兩個 nullable 欄位記錄「最後一次互動式登入」,供 admin / forensic 回溯使用:
+
+| 欄位 | 型別 | 來源 |
+|---|---|---|
+| `lastLoginAt` | `DateTime?` | 寫入時的 `new Date()`(server clock) |
+| `lastLoginType` | enum `LoginType?` (`PASSWORD` / `GOOGLE`) | 觸發 endpoint 對應的 credential type |
+
+#### 觸發規則(寫入 / 不寫入)
+
+| 觸發 | 是否寫入 | 理由 |
+|---|---|---|
+| `POST /auth/register`(spec 008) | ✅ create 時種子 `PASSWORD` | register 同步發 token,等同首次登入,放在同一個 `account.create()` 省一次 round-trip |
+| `POST /auth/login` 成功(spec 008) | ✅ `UPDATE accounts ... type=PASSWORD` 在 `issueBundle` **之前** | 失敗時不留 stale audit(若 issueBundle 失敗,user 重 login 也會修正) |
+| `POST /auth/google/exchange` login intent — existing-account | ✅ `UPDATE ... type=GOOGLE` | 同上 |
+| `POST /auth/google/exchange` login intent — new-account 分支 | ✅ create 時種子 `GOOGLE`(與 GoogleCredential 同 transaction) | 同 register 邏輯 |
+| `POST /auth/google/exchange` link intent(§10.6) | ❌ | caller 已登入(Bearer access-jwt);link 不是新一次登入,不應覆蓋上次 login 紀錄 |
+| `POST /auth/password/change` / `/auth/password/set`(spec 008) | ❌ | credential rotation 不是登入事件 |
+| `POST /auth/refresh` | ❌ | refresh 是 session 延長,不是 interactive auth |
+| `POST /auth/logout` / `/auth/logout-all` | ❌ | 不適用 |
+| 失敗的登入(invalid credentials、account locked、collision、email_unverified)| ❌ | audit 反映「成功 interactive 登入」這個語意 |
+
+#### 設計取捨
+
+- **兩欄都 nullable** — pre-v0.3 既有 account 顯示為「never logged in」,比 backfill 假時間誠實
+- **用 enum 而非 string** — Prisma client 端型別安全;新 credential type(Apple、GitHub)上線時加 enum value + 兩三行 service code 即可
+- **`UPDATE` 而非「順手 select 回來」** — 寫入是 fire-and-forget,對 caller 透明,不擴大 read shape;測試以 `prisma.account.findUnique` 直接驗收
+- **重複寫入容忍** — 同一 transaction 中再 UPDATE 一次(理論上不會發生)是 idempotent 的;PG 也不會抱怨
+
+#### 對未來擴充的影響
+
+新增第三種 credential type(例如 Apple Sign-in):
+1. `enum LoginType { ... APPLE }` migration
+2. Apple service 在「成功 sign-in」與「新建 account」兩處寫入 `lastLoginType=APPLE`
+3. Link 仍維持「caller 已登入,不觸發 lastLogin」原則
+
+不需要動其他既有 endpoint。
+
 ---
 
 ## 11. Token 發放(落實 ADR 004)
@@ -795,3 +834,4 @@ jkod:auth:blacklist:{jti}          STRING "1"
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
 | 0.2 | 2026-06-13 | 引入 Account ↔ Credential identity 模型(§10),供 spec 008(帳密)共用;Google sign-in 邏輯改為查 GoogleCredential,email 衝突走嚴格手動連結(無自動連結);新增 §10.5 連結政策、§10.6 手動連結 Google 流程(`intent=link`);§7 端點規格擴充 intent 區分;§12 新增 4 個錯誤碼(`AUTH_EMAIL_OWNED_BY_OTHER_ACCOUNT` / `AUTH_GOOGLE_ALREADY_LINKED` / `AUTH_CREDENTIAL_EXISTS` / `AUTH_LINK_SESSION_MISMATCH`);§15 新增 6 個 event;§17 更新開放問題(account linking 變成 unlink、email 驗證留作未來);移除「帳密不支援」「account linking 不支援」字眼(已分別由 spec 008 與 §10.6 涵蓋) |
+| 0.3 | 2026-06-15 | §10 加 §10.8 `Account.lastLoginAt` / `lastLoginType` 兩個 audit 欄位(nullable + `LoginType` enum `PASSWORD` / `GOOGLE`);明文寫入 / 不寫入規則 — register / login 成功 / Google exchange login intent 兩條路徑寫入,link intent / change-password / set-password / refresh / logout / 失敗登入皆不寫入。新增 Prisma migration `add_account_last_login` + service 層 `account.update / create` 對應 2 處(`auth/service.ts` register + login,`auth-google/service.ts` existing-account login + new-account 分支)。spec 008 §5.4 同步引用 |

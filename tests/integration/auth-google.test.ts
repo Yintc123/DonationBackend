@@ -280,6 +280,77 @@ describe('auth-google integration (spec 007)', () => {
       const remaining = await app.redis.hgetall(`auth:oauth:${sid}`)
       expect(remaining).toEqual({})
     })
+
+    // ── spec 007 §10.2 / spec 008 §5.4 — lastLogin audit ──
+    it('new-account branch sets lastLoginAt + lastLoginType=GOOGLE', async () => {
+      app = await buildGoogleApp()
+      const { sid, authUrl } = await authorizeInit(app)
+      const nonce = extractAuthParam(authUrl, 'nonce')
+      const state = extractAuthParam(authUrl, 'state')
+      const idToken = google.signIdToken(
+        defaultIdTokenPayload({ nonce, sub: 'sub-audit-new', email: 'new-audit@example.com' }),
+      )
+      google.enqueueTokenResponse(idToken)
+      const before = Date.now()
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/google/exchange',
+        payload: { sid, code: 'authz-code', state },
+      })
+      expect(res.statusCode).toBe(200)
+
+      const account = await app.prisma.account.findUnique({
+        where: { email: 'new-audit@example.com' },
+      })
+      expect(account?.lastLoginType).toBe('GOOGLE')
+      const ts = account?.lastLoginAt?.getTime() ?? 0
+      expect(ts).toBeGreaterThanOrEqual(before)
+      expect(ts).toBeLessThanOrEqual(Date.now() + 1000)
+    })
+
+    it('existing-account login updates lastLoginAt to a newer timestamp (GOOGLE)', async () => {
+      app = await buildGoogleApp()
+      const ancientTs = new Date('2026-01-01T00:00:00.000Z')
+      const seeded = await app.prisma.account.create({
+        data: {
+          email: 'returning-audit@example.com',
+          lastLoginAt: ancientTs,
+          lastLoginType: 'GOOGLE',
+          googleCredential: {
+            create: {
+              externalId: 'sub-audit-returning',
+              email: 'returning-audit@example.com',
+            },
+          },
+        },
+      })
+
+      const { sid, authUrl } = await authorizeInit(app)
+      const nonce = extractAuthParam(authUrl, 'nonce')
+      const state = extractAuthParam(authUrl, 'state')
+      const idToken = google.signIdToken(
+        defaultIdTokenPayload({
+          nonce,
+          sub: 'sub-audit-returning',
+          email: 'returning-audit@example.com',
+        }),
+      )
+      google.enqueueTokenResponse(idToken)
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/google/exchange',
+        payload: { sid, code: 'authz-code', state },
+      })
+      expect(res.statusCode).toBe(200)
+
+      const account = await app.prisma.account.findUnique({
+        where: { id: seeded.id },
+      })
+      expect(account?.lastLoginType).toBe('GOOGLE')
+      expect(account?.lastLoginAt?.getTime() ?? 0).toBeGreaterThan(ancientTs.getTime())
+    })
   })
 
   // ── /exchange error paths (spec §12) ────────────────────────────────────
@@ -446,6 +517,46 @@ describe('auth-google integration (spec 007)', () => {
         where: { externalId: 'sub-to-link' },
       })
       expect(cred?.email).toBe('g-account@example.com')
+    })
+
+    // ── spec 007 §10.2 — link is NOT a login event ──
+    it('link intent does NOT touch lastLoginAt (caller was already logged in via password)', async () => {
+      app = await buildGoogleApp()
+      const tokens = await registerAndGetTokens(app, 'audit-link@example.com', 'pw-link-aud-1')
+      const decoded = decodeJwtUnsafe(tokens.accessToken)
+      const accountId = decoded.sub as string
+
+      const beforeAccount = await app.prisma.account.findUnique({ where: { id: accountId } })
+      const tsBefore = beforeAccount?.lastLoginAt?.getTime() ?? 0
+      expect(beforeAccount?.lastLoginType).toBe('PASSWORD')
+
+      await new Promise((r) => setTimeout(r, 10))
+
+      const { sid, authUrl } = await authorizeInit(app, {
+        intent: 'link',
+        accessToken: tokens.accessToken,
+      })
+      const nonce = extractAuthParam(authUrl, 'nonce')
+      const state = extractAuthParam(authUrl, 'state')
+      const idToken = google.signIdToken(
+        defaultIdTokenPayload({
+          nonce,
+          sub: 'sub-audit-link',
+          email: 'g-audit-link@example.com',
+        }),
+      )
+      google.enqueueTokenResponse(idToken)
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/google/exchange',
+        headers: { authorization: `Bearer ${tokens.accessToken}` },
+        payload: { sid, code: 'c', state },
+      })
+      expect(res.statusCode).toBe(204)
+
+      const afterAccount = await app.prisma.account.findUnique({ where: { id: accountId } })
+      expect(afterAccount?.lastLoginType).toBe('PASSWORD') // unchanged
+      expect(afterAccount?.lastLoginAt?.getTime() ?? 0).toBe(tsBefore)
     })
 
     it('rejects link when the Google sub is already linked to another account (409 AUTH_GOOGLE_ALREADY_LINKED)', async () => {

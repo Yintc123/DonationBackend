@@ -116,9 +116,14 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
       const email = normalizeEmail(input.email)
       const hashed = await hashPassword(input.password, deps.passwordHashOpts)
       try {
+        // Spec 007 §10.2 / spec 008 §5.4 — register IS an interactive auth
+        // event (we issue a token bundle immediately on success), so seed the
+        // audit columns at create time. Avoids a redundant UPDATE round-trip.
         const account = await deps.prisma.account.create({
           data: {
             email,
+            lastLoginAt: new Date(),
+            lastLoginType: 'PASSWORD',
             passwordCredential: {
               create: {
                 hashedPassword: hashed,
@@ -191,6 +196,14 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
           data: { hashedPassword: rehashed, hashAlgo: 'argon2id' },
         })
       }
+
+      // Spec 007 §10.2 / spec 008 §5.4 — successful login is an interactive
+      // auth event. Stamp BEFORE issueBundle so an issueBundle failure
+      // doesn't leave the audit stale; the user retries the whole login.
+      await deps.prisma.account.update({
+        where: { id: account.id },
+        data: { lastLoginAt: new Date(), lastLoginType: 'PASSWORD' },
+      })
 
       await loginLock.reset(email)
       return issueBundle(account.id)
