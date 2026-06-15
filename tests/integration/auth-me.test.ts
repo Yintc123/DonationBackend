@@ -324,6 +324,72 @@ describe('/auth/me — self-service CRUD (spec 008 §6.3-§6.5 v0.4)', () => {
   })
 
   // ── DELETE /auth/me ─────────────────────────────────────────────────────
+  // ── POST /auth/me/archive ───────────────────────────────────────────────
+  describe('POST /auth/me/archive', () => {
+    it('archives the account, revokes refresh tokens, returns 204', async () => {
+      const tokens = await registerAndGetTokens(app, {
+        username: 'goingdormant',
+        password: 'wonder-cricket-99',
+      })
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/me/archive',
+        headers: { authorization: `Bearer ${tokens.accessToken}` },
+      })
+      expect(res.statusCode).toBe(204)
+
+      const stored = await app.prisma.account.findUnique({
+        where: { username: 'goingdormant' },
+      })
+      expect(stored?.archivedAt).not.toBeNull()
+      expect(stored?.deletedAt).toBeNull()
+    })
+
+    it('subsequent /auth/me read is rejected with 401 AUTH_ACCOUNT_DISABLED', async () => {
+      const tokens = await registerAndGetTokens(app, {
+        username: 'archthenread',
+        password: 'wonder-cricket-99',
+      })
+      const archived = await app.inject({
+        method: 'POST',
+        url: '/auth/me/archive',
+        headers: { authorization: `Bearer ${tokens.accessToken}` },
+      })
+      expect(archived.statusCode).toBe(204)
+
+      const read = await app.inject({
+        method: 'GET',
+        url: '/auth/me',
+        headers: { authorization: `Bearer ${tokens.accessToken}` },
+      })
+      expect(read.statusCode).toBe(401)
+      expect((read.json() as ProblemResponse).code).toBe('AUTH_ACCOUNT_DISABLED')
+    })
+
+    it('returns 401 without a bearer token', async () => {
+      const res = await app.inject({ method: 'POST', url: '/auth/me/archive' })
+      expect(res.statusCode).toBe(401)
+    })
+
+    it('returns 401 AUTH_ACCOUNT_DISABLED when already archived (idempotency via the live guard)', async () => {
+      const tokens = await registerAndGetTokens(app, {
+        username: 'twicedormant',
+        password: 'wonder-cricket-99',
+      })
+      await app.prisma.account.update({
+        where: { username: 'twicedormant' },
+        data: { archivedAt: new Date() },
+      })
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/me/archive',
+        headers: { authorization: `Bearer ${tokens.accessToken}` },
+      })
+      expect(res.statusCode).toBe(401)
+      expect((res.json() as ProblemResponse).code).toBe('AUTH_ACCOUNT_DISABLED')
+    })
+  })
+
   describe('DELETE /auth/me', () => {
     it('soft deletes the account and revokes all refresh tokens', async () => {
       const tokens = await registerAndGetTokens(app, {

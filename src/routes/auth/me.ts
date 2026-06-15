@@ -31,6 +31,7 @@ interface PatchMeBody {
 const ME_READ_USER: LimitWindow = { limit: 60, windowMs: 60 * 1000 } // 1/sec
 const ME_PATCH_USER: LimitWindow = { limit: 10, windowMs: 60 * 60 * 1000 } // 10/hour
 const ME_DELETE_USER: LimitWindow = { limit: 3, windowMs: 60 * 60 * 1000 } // 3/hour
+const ME_ARCHIVE_USER: LimitWindow = { limit: 3, windowMs: 60 * 60 * 1000 } // 3/hour
 
 export interface RegisterMeRoutesDeps {
   tokenSecrets: TokenSecrets
@@ -174,6 +175,32 @@ export async function registerMeRoutes(
         'self profile patched',
       )
       return reply.ok(await selectMe(app, accountId))
+    },
+  })
+
+  // ── POST /auth/me/archive ──────────────────────────────────────────────
+  //
+  // Action endpoint (not PATCH on `archivedAt`) so the column never appears
+  // as a settable field on the self-service /me PATCH body. "Archive" is
+  // semantically "shelve me" — admin can later unarchive if/when admin
+  // endpoints exist; from the self-service side it's one-way (no self-
+  // unarchive because login is blocked once archived).
+  app.route({
+    method: 'POST',
+    url: '/auth/me/archive',
+    config: { rateLimit: { perUser: ME_ARCHIVE_USER } },
+    handler: async (req, reply) => {
+      const accountId = await requireLiveAccountId(req, app.prisma, tokenSecrets)
+      await app.prisma.account.update({
+        where: { id: accountId },
+        data: { archivedAt: new Date() },
+      })
+      await refreshStore.revokeAll(accountId)
+      req.log.info(
+        { event: 'auth_me_archived', accountId, audit: true },
+        'self archive',
+      )
+      return reply.noContent()
     },
   })
 
