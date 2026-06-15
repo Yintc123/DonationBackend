@@ -9,10 +9,21 @@ import { HeadObjectCommand } from '@aws-sdk/client-s3'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { Role, signAccessToken } from '../../src/lib/auth/index.js'
 import { objectUrl } from '../../src/lib/s3/index.js'
 import { buildApp } from '../helpers/app.js'
 
 const VALID_UUID = '0e1b41a8-0000-4000-8000-000000000001'
+
+// Spec 020 §14 OQ #11 — presign endpoint requires ADMIN. Mint a real signed
+// access token for one seeded admin account so the auth gate passes.
+async function adminAuth(app: FastifyInstance): Promise<{ authorization: string }> {
+  const account = await app.prisma.account.create({
+    data: { username: 'admin-presign-' + Math.random().toString(36).slice(2, 8), role: Role.ADMIN },
+  })
+  const { token } = await signAccessToken(account.id, app.tokenSecrets, 0)
+  return { authorization: `Bearer ${token}` }
+}
 
 describe('s3 plugin (integration, spec 018 §12)', () => {
   let app: FastifyInstance | undefined
@@ -69,11 +80,29 @@ describe('s3 plugin (integration, spec 018 §12)', () => {
 
   // ── GET /v1/donation/uploads/presign ───────────────────────────────────
 
-  it('GET .../presign → 200 with signed URL pointing at LocalStack (spec 018 §7.2)', async () => {
+  it('GET .../presign → 401 when no admin JWT is supplied (spec 020 §14 OQ #11)', async () => {
     app = await buildApp()
     const res = await app.inject({
       method: 'GET',
       url: '/v1/donation/uploads/presign',
+      query: {
+        entity: 'charities',
+        id: VALID_UUID,
+        purpose: 'logo',
+        contentType: 'image/png',
+        fileSize: '120000',
+      },
+    })
+    expect(res.statusCode).toBe(401)
+  })
+
+  it('GET .../presign → 200 with signed URL pointing at LocalStack (spec 018 §7.2)', async () => {
+    app = await buildApp()
+    const headers = await adminAuth(app)
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/donation/uploads/presign',
+      headers,
       query: {
         entity: 'charities',
         id: VALID_UUID,
@@ -92,9 +121,11 @@ describe('s3 plugin (integration, spec 018 §12)', () => {
 
   it('GET .../presign → 400 VALIDATION_FAILED when fileSize exceeds S3_MAX_UPLOAD_BYTES', async () => {
     app = await buildApp()
+    const headers = await adminAuth(app)
     const res = await app.inject({
       method: 'GET',
       url: '/v1/donation/uploads/presign',
+      headers,
       query: {
         entity: 'charities',
         id: VALID_UUID,
@@ -110,9 +141,11 @@ describe('s3 plugin (integration, spec 018 §12)', () => {
 
   it('GET .../presign → 400 schema rejection for non-whitelisted contentType (PDF)', async () => {
     app = await buildApp()
+    const headers = await adminAuth(app)
     const res = await app.inject({
       method: 'GET',
       url: '/v1/donation/uploads/presign',
+      headers,
       query: {
         entity: 'charities',
         id: VALID_UUID,
@@ -126,9 +159,11 @@ describe('s3 plugin (integration, spec 018 §12)', () => {
 
   it('GET .../presign → 400 schema rejection when id is not a UUID', async () => {
     app = await buildApp()
+    const headers = await adminAuth(app)
     const res = await app.inject({
       method: 'GET',
       url: '/v1/donation/uploads/presign',
+      headers,
       query: {
         entity: 'charities',
         id: '../etc/passwd',
@@ -142,12 +177,16 @@ describe('s3 plugin (integration, spec 018 §12)', () => {
 
   it('GET .../presign exercises the 200 path with a stubbed entity check, asserting body + Cache-Control header (spec 018 §7.2)', async () => {
     app = await buildApp()
+    const headers = await adminAuth(app)
 
     // Spec 015 (donation prisma model) has not landed yet — `app.prisma`
     // has no `charity` delegate, so `ensureEntityExists` (domain/uploads/
     // check-entity.ts) returns 404 for any id. Stub the delegate inline so
     // we can exercise the 200 path and lock in the response contract.
     // When spec 015 ships, this stub becomes a real seeded charity row.
+    // NOTE: this stub also short-circuits the account lookup that requireAdmin
+    // does — adminAuth seeded a real account row above, so requireAdmin sees
+    // the live account before this stub kicks in for the charity lookup.
     ;(app.prisma as unknown as Record<string, unknown>).charity = {
       findUnique: async ({ where }: { where: { id: string } }) =>
         where.id === VALID_UUID ? { id: VALID_UUID } : null,
@@ -156,6 +195,7 @@ describe('s3 plugin (integration, spec 018 §12)', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/v1/donation/uploads/presign',
+      headers,
       query: {
         entity: 'charities',
         id: VALID_UUID,

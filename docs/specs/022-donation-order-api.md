@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.7 |
+| 版本 | 0.8 |
 | 日期 | 2026-06-15 |
 | 適用範圍 | `backend/src/routes/v1/donation/orders/*`(新)、`backend/src/routes/v1/admin/orders/*`(新)、`backend/src/domain/order/*`(spec 021 共享)、`backend/src/lib/clock.ts`(spec 021 §7.7 共享) |
 | 相關 ADR | 待補 |
@@ -443,9 +443,7 @@ Body {
 }
 
 錯誤:
-  400 VALIDATION_FAILED
-  400 ORDER_LINES_REQUIRED     items 為空
-  400 ORDER_TOO_MANY_LINES     items 長度 > 1(本期)
+  400 VALIDATION_FAILED        items 為空 / 長度 > 1 / shape 錯(由 TypeBox `minItems: 1, maxItems: 1` 覆蓋,v0.8)
   404 SALE_ITEM_NOT_FOUND      saleItemId 不存在或非 live
 ```
 
@@ -687,7 +685,7 @@ Body {
 | `donationFrequency=RECURRING` 沒帶 `billingDay` | INVALID_BILLING_DAY(400) |
 | `donationFrequency=ONE_TIME` 帶了 `billingDay` | 同上 |
 | FK lookup 失敗 | *_NOT_FOUND(404) |
-| `items` 長度 > 1 | ORDER_TOO_MANY_LINES(400) |
+| `items` 長度錯誤(0 或 > 1)| TypeBox `minItems: 1, maxItems: 1` 直接 reject(v0.8) → `VALIDATION_FAILED`;service 層不重檢 |
 | Status transition 不合法 | ORDER_STATUS_INVALID(409) |
 | `note` 為空字串或全空白(v0.4,v0.7 釐清落點)| **service 層** trim:`const trimmed = body.note?.trim(); const note = trimmed === '' || trimmed == null ? null : trimmed`。TypeBox 不擋空字串(允許 `Type.String({ maxLength: 500 })` minLength 預設 0);避免 `""` 與 `null` 兩種「無備注」狀態並存 |
 | `isAnonymous` 省略(v0.7)| **service 層** fallback `body.isAnonymous ?? false`;**不**依賴 Ajv `useDefaults`(降低設定依賴 + 行為對 TDD 一目了然) |
@@ -712,10 +710,10 @@ Body {
 | Code | HTTP | 場景 |
 |---|---|---|
 | `INVALID_BILLING_DAY` | 400 | RECURRING 沒選 billingDay,或 ONE_TIME 給了 |
-| `ORDER_LINES_REQUIRED` | 400 | SALE_ITEM_PURCHASE 沒帶 items 或空陣列 |
-| `ORDER_TOO_MANY_LINES` | 400 | items / lines 長度 > 本期上限(1) |
 | `ORDER_NOT_FOUND` | 404 | orderId 不存在 |
 | `ORDER_STATUS_INVALID` | 409 | confirm / cancel 起始 status 錯,或 admin PATCH 違反 |
+
+> **v0.8 spec drift 修正**:`ORDER_LINES_REQUIRED` / `ORDER_TOO_MANY_LINES`(v0.2 引入)實際上**從未需要落地** — TypeBox `items.length min=max=1`(spec §4.3 / §5.1)在 route 層直接 reject 成 `VALIDATION_FAILED`。為避免規格 / code 漂移,從表格與規約移除這兩個 code 編號。
 
 沿用既有:`VALIDATION_FAILED`、`CHARITY_NOT_FOUND`、`DONATION_PROJECT_NOT_FOUND`、`SALE_ITEM_NOT_FOUND`、`FORBIDDEN`。
 
@@ -881,3 +879,4 @@ Body {
 | 0.5 | 2026-06-15 | 根據 IMG_4888 / 4889 / 4890「確認捐款資訊」頁補:(1) `isAnonymous`(三類訂單共用,Boolean default false);(2) `receiptOption`(CHARITY/PROJECT 必填,5 enum 值,SALE_ITEM 不接受 → 400 `RECEIPT_OPTION_NOT_APPLICABLE`);(3) `nextChargeAt`(RECURRING derived,backend 算 + 存,non-PATCHable)。§4.1 / §4.3 body + response 範例擴;§4.1 TypeBox 補;§4.2 補 project response 含 `donationProject + parent charity` inflate(IMG_4889);§4.3 補 SaleItem response 含 `saleItem + parent charity` inflate(IMG_4890);§4.7 admin filter 加 `?isAnonymous=` `?receiptOption=`;§4.9 admin PATCH 允許 `isAnonymous` / `receiptOption`(SALE_ITEM 限);§5.1 / §5.2 補對應約束;§7 補 1 新 error code;§10 +8 test case。對應 spec 021 v0.5 |
 | 0.6 | 2026-06-15 | 收尾「足夠開發」的最後 4 個細節:(1) §4.1 補完整 **Response TypeBox 樣板**(`OrderResponse` / `OrderLineResponse` / `InflatedCharity` / `InflatedDonationProject` / `InflatedSaleItem`)+ Fastify route 註冊範例;(2) §4.1 鎖 **inflated subject 欄位範圍**(對齊 IMG_4888-4890 最小集,不含 spec 017 detail 全欄;附理由表);(3) §4.6 補 **`isAnonymous` 對 response 的影響** — backend 一律回原樣,masking 責任在 BFF / UI;(4) 對應 spec 021 v0.6 §7.7 補 `nextChargeAt` 不重算規約 |
 | 0.7 | 2026-06-15 | 補 6 個最佳實踐落點(回應「足夠開發?」review):(1) §4.0 共通慣例 + §5.1 規約 **所有 request body `Type.Object` 設 `additionalProperties: false`**(strict mode,拒未宣告欄位);(2) §4.0 + spec 021 §7.7 規範 **Clock 注入**:service 接收 `deps.clock: () => Date`,production 從 Fastify decorator,test 用 `vi.useFakeTimers` / fixed Date;(3) §4.7 補 **admin list inflate 行為** — 與 detail 同 shape,Prisma 一次 `include` 帶 charity/project/saleItem 避 N+1,logoKey → logoUrl batch 過 spec 018;(4) §5.2 釐清 **`isAnonymous` 缺值 service 層 fallback `false`**(不依賴 Ajv `useDefaults`);(5) §5.2 釐清 **`note` trim 落點 = service 層**;(6) §2.1 風險表補 **cancel endpoint 風險**(任何拿 orderId 者可 cancel,本期接受 UUID 視同擁有者,未來改 manageToken)。**移除** `RECEIPT_OPTION_NOT_APPLICABLE` error code(v0.5 加,v0.7 改由 schema 層擋成 `VALIDATION_FAILED`,避免雙層校驗);§10 新加 3 個 integration test case(unknown property / clock 邊界 / admin list inflate)。對應 spec 021 v0.7 |
+| 0.8 | 2026-06-15 | spec drift 收斂(回應「規格 vs code 對齊」audit):**移除** `ORDER_LINES_REQUIRED` / `ORDER_TOO_MANY_LINES` error code(v0.2 加但從未實作 — TypeBox `items: { minItems: 1, maxItems: 1 }` 已涵蓋 → `VALIDATION_FAILED`)。§4.3 sale-item-purchase 錯誤段、§5.2 service 層 rule 表、§7 error code 表三處同步更新;對應 backend codes.ts 從未定義這兩個 code,本版本是消除規格與 code 漂移的純文件改動 |

@@ -12,6 +12,7 @@
 import type { FastifyInstance } from 'fastify'
 
 import { ensureEntityExists } from '../../../../domain/uploads/check-entity.js'
+import { requireAdmin } from '../../../../lib/auth/index.js'
 import {
   assertContentLength,
   buildKey,
@@ -53,6 +54,12 @@ export async function registerPresignUploadRoute(app: FastifyInstance): Promise<
       },
     },
     handler: async (req, reply) => {
+      // Spec 020 §14 OQ #11 — admin gate. Only ADMIN accounts have a
+      // reason to upload donation imagery (logos / cover photos for the
+      // entities they manage). Same fail-safe semantics as the spec 020 §5
+      // write endpoints: 401 on missing / expired JWT, 401 on disabled
+      // account, 403 on role !== Role.ADMIN.
+      await requireAdmin(req, app.prisma, app.tokenSecrets)
       const { entity, id, purpose, contentType, fileSize } = req.query
 
       assertContentLength(fileSize, app.s3Config.maxUploadBytes)
