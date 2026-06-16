@@ -222,4 +222,66 @@ describe('corsPlugin', () => {
       expect(res.headers['access-control-allow-origin']).toBeUndefined()
     })
   })
+
+  describe('wildcard mode — CORS_ORIGIN=* (spec 012 §3.2 v0.2)', () => {
+    beforeEach(async () => {
+      app = await buildAppWithCors({
+        CORS_ORIGIN: '*',
+        CORS_PREFLIGHT_MAX_AGE_SEC: 600,
+      })
+    })
+
+    it('preflight emits Access-Control-Allow-Origin: * for any origin', async () => {
+      const res = await app.inject({
+        method: 'OPTIONS',
+        url: '/ping',
+        headers: {
+          origin: 'https://random-site.example',
+          'access-control-request-method': 'GET',
+        },
+      })
+      expect(res.statusCode).toBe(204)
+      expect(res.headers['access-control-allow-origin']).toBe('*')
+    })
+
+    it('preflight does NOT advertise credentials in wildcard mode (W3C forbids combo)', async () => {
+      const res = await app.inject({
+        method: 'OPTIONS',
+        url: '/ping',
+        headers: {
+          origin: 'https://random-site.example',
+          'access-control-request-method': 'GET',
+        },
+      })
+      expect(res.headers['access-control-allow-credentials']).toBeUndefined()
+    })
+
+    it('actual request emits Allow-Origin: * for any origin', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/ping',
+        headers: { origin: 'https://different-site.example' },
+      })
+      expect(res.statusCode).toBe(200)
+      expect(res.headers['access-control-allow-origin']).toBe('*')
+    })
+
+    it('still advertises the spec-mandated allowedHeaders so Idempotency-Key passes', async () => {
+      const res = await app.inject({
+        method: 'OPTIONS',
+        url: '/ping',
+        headers: {
+          origin: 'https://random-site.example',
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'content-type,authorization,idempotency-key',
+        },
+      })
+      const allowed = String(res.headers['access-control-allow-headers'] ?? '')
+        .split(',')
+        .map((h) => h.trim().toLowerCase())
+      expect(allowed).toEqual(
+        expect.arrayContaining(['content-type', 'authorization', 'idempotency-key']),
+      )
+    })
+  })
 })

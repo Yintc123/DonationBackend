@@ -9,4 +9,8 @@
 
 export { corsPlugin } from './cors.js'
 export { helmetPlugin } from './helmet.js'
-export { CorsOriginConfigError, parseCorsOrigin } from './parse-origin.js'
+export {
+  CorsOriginConfigError,
+  parseCorsOrigin,
+  type CorsOriginConfig,
+} from './parse-origin.js'

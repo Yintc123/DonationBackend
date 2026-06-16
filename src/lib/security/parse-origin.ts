@@ -1,13 +1,23 @@
 // Spec 012 §3.1 / §3.3 — CORS_ORIGIN parser.
 //
-// The raw env value is a comma-separated list. We:
-//   - trim each entry,
-//   - drop empties,
-//   - dedupe,
-//   - reject the literal "*" (spec 012 §3.2 — wildcard + credentials forbidden).
+// Two output modes:
 //
-// Result is a stable array preserving first-occurrence order. The caller
-// (cors plugin) turns this into a Set + per-request exact match.
+//   { mode: 'allowlist', origins: string[] }
+//     The default. Each request's Origin header is compared against the
+//     list; matches get Access-Control-Allow-Origin echoed back, others
+//     receive no header. Compatible with `credentials: true`.
+//
+//   { mode: 'wildcard' }
+//     `CORS_ORIGIN` contains `*`. The cors plugin will set
+//     `Access-Control-Allow-Origin: *` and force `credentials: false`
+//     (W3C forbids `*` + credentials). Safe for this backend because
+//     auth runs through Bearer tokens in the Authorization header
+//     rather than cookies, so the credentials downgrade doesn't break
+//     authenticated calls — JS still attaches Bearer manually.
+//
+// Wildcard wins when mixed with named origins: the result type is a
+// single-mode discriminated union so callers can't fall through both
+// branches by accident.
 
 export class CorsOriginConfigError extends Error {
   constructor(message: string) {
@@ -16,29 +26,35 @@ export class CorsOriginConfigError extends Error {
   }
 }
 
-export function parseCorsOrigin(raw: string): string[] {
+export type CorsOriginConfig =
+  | { mode: 'allowlist'; origins: string[] }
+  | { mode: 'wildcard' }
+
+export function parseCorsOrigin(raw: string): CorsOriginConfig {
   const seen = new Set<string>()
-  const result: string[] = []
+  const origins: string[] = []
+  let wildcard = false
 
   for (const part of raw.split(',')) {
     const trimmed = part.trim()
     if (trimmed === '') continue
     if (trimmed === '*') {
-      throw new CorsOriginConfigError(
-        'CORS_ORIGIN must not contain the wildcard "*" (spec 012 §3.2)',
-      )
+      wildcard = true
+      continue
     }
     if (!seen.has(trimmed)) {
       seen.add(trimmed)
-      result.push(trimmed)
+      origins.push(trimmed)
     }
   }
 
-  if (result.length === 0) {
+  if (wildcard) return { mode: 'wildcard' }
+
+  if (origins.length === 0) {
     throw new CorsOriginConfigError(
       'CORS_ORIGIN must list at least one origin (spec 012 §3.1)',
     )
   }
 
-  return result
+  return { mode: 'allowlist', origins }
 }

@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.1 |
+| 版本 | 0.2 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/src/plugins/cors.ts`、`backend/src/plugins/helmet.ts`、`backend/src/plugins/trust-proxy.ts` |
 | 相關 ADR | `docs/decisions/002-backend-framework.md` |
@@ -66,21 +66,26 @@
 
 ### 3.1 設定值
 
-| 項目 | 值 | 說明 |
-|---|---|---|
-| `origin` | 由 `CORS_ORIGIN` 環境變數提供,逗號分隔多筆;**禁用** `*` 通配 | spec 001 §3.6 |
-| `credentials` | `true` | BFF 經 fetch 帶 cookie / Authorization 時必須 |
-| `methods` | `GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD` | 不含 `TRACE` / `CONNECT` |
-| `allowedHeaders` | `Content-Type, Authorization, Idempotency-Key, X-Request-Id` | 各 header 來源見 spec 005/007/009 |
-| `exposedHeaders` | `X-Request-Id, Location, ETag, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-RateLimit-Layer` | 對齊 spec 009/010 |
-| `maxAge` | `600`(10 分鐘) | preflight 快取 |
-| `optionsSuccessStatus` | `204` | 明確 204 |
+| 項目 | 值(allowlist 模式) | 值(wildcard 模式) | 說明 |
+|---|---|---|---|
+| `origin` | `CORS_ORIGIN` 逗號分隔清單 | `CORS_ORIGIN=*`(或清單含 `*`) | spec 001 §3.6;parser 由 `*` 切換模式 |
+| `credentials` | `true` | **`false`**(W3C 禁止 `*` + credentials)| auth 走 Bearer,credentials 關閉**不**影響 Authorization 傳遞 |
+| `methods` | `GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD`(兩模式相同)| | 不含 `TRACE` / `CONNECT` |
+| `allowedHeaders` | `Content-Type, Authorization, Idempotency-Key, X-Request-Id`(兩模式相同)| | 各 header 來源見 spec 005/007/009 |
+| `exposedHeaders` | `X-Request-Id, Location, ETag, Retry-After, X-RateLimit-*`(兩模式相同)| | 對齊 spec 009/010 |
+| `maxAge` | `CORS_PREFLIGHT_MAX_AGE_SEC`(兩模式相同)| | preflight 快取 |
+| `optionsSuccessStatus` | `204`(兩模式相同)| | 明確 204 |
 
-### 3.2 為什麼禁 `*`
+### 3.2 Wildcard 政策(v0.2 修訂)
 
-- `Access-Control-Allow-Origin: *` 與 `Access-Control-Allow-Credentials: true` **不能共存**(W3C 規範)
-- 本服務一律帶 credentials → `*` 不可用
-- 即使可用,wildcard 在 prod 等於放棄 CORS 保護,**不允許**
+W3C 規定 `Access-Control-Allow-Origin: *` 與 `Access-Control-Allow-Credentials: true` **不能共存**。原 v0.1 因 `credentials: true` 是定值,直接全面禁用 `*`。v0.2 改為:
+
+- `CORS_ORIGIN=*`(或清單內含 `*`)→ **wildcard 模式**,parser 不丟錯;cors plugin 改設 `credentials: false`
+- 安全前提:本服務 auth 全走 `Authorization: Bearer <token>`(JS 主動掛載),**不**用 cookie。Bearer 不受 credentials 模式管;wildcard 模式只切斷 cookie 自動跨域帶送,業務認證仍 work
+- 啟動時 log warn `event: cors_wildcard_mode`,讓 ops / log aggregator 一眼看到目前是 open 狀態
+- prod 不**鼓勵**用 wildcard,但作業 / demo 場景(無固定 BFF domain)接受;若日後改 cookie session,需先回到 allowlist 模式
+
+混合 `*` 與具體 origin(`http://a.com,*`)時 wildcard 直接 win,parser 不報錯但實際行為就是 open。
 
 ### 3.3 多 origin 設定
 
@@ -384,7 +389,7 @@ X-Forwarded-For: 127.0.0.1
 
 ### 13.1 常見錯誤(本 spec 已防範)
 
-1. **`origin: '*'` + credentials**:CORS spec 不允許;本 spec §3.2 禁用 `*`
+1. **`origin: '*'` + credentials**:CORS spec 不允許;本 spec §3.2 v0.2 在 wildcard 模式自動關 `credentials: false`,避免組合落地
 2. **`trustProxy: true`**:信任所有 proxy → IP 偽造;本 spec §6.2 禁用
 3. **HSTS 設 `preload` 但 domain 未準備好**:有去除困難;本 spec §7.2 預設關閉
 4. **`X-Frame-Options: SAMEORIGIN` 對純 API 過寬**:本 spec §4.1 升 `DENY`
@@ -414,3 +419,4 @@ X-Forwarded-For: 127.0.0.1
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
+| 0.2 | 2026-06-16 | §3.1 / §3.2 wildcard 政策修訂:`CORS_ORIGIN=*` 不再啟動 fail,parser 切換 cors plugin 為 **wildcard 模式**(`origin: '*'`、`credentials: false`)。前提:本服務 auth 走 Bearer(無 cookie),credentials 關閉不影響業務認證。啟動時 log warn `cors_wildcard_mode`。混合 `*` 與具體 origin → wildcard 直接 win。對應 backend `parse-origin.ts` / `cors.ts` 重構,新增 5 個 wildcard 模式單測;§13.1 第 1 條同步修文 |
