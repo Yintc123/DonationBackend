@@ -34,11 +34,19 @@ const FlushRedisResponse = Type.Object({
 
 // Spec 025 §3.1.2 — deliberately low. Real ops use is rare; hot calls
 // signal a runaway script or panic-loop and should be throttled.
+//
+// Two-layer budget:
+//   - purpose (per-user): 6/h — caps a single operator
+//   - perIp:              12/h — caps a NAT'd office sharing one egress IP
+// (perUser would also fit here, but per-user authentication is admin-only
+//  and the purpose layer is more semantically precise for "this action".)
+const HOUR_MS = 60 * 60 * 1000
 const FLUSH_REDIS_PURPOSE = {
   name: 'system-flush-redis',
   limit: 6,
-  windowMs: 60 * 60 * 1000,
+  windowMs: HOUR_MS,
 }
+const FLUSH_REDIS_PER_IP = { limit: 12, windowMs: HOUR_MS }
 
 export async function registerFlushRedisRoute(app: FastifyInstance): Promise<void> {
   app.route<{ Body: FlushRedisBodyT }>({
@@ -48,7 +56,7 @@ export async function registerFlushRedisRoute(app: FastifyInstance): Promise<voi
       body: FlushRedisBody,
       response: { 200: FlushRedisResponse },
     },
-    config: { rateLimit: { purposes: [FLUSH_REDIS_PURPOSE] } },
+    config: { rateLimit: { perIp: FLUSH_REDIS_PER_IP, purposes: [FLUSH_REDIS_PURPOSE] } },
     handler: async (req, reply) => {
       const accountId = req.user!.sub
 
