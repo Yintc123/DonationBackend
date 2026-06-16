@@ -8,6 +8,13 @@
 import type { FastifyPluginAsync, FastifyReply } from 'fastify'
 import fp from 'fastify-plugin'
 
+import { UnsupportedMediaTypeError } from '../errors/AppError.js'
+import {
+  BODY_METHODS,
+  isAcceptable,
+  isJsonContentType,
+  requestHasBody,
+} from './content-negotiation.js'
 import { type PaginatedEnvelope, type PaginatedInput, paginatedEnvelope } from './pagination.js'
 import { HttpStatus } from './status.js'
 
@@ -62,6 +69,39 @@ const httpResponsePlugin: FastifyPluginAsync = async (fastify) => {
   fastify.decorateReply('paginated', function (this: FastifyReply, input: PaginatedInput<unknown>) {
     const envelope: PaginatedEnvelope<unknown> = paginatedEnvelope(input)
     return this.status(HttpStatus.OK).send(envelope)
+  })
+
+  // Spec 009 §9 — content negotiation guard.
+  //
+  //   §9.1 Accept       — caller must accept JSON (anything goes if absent).
+  //   §9.2 Content-Type — body-bearing POST/PUT/PATCH MUST be application/json.
+  //
+  // Skipped for /health/* (no body methods anyway; keeps probes simple per
+  // spec 011 §8) and for OPTIONS preflight (handled by @fastify/cors).
+  fastify.addHook('onRequest', async (request) => {
+    if (request.method === 'OPTIONS') return
+    if (request.url === '/health' || request.url.startsWith('/health/')) return
+
+    if (!isAcceptable(request.headers.accept)) {
+      // Spec §9.1 — 415 because we cannot produce a body the client will
+      // accept (RFC 9110 §15.5.16). UNSUPPORTED_MEDIA_TYPE is the same code
+      // §9.2 uses; the response code disambiguates by carrying the offending
+      // header name in details.
+      throw new UnsupportedMediaTypeError({
+        message: 'Accept header does not include application/json',
+        details: { header: 'Accept' },
+      })
+    }
+
+    if (BODY_METHODS.has(request.method) && requestHasBody(request.headers)) {
+      const ct = request.headers['content-type']
+      if (!isJsonContentType(ct)) {
+        throw new UnsupportedMediaTypeError({
+          message: 'Content-Type must be application/json',
+          details: { header: 'Content-Type' },
+        })
+      }
+    }
   })
 
   // Spec 009 §6.1 — X-Request-Id on every response, aligned with spec 004 §6.3
