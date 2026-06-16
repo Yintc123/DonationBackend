@@ -12,7 +12,9 @@ const InflatedCategory = Type.Object({
   displayName: Type.String(),
 })
 
-const NestedCharity = Type.Object({
+// Exported so admin list-item shapes (spec 026 §5.2.1 / §5.3.1) can reuse
+// the exact same nested-charity contract as the public detail shapes.
+export const NestedCharity = Type.Object({
   id: Type.String(),
   name: Type.String(),
   logoUrl: Type.Union([Type.String(), Type.Null()]),

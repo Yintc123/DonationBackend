@@ -40,3 +40,37 @@ export const ListQueryWithCharityId = Type.Intersect([
 ])
 
 export type ListQueryWithCharity = Static<typeof ListQueryWithCharityId>
+
+// Spec 026 §5.1.1 — admin list query.
+//
+// Mostly the same fields as the public list query but:
+//   - `limit` cap is 100 (admin UI v0.1 fetches the whole table per page),
+//     vs. the public 50 driven by Figma's infinite-scroll cadence
+//   - adds two lifecycle toggles (`includeArchived` / `includeDeleted`);
+//     both default to false → admin sees `archivedAt IS NULL AND
+//     deletedAt IS NULL` (publish window ignored, see spec 026 §2.3)
+//
+// Defined as a fresh Type.Object rather than Type.Intersect over the
+// public base so the admin limit cap isn't shadowed by the public AND
+// constraint (Ajv would reject `?limit=100` against the public max=50).
+export const AdminListQuery = Type.Object({
+  q: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+  category: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
+  cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 1024 })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, default: 20 })),
+  includeArchived: Type.Optional(Type.Boolean()),
+  includeDeleted: Type.Optional(Type.Boolean()),
+})
+
+export const AdminListQueryWithCharityId = Type.Object({
+  q: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+  category: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
+  cursor: Type.Optional(Type.String({ minLength: 1, maxLength: 1024 })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, default: 20 })),
+  includeArchived: Type.Optional(Type.Boolean()),
+  includeDeleted: Type.Optional(Type.Boolean()),
+  charityId: Type.Optional(Type.String({ pattern: UUID_V4_PATTERN })),
+})
+
+export type AdminListQueryT = Static<typeof AdminListQuery>
+export type AdminListQueryWithCharityT = Static<typeof AdminListQueryWithCharityId>

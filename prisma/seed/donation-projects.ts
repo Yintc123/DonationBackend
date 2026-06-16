@@ -16,6 +16,10 @@ const REF = new Date('2026-06-14T12:00:00.000Z')
 const past = (days: number): Date => new Date(REF.getTime() - days * 86_400_000)
 const future = (days: number): Date => new Date(REF.getTime() + days * 86_400_000)
 
+// 預設「目前上架中」視窗 — 所有 project 一律塞入此範圍。
+const DEFAULT_PUBLISH_START = past(30)
+const DEFAULT_PUBLISH_END = future(365)
+
 interface ProjectTemplate {
   name: string
   description: string
@@ -141,20 +145,6 @@ const TEMPLATES: readonly ProjectTemplate[] = [
   },
 ] as const
 
-interface ScheduleOverride {
-  publishStartAt?: Date
-  publishEndAt?: Date
-}
-
-// Three-state publish schedule demos: one future, one past, one explicit
-// "live now" with both bounds set. Distributed in the first 6 generated rows.
-const SCHEDULE_BY_INDEX: Record<number, ScheduleOverride> = {
-  // index 0: 預設「永久上架」(無 publishStart/End)
-  1: { publishStartAt: past(30), publishEndAt: future(60) }, // 募款進行中
-  2: { publishStartAt: future(14) },                          // 預售中 / 募款未開始
-  3: { publishEndAt: past(5) },                               // 募款已結束
-}
-
 export async function seedDonationProjects(
   prisma: PrismaClient,
   charities: SeededCharity[],
@@ -178,8 +168,7 @@ export async function seedDonationProjects(
   for (let cycle = 0; cycle < 3; cycle += 1) {
     for (const tpl of TEMPLATES) {
       const charity = liveCharities[idx % liveCharities.length]!
-      const schedule = SCHEDULE_BY_INDEX[idx] ?? {}
-      await createProject(prisma, charity.id, tpl, schedule, cycle, uploadAsset)
+      await createProject(prisma, charity.id, tpl, cycle, uploadAsset)
       idx += 1
     }
     // One extra under the cascade-demo charity per cycle.
@@ -187,7 +176,6 @@ export async function seedDonationProjects(
       prisma,
       cascadeDemoCharity.id,
       TEMPLATES[cycle % TEMPLATES.length]!,
-      {},
       cycle + 100,
       uploadAsset,
     )
@@ -198,7 +186,6 @@ async function createProject(
   prisma: PrismaClient,
   charityId: string,
   tpl: ProjectTemplate,
-  schedule: ScheduleOverride,
   uniqueIdx: number,
   uploadAsset: (key: string) => Promise<void>,
 ): Promise<void> {
@@ -213,8 +200,8 @@ async function createProject(
       contentEn: tpl.contentEn,
       raisingApprovalNo: tpl.raisingApprovalNo,
       reliefApprovalNo: tpl.reliefApprovalNo,
-      publishStartAt: schedule.publishStartAt,
-      publishEndAt: schedule.publishEndAt,
+      publishStartAt: DEFAULT_PUBLISH_START,
+      publishEndAt: DEFAULT_PUBLISH_END,
     },
   })
 

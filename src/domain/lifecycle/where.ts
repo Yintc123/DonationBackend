@@ -53,3 +53,36 @@ export function whereLiveWithParent(now: Date) {
     charity: { is: whereLive(now) },
   }
 }
+
+/**
+ * Spec 026 §2.3 / spec 015 §3.3 v0.9 — admin-side lifecycle filter.
+ *
+ * Default (`{ includeArchived: false, includeDeleted: false }`) returns the
+ * "in-progress" row set (`archivedAt IS NULL AND deletedAt IS NULL`) —
+ * exactly the public liveness set minus the publish-window predicates.
+ *
+ * `publishStartAt` / `publishEndAt` are deliberately NOT applied: the
+ * publish window is a scheduling mechanism, not a lifecycle state, and
+ * admins must be able to list / edit rows that are scheduled for the
+ * future or that have already come down.
+ *
+ * Toggling either flag drops the corresponding predicate; toggling both
+ * returns `{}` (the full table). Cascading visibility is intentionally NOT
+ * applied — admins inspecting an archived charity's still-active project
+ * is a legitimate workflow (parent state is signalled separately via the
+ * `parentCharity*At` hints on the admin Project / SaleItem detail shape).
+ *
+ * Returns a fresh literal — mutating the result does not leak across
+ * callers.
+ */
+export interface AdminLifecycleFilter {
+  includeArchived: boolean
+  includeDeleted: boolean
+}
+
+export function whereForAdmin(opts: AdminLifecycleFilter) {
+  const where: { archivedAt?: null; deletedAt?: null } = {}
+  if (!opts.includeArchived) where.archivedAt = null
+  if (!opts.includeDeleted) where.deletedAt = null
+  return where
+}

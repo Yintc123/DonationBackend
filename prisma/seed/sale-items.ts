@@ -15,6 +15,10 @@ const REF = new Date('2026-06-14T12:00:00.000Z')
 const past = (days: number): Date => new Date(REF.getTime() - days * 86_400_000)
 const future = (days: number): Date => new Date(REF.getTime() + days * 86_400_000)
 
+// 預設「目前上架中」視窗 — 所有 sale-item 一律塞入此範圍。
+const DEFAULT_PUBLISH_START = past(30)
+const DEFAULT_PUBLISH_END = future(365)
+
 interface ItemTemplate {
   name: string
   description: string
@@ -159,18 +163,6 @@ const TEMPLATES: readonly ItemTemplate[] = [
   },
 ] as const
 
-interface ScheduleOverride {
-  publishStartAt?: Date
-  publishEndAt?: Date
-}
-
-// Three-state publish demos for SaleItem: 限時開賣 / 預售 / 已下架.
-const SCHEDULE_BY_INDEX: Record<number, ScheduleOverride> = {
-  1: { publishStartAt: past(15), publishEndAt: future(30) }, // 上架中(有界)
-  2: { publishStartAt: future(7) },                          // 預售
-  3: { publishEndAt: past(3) },                              // 已下架
-}
-
 export async function seedSaleItems(
   prisma: PrismaClient,
   charities: SeededCharity[],
@@ -189,8 +181,7 @@ export async function seedSaleItems(
   for (let cycle = 0; cycle < 3; cycle += 1) {
     for (const tpl of TEMPLATES) {
       const charity = liveCharities[idx % liveCharities.length]!
-      const schedule = SCHEDULE_BY_INDEX[idx] ?? {}
-      await createSaleItem(prisma, charity.id, tpl, schedule, cycle, uploadAsset)
+      await createSaleItem(prisma, charity.id, tpl, cycle, uploadAsset)
       idx += 1
     }
     // Extra under cascade demo charity.
@@ -198,7 +189,6 @@ export async function seedSaleItems(
       prisma,
       cascadeDemoCharity.id,
       TEMPLATES[cycle % TEMPLATES.length]!,
-      {},
       cycle + 100,
       uploadAsset,
     )
@@ -209,7 +199,6 @@ async function createSaleItem(
   prisma: PrismaClient,
   charityId: string,
   tpl: ItemTemplate,
-  schedule: ScheduleOverride,
   uniqueIdx: number,
   uploadAsset: (key: string) => Promise<void>,
 ): Promise<void> {
@@ -225,8 +214,8 @@ async function createSaleItem(
       priceTwd: tpl.priceTwd,
       raisingApprovalNo: tpl.raisingApprovalNo,
       reliefApprovalNo: tpl.reliefApprovalNo,
-      publishStartAt: schedule.publishStartAt,
-      publishEndAt: schedule.publishEndAt,
+      publishStartAt: DEFAULT_PUBLISH_START,
+      publishEndAt: DEFAULT_PUBLISH_END,
     },
   })
 

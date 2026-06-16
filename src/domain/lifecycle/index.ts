@@ -1,3 +1,8 @@
 // Backend ADR 006 — Lifecycle filter helpers, public surface.
 
-export { whereLive, whereLiveWithParent } from './where.js'
+export {
+  whereForAdmin,
+  whereLive,
+  whereLiveWithParent,
+  type AdminLifecycleFilter,
+} from './where.js'

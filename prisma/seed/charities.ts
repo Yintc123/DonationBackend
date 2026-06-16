@@ -93,6 +93,11 @@ interface LifecycleDemoCharitySeed {
 
 const REF = new Date('2026-06-14T12:00:00.000Z')
 const past = (days: number): Date => new Date(REF.getTime() - days * 86_400_000)
+const future = (days: number): Date => new Date(REF.getTime() + days * 86_400_000)
+
+// 預設「目前上架中」視窗:所有 charity 若未指定就套用此範圍。
+const DEFAULT_PUBLISH_START = past(30)
+const DEFAULT_PUBLISH_END = future(365)
 
 // ─── Complete rows (20) ───────────────────────────────────────────────────
 
@@ -367,9 +372,9 @@ const LIFECYCLE_DEMO_CHARITIES: readonly LifecycleDemoCharitySeed[] = [
     categoryKeys: ['poverty_relief'],
   },
   {
+    // 名稱保留為歷史標記,但 publishEndAt 已改為未來,row 目前為上架中。
     name: '合約過期示範團體(cascade demo)',
-    description: 'publishEndAt 已過 — 子表 Project/SaleItem 將一併消失。',
-    publishEndAt: past(1),
+    description: 'publishStartAt/publishEndAt 皆為目前上架範圍。',
     categoryKeys: ['animal_protection'],
   },
 ]
@@ -424,8 +429,8 @@ export async function seedCharities(
         officialWebsite: c.officialWebsite ?? fake.officialWebsite,
         approvalNo: c.approvalNo ?? fake.approvalNo,
         displayOrder: c.displayOrder ?? 0,
-        publishStartAt: c.publishStartAt,
-        publishEndAt: c.publishEndAt,
+        publishStartAt: c.publishStartAt ?? DEFAULT_PUBLISH_START,
+        publishEndAt: c.publishEndAt ?? DEFAULT_PUBLISH_END,
       },
     })
 
@@ -449,12 +454,12 @@ export async function seedCharities(
       })
     }
 
+    const effectiveStart = c.publishStartAt ?? DEFAULT_PUBLISH_START
+    const effectiveEnd = c.publishEndAt ?? DEFAULT_PUBLISH_END
     seeded.push({
       id: row.id,
       name: c.name,
-      liveAtRef:
-        (c.publishStartAt === undefined || c.publishStartAt <= REF) &&
-        (c.publishEndAt === undefined || c.publishEndAt > REF),
+      liveAtRef: effectiveStart <= REF && effectiveEnd > REF,
     })
   }
 
@@ -466,8 +471,8 @@ export async function seedCharities(
         description: c.description,
         archivedAt: c.archivedAt,
         deletedAt: c.deletedAt,
-        publishStartAt: c.publishStartAt,
-        publishEndAt: c.publishEndAt,
+        publishStartAt: c.publishStartAt ?? DEFAULT_PUBLISH_START,
+        publishEndAt: c.publishEndAt ?? DEFAULT_PUBLISH_END,
       },
     })
 
@@ -479,14 +484,16 @@ export async function seedCharities(
       })
     }
 
+    const effectiveStart = c.publishStartAt ?? DEFAULT_PUBLISH_START
+    const effectiveEnd = c.publishEndAt ?? DEFAULT_PUBLISH_END
     seeded.push({
       id: row.id,
       name: c.name,
       liveAtRef:
         c.archivedAt === undefined &&
         c.deletedAt === undefined &&
-        (c.publishStartAt === undefined || c.publishStartAt <= REF) &&
-        (c.publishEndAt === undefined || c.publishEndAt > REF),
+        effectiveStart <= REF &&
+        effectiveEnd > REF,
     })
   }
 

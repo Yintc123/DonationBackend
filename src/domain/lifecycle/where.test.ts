@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { whereLive, whereLiveWithParent } from './where.js'
+import { whereForAdmin, whereLive, whereLiveWithParent } from './where.js'
 
 const NOW = new Date('2026-06-14T12:00:00.000Z')
 
@@ -66,5 +66,42 @@ describe('whereLiveWithParent(now) — ADR 006 §3 cascading visibility', () => 
     // Same shape as whereLive(NOW) for the parent side.
     expect(wrapped.charity.is.AND[0]?.OR[1]).toEqual({ publishStartAt: { lte: NOW } })
     expect(wrapped.charity.is.AND[1]?.OR[1]).toEqual({ publishEndAt: { gt: NOW } })
+  })
+})
+
+describe('whereForAdmin(opts) — spec 026 §2.3 / spec 015 §3.3 v0.9', () => {
+  it('default (no flags) filters out both archived and deleted rows', () => {
+    const w = whereForAdmin({ includeArchived: false, includeDeleted: false })
+    expect(w).toEqual({ archivedAt: null, deletedAt: null })
+  })
+
+  it('includeArchived=true drops the archivedAt clause but keeps deletedAt', () => {
+    const w = whereForAdmin({ includeArchived: true, includeDeleted: false })
+    expect(w).toEqual({ deletedAt: null })
+    expect('archivedAt' in w).toBe(false)
+  })
+
+  it('includeDeleted=true drops the deletedAt clause but keeps archivedAt', () => {
+    const w = whereForAdmin({ includeArchived: false, includeDeleted: true })
+    expect(w).toEqual({ archivedAt: null })
+    expect('deletedAt' in w).toBe(false)
+  })
+
+  it('both flags true returns the empty filter (full row set)', () => {
+    const w = whereForAdmin({ includeArchived: true, includeDeleted: true })
+    expect(w).toEqual({})
+  })
+
+  it('does NOT include publishStartAt / publishEndAt — admin must see scheduled rows', () => {
+    const w = whereForAdmin({ includeArchived: false, includeDeleted: false })
+    expect('publishStartAt' in w).toBe(false)
+    expect('publishEndAt' in w).toBe(false)
+    expect('AND' in w).toBe(false)
+  })
+
+  it('returns a fresh object each call (no shared reference)', () => {
+    const a = whereForAdmin({ includeArchived: false, includeDeleted: false })
+    const b = whereForAdmin({ includeArchived: false, includeDeleted: false })
+    expect(a).not.toBe(b)
   })
 })
