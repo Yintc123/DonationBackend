@@ -25,3 +25,9 @@ export { ErrorCode, ErrorCodeStatus, type ErrorCodeValue } from './codes.js'
 export { default as errorHandlerPlugin, type ErrorHandlerOptions } from './plugin.js'
 export { mapPrismaError } from './prisma.js'
 export { toProblem, type ProblemBody, type ProblemContext } from './problem.js'
+export {
+  registerProcessHandlers,
+  type FatalLogger,
+  type ProcessLike,
+  type RegisterProcessHandlersDeps,
+} from './process-handlers.js'

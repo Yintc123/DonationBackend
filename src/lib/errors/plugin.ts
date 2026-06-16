@@ -23,7 +23,7 @@
 import type { FastifyError, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import fp from 'fastify-plugin'
 
-import { AppError, InternalError, ValidationError } from './AppError.js'
+import { AppError, InternalError, NotFoundError, ValidationError } from './AppError.js'
 import { mapPrismaError } from './prisma.js'
 import { toProblem } from './problem.js'
 
@@ -129,6 +129,14 @@ const errorHandlerPlugin: FastifyPluginAsync<ErrorHandlerOptions> = async (fasti
         .send(body)
     },
   )
+
+  // Spec 005 §5.3 — Fastify's default 404 returns a plain text body. Route
+  // it through the same Problem Details pipeline so every error response
+  // (route exists / route doesn't) shares one wire shape. We throw and let
+  // the setErrorHandler above own the writing.
+  fastify.setNotFoundHandler((request: FastifyRequest, _reply: FastifyReply) => {
+    throw new NotFoundError({ resource: request.url })
+  })
 }
 
 // fastify-plugin wraps to skip encapsulation so setErrorHandler applies to

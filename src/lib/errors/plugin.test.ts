@@ -233,6 +233,41 @@ describe('errorHandlerPlugin (spec 005 §5)', () => {
     })
   })
 
+  describe('setNotFoundHandler (spec §5.3)', () => {
+    it('should map unknown routes to RFC 7807 with code NOT_FOUND and status 404', async () => {
+      const res = await app.inject({ method: 'GET', url: '/does-not-exist' })
+
+      expect(res.statusCode).toBe(404)
+      expect(res.headers['content-type']).toMatch(/application\/problem\+json/)
+      const body = res.json()
+      expect(body.code).toBe('NOT_FOUND')
+      expect(body.status).toBe(404)
+      expect(body.instance).toBe('/does-not-exist')
+      // Spec §5.3 — the route doesn't exist, so the path itself is the
+      // resource we name in details (callers can tell "unknown route" from
+      // a domain 404 like "user not found" because resource === path).
+      expect(body.details?.resource).toBe('/does-not-exist')
+    })
+
+    it('should propagate inbound X-Request-Id on 404 responses', async () => {
+      const inbound = 'c4b7a5e0-8d9a-4f1f-9b3a-0e2a1b9d7f23'
+      const res = await app.inject({
+        method: 'GET',
+        url: '/missing',
+        headers: { 'x-request-id': inbound },
+      })
+
+      expect(res.statusCode).toBe(404)
+      expect(res.headers['x-request-id']).toBe(inbound)
+      expect(res.json().requestId).toBe(inbound)
+    })
+
+    it('should set Cache-Control: no-store on 404 (cascading visibility)', async () => {
+      const res = await app.inject({ method: 'GET', url: '/missing' })
+      expect(res.headers['cache-control']).toBe('no-store')
+    })
+  })
+
   describe('docsBaseUrl option (spec §6.1 type URI)', () => {
     it('should derive type URI from code when docsBaseUrl is configured', async () => {
       const customApp = await buildTestApp({ docsBaseUrl: 'https://api.example.com' })

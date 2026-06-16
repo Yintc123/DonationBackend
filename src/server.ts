@@ -14,6 +14,7 @@
 
 import { buildApp } from './app.js'
 import { loadConfig } from './config/load.js'
+import { registerProcessHandlers } from './lib/errors/index.js'
 
 const SHUTDOWN_DRAIN_GRACE_MS = 2_000
 const FORCE_EXIT_MS = 28_000
@@ -57,6 +58,17 @@ async function main(): Promise<void> {
 
   process.on('SIGTERM', shutdown)
   process.on('SIGINT', shutdown)
+
+  // Spec 005 §9 — fatal-path handlers. Operational errors flow through
+  // Fastify's setErrorHandler (spec 005 §5); these catch what escapes:
+  //   - unhandledRejection → log fatal, kick off graceful drain
+  //   - uncaughtException  → log fatal, exit(1) (state may be corrupted)
+  // Bound to this app's logger so pino's errSerializer + redact apply.
+  registerProcessHandlers({
+    process,
+    logger: app.log,
+    shutdown: () => shutdown('SIGTERM'),
+  })
 
   try {
     await app.listen({ port: config.PORT, host: config.HOST })
