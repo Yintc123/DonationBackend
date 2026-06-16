@@ -5,8 +5,11 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   aggregateReadiness,
   buildBuildInfo,
+  buildComponentBody,
   buildLivenessBody,
+  buildOverallBody,
   buildStartupBody,
+  categorizeProbeError,
   memoizeProbe,
   runWithTimeout,
   type ProbeStatus,
@@ -122,6 +125,124 @@ describe('buildStartupBody (spec 011 §4.3)', () => {
     expect(out.httpStatus).toBe(503)
     expect(out.body).toMatchObject({ status: 'starting' })
     expect(out.body).toHaveProperty('elapsedMs')
+  })
+})
+
+describe('buildOverallBody (spec 011 §4.4)', () => {
+  const ok = { status: 'ok' as const, latencyMs: 3 }
+  const fail = { status: 'fail' as const, latencyMs: 200, error: 'connection_timeout 10.0.0.5' }
+  const buildInfo = { gitSha: 'deadbee', timestamp: '2026-06-16T00:00:00Z', version: '0.1.0' }
+
+  it('all ok + started + not draining → status=ok, http=200', () => {
+    const out = buildOverallBody({
+      startupCompleted: true,
+      shuttingDown: false,
+      uptimeSec: 100,
+      components: { db: ok, cache: ok },
+      build: buildInfo,
+    })
+    expect(out.httpStatus).toBe(200)
+    expect(out.body).toMatchObject({
+      status: 'ok',
+      version: 'deadbee',
+      uptimeSec: 100,
+      startupCompleted: true,
+      shuttingDown: false,
+      components: {
+        db: { status: 'ok', latencyMs: 3 },
+        cache: { status: 'ok', latencyMs: 3 },
+      },
+    })
+  })
+
+  it('any component failed → status=down, http=503', () => {
+    const out = buildOverallBody({
+      startupCompleted: true,
+      shuttingDown: false,
+      uptimeSec: 100,
+      components: { db: ok, cache: fail },
+      build: buildInfo,
+    })
+    expect(out.httpStatus).toBe(503)
+    expect(out.body.status).toBe('down')
+  })
+
+  it('shuttingDown=true → status=down, http=503', () => {
+    const out = buildOverallBody({
+      startupCompleted: true,
+      shuttingDown: true,
+      uptimeSec: 100,
+      components: { db: ok, cache: ok },
+      build: buildInfo,
+    })
+    expect(out.httpStatus).toBe(503)
+    expect(out.body.status).toBe('down')
+    expect(out.body.shuttingDown).toBe(true)
+  })
+
+  it('does not leak raw probe error messages (spec §14.2)', () => {
+    const out = buildOverallBody({
+      startupCompleted: true,
+      shuttingDown: false,
+      uptimeSec: 100,
+      components: { db: ok, cache: fail },
+      build: buildInfo,
+    })
+    const json = JSON.stringify(out.body)
+    expect(json).not.toContain('10.0.0.5')
+    expect(json).not.toContain('connection_timeout 10.0.0.5')
+  })
+})
+
+describe('buildComponentBody (spec 011 §4.5)', () => {
+  it('ok → http=200, body has status, latencyMs, details.ping=OK', () => {
+    const out = buildComponentBody({ status: 'ok', latencyMs: 3 })
+    expect(out.httpStatus).toBe(200)
+    expect(out.body).toEqual({
+      status: 'ok',
+      latencyMs: 3,
+      details: { ping: 'OK' },
+    })
+  })
+
+  it('fail → http=503, body has status=down, latencyMs, details.error category', () => {
+    const out = buildComponentBody({
+      status: 'fail',
+      latencyMs: 542,
+      error: 'timeout: db exceeded 500ms',
+    })
+    expect(out.httpStatus).toBe(503)
+    expect(out.body.status).toBe('down')
+    expect(out.body.latencyMs).toBe(542)
+    expect(out.body.details).toMatchObject({ error: 'connection_timeout' })
+  })
+
+  it('redacts raw error to a category — never echoes connection string / SQL / keys (§14.2)', () => {
+    const out = buildComponentBody({
+      status: 'fail',
+      latencyMs: 542,
+      error: 'connection refused 10.0.0.5:5432 password=hunter2 SELECT * FROM users',
+    })
+    const json = JSON.stringify(out.body)
+    expect(json).not.toContain('hunter2')
+    expect(json).not.toContain('10.0.0.5')
+    expect(json).not.toContain('SELECT')
+  })
+})
+
+describe('categorizeProbeError (spec 011 §14.2)', () => {
+  it.each<[string, string]>([
+    ['timeout: db exceeded 500ms', 'connection_timeout'],
+    ['ETIMEDOUT', 'connection_timeout'],
+    ['connect ECONNREFUSED 127.0.0.1:5432', 'connection_refused'],
+    ['ECONNREFUSED', 'connection_refused'],
+    ['getaddrinfo ENOTFOUND db.internal', 'dns_failure'],
+    ['authentication failed for user "x"', 'auth_failed'],
+    ['SASL: authentication failed', 'auth_failed'],
+    ['something weird happened', 'unknown'],
+    [undefined as unknown as string, 'unknown'],
+  ])('classifies %j as %s', (input, expected) => {
+    expect(categorizeProbeError(input)).toBe(expected)
   })
 })
 

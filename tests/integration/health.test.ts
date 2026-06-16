@@ -142,4 +142,91 @@ describe('healthPlugin (integration, spec 011 §13.2)', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ status: 'started' })
   })
+
+  // ── /health (overall, spec 011 §4.4) ────────────────────────────────────
+
+  it('GET /health → 200 { status: "ok", version, uptimeSec, components, ... } (spec 011 §4.4)', async () => {
+    app = await buildApp()
+    const res = await app.inject({ method: 'GET', url: '/health' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as {
+      status: string
+      version: string
+      uptimeSec: number
+      components: { db: { status: string }; cache: { status: string } }
+      startupCompleted: boolean
+      shuttingDown: boolean
+    }
+    expect(body.status).toBe('ok')
+    expect(body.version).toEqual(expect.any(String))
+    expect(body.uptimeSec).toEqual(expect.any(Number))
+    expect(body.components.db.status).toBe('ok')
+    expect(body.components.cache.status).toBe('ok')
+    expect(body.startupCompleted).toBe(true)
+    expect(body.shuttingDown).toBe(false)
+  })
+
+  it('GET /health → 503 { status: "down", shuttingDown: true } once gate.shutDown() runs', async () => {
+    app = await buildApp()
+    app.readinessGate.shutDown()
+    const res = await app.inject({ method: 'GET', url: '/health' })
+    expect(res.statusCode).toBe(503)
+    const body = res.json() as { status: string; shuttingDown: boolean }
+    expect(body.status).toBe('down')
+    expect(body.shuttingDown).toBe(true)
+  })
+
+  it('GET /health does NOT leak OS / process / env metadata (spec §14.2)', async () => {
+    app = await buildApp()
+    const res = await app.inject({ method: 'GET', url: '/health' })
+    const text = res.payload
+    // Spec §14.2 hard-no list. We only echo the short git SHA (`version`)
+    // and the structured component map.
+    expect(text).not.toContain(process.cwd())
+    expect(text).not.toMatch(/"pid"/i)
+    // Catches stray `Authorization` / token leakage just in case.
+    expect(text).not.toMatch(/Bearer\s+[A-Za-z0-9-_.]+/)
+  })
+
+  // ── /health/db (spec 011 §4.5) ──────────────────────────────────────────
+
+  it('GET /health/db → 200 { status: "ok", latencyMs, details: { ping: "OK" } }', async () => {
+    app = await buildApp()
+    const res = await app.inject({ method: 'GET', url: '/health/db' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { status: string; latencyMs: number; details: { ping?: string } }
+    expect(body.status).toBe('ok')
+    expect(body.latencyMs).toEqual(expect.any(Number))
+    expect(body.details.ping).toBe('OK')
+  })
+
+  // ── /health/cache (spec 011 §4.5) ───────────────────────────────────────
+
+  it('GET /health/cache → 200 { status: "ok", latencyMs, details: { ping: "OK" } }', async () => {
+    app = await buildApp()
+    const res = await app.inject({ method: 'GET', url: '/health/cache' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as { status: string; latencyMs: number; details: { ping?: string } }
+    expect(body.status).toBe('ok')
+    expect(body.details.ping).toBe('OK')
+  })
+
+  it('GET /health/cache → 503 { status: "down", details.error category } when Redis fails (spec §4.5 / §14.2)', async () => {
+    app = await buildApp()
+    const originalPing = app.redis.ping.bind(app.redis)
+    app.redis.ping = (() =>
+      Promise.reject(new Error('connect ECONNREFUSED 127.0.0.1:6379'))) as typeof originalPing
+    try {
+      const res = await app.inject({ method: 'GET', url: '/health/cache' })
+      expect(res.statusCode).toBe(503)
+      const body = res.json() as { status: string; details: { error?: string } }
+      expect(body.status).toBe('down')
+      // Spec §14.2 — error must be a category, NOT the raw connection string.
+      expect(body.details.error).toBe('connection_refused')
+      expect(res.payload).not.toContain('127.0.0.1')
+      expect(res.payload).not.toContain('6379')
+    } finally {
+      app.redis.ping = originalPing
+    }
+  })
 })

@@ -26,8 +26,11 @@ import fp from 'fastify-plugin'
 import { createReadinessGate, type ReadinessGate } from './gate.js'
 import {
   aggregateReadiness,
+  buildComponentBody,
   buildLivenessBody,
+  buildOverallBody,
   buildStartupBody,
+  buildBuildInfo,
   memoizeProbe,
   runWithTimeout,
   type ComponentResult,
@@ -142,6 +145,36 @@ const healthPluginAsync: FastifyPluginAsync = async (app: FastifyInstance) => {
       started: gate.isStarted(),
       uptimeSec: gate.uptimeSec(),
     })
+    return reply.code(out.httpStatus).send(out.body)
+  })
+
+  // Spec 011 §4.4 — human-readable overall diagnostic. Re-uses the memoised
+  // db / cache probes so a one-off `curl /health` doesn't add load on top
+  // of K8s readiness polls. No auth (spec §8.1 — only short SHA exposed).
+  const buildInfo = buildBuildInfo()
+  app.get('/health', async (_req, reply) => {
+    const [db, cache] = await Promise.all([cachedProbeDb(), cachedProbeCache()])
+    const out = buildOverallBody({
+      startupCompleted: gate.isStarted(),
+      shuttingDown: gate.isShuttingDown(),
+      uptimeSec: gate.uptimeSec(),
+      components: { db, cache },
+      build: buildInfo,
+    })
+    return reply.code(out.httpStatus).send(out.body)
+  })
+
+  // Spec 011 §4.5 — per-dependency diagnostics. Bypass the readiness cache
+  // intentionally — ops hits these to investigate a suspected outage, so
+  // freshness matters more than load amortisation.
+  app.get('/health/db', async (_req, reply) => {
+    const r = await probeDb(app)
+    const out = buildComponentBody(r)
+    return reply.code(out.httpStatus).send(out.body)
+  })
+  app.get('/health/cache', async (_req, reply) => {
+    const r = await probeCache(app)
+    const out = buildComponentBody(r)
     return reply.code(out.httpStatus).send(out.body)
   })
 

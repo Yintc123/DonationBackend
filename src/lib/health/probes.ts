@@ -161,6 +161,124 @@ export function buildStartupBody(input: StartupInput): StartupOutput {
   }
 }
 
+// ── Overall diagnostic (spec 011 §4.4) ────────────────────────────────────
+
+export type OverallStatus = 'ok' | 'degraded' | 'down'
+
+export interface OverallComponent {
+  status: 'ok' | 'fail'
+  latencyMs: number
+}
+
+export interface OverallBody {
+  status: OverallStatus
+  /** Short git SHA — see spec §14.2: we expose this but NOT process / OS info. */
+  version: string
+  uptimeSec: number
+  components: Record<ComponentName, OverallComponent>
+  startupCompleted: boolean
+  shuttingDown: boolean
+}
+
+export interface OverallInput {
+  startupCompleted: boolean
+  shuttingDown: boolean
+  uptimeSec: number
+  components: ComponentResults
+  build: BuildInfo
+}
+
+export interface OverallOutput {
+  httpStatus: 200 | 503
+  body: OverallBody
+}
+
+/**
+ * Spec 011 §4.4 — aggregate everything ops cares about into one human-
+ * readable JSON. `degraded` is reserved for future non-critical dependencies
+ * (spec §6.3); today we only have critical deps so it's `ok` or `down`.
+ *
+ * Shutdown is treated as `down` for the /health response — the pod is being
+ * cordoned, callers should redirect. (Readiness already emits `draining`
+ * via §4.2, but the overall view simplifies to up/down for humans.)
+ */
+export function buildOverallBody(input: OverallInput): OverallOutput {
+  const componentsRedacted: Record<ComponentName, OverallComponent> = {
+    db: { status: input.components.db.status, latencyMs: input.components.db.latencyMs },
+    cache: { status: input.components.cache.status, latencyMs: input.components.cache.latencyMs },
+  }
+  const anyFail = Object.values(componentsRedacted).some((c) => c.status === 'fail')
+  const status: OverallStatus = input.shuttingDown || anyFail ? 'down' : 'ok'
+  const httpStatus: 200 | 503 = status === 'down' ? 503 : 200
+  return {
+    httpStatus,
+    body: {
+      status,
+      version: input.build.gitSha,
+      uptimeSec: input.uptimeSec,
+      components: componentsRedacted,
+      startupCompleted: input.startupCompleted,
+      shuttingDown: input.shuttingDown,
+    },
+  }
+}
+
+// ── Single-component diagnostic (spec 011 §4.5) ───────────────────────────
+
+export interface ComponentBody {
+  status: 'ok' | 'down'
+  latencyMs: number
+  details: { ping: 'OK' } | { error: string }
+}
+
+export interface ComponentOutput {
+  httpStatus: 200 | 503
+  body: ComponentBody
+}
+
+/**
+ * Spec 011 §4.5 — single-component diagnostic for ops debug. The raw probe
+ * `error` is run through {@link categorizeProbeError} to produce a canonical
+ * bucket (e.g. `connection_timeout`) — never echo the raw string, which
+ * could carry connection strings, SQL fragments, or Redis keys (§14.2).
+ */
+export function buildComponentBody(component: ComponentResult): ComponentOutput {
+  if (component.status === 'ok') {
+    return {
+      httpStatus: 200,
+      body: { status: 'ok', latencyMs: component.latencyMs, details: { ping: 'OK' } },
+    }
+  }
+  return {
+    httpStatus: 503,
+    body: {
+      status: 'down',
+      latencyMs: component.latencyMs,
+      details: { error: categorizeProbeError(component.error) },
+    },
+  }
+}
+
+/**
+ * Spec 011 §14.2 — map any raw probe error string to one of a small set of
+ * canonical buckets. Keeps the wire response stable and prevents leaking
+ * connection strings / SQL / Redis keys (anything outside the bucket label
+ * itself is dropped).
+ *
+ * Buckets are matched in priority order; first match wins. Add a bucket
+ * only when there's an operational reason to distinguish it (i.e. ops
+ * would react differently). When in doubt, fall back to `unknown`.
+ */
+export function categorizeProbeError(raw: string | undefined): string {
+  if (!raw) return 'unknown'
+  const s = raw.toLowerCase()
+  if (s.includes('timeout') || s.includes('etimedout')) return 'connection_timeout'
+  if (s.includes('econnrefused') || s.includes('connection refused')) return 'connection_refused'
+  if (s.includes('enotfound') || s.includes('eai_again')) return 'dns_failure'
+  if (s.includes('authentication failed') || s.includes('sasl')) return 'auth_failed'
+  return 'unknown'
+}
+
 // ── Timeout helper ────────────────────────────────────────────────────────
 
 /**
