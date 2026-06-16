@@ -1,18 +1,15 @@
-// Spec 016 §12.1 v0.13 (B5) — OpenAPI / Swagger UI for dev introspection.
+// Spec 016 §12.1 v0.14 (B5) — OpenAPI / Swagger UI, all environments.
 //
 // `@fastify/swagger` walks every route registered AFTER it and synthesises
 // an OpenAPI 3 document from the TypeBox `schema` blocks already attached
 // to each `app.route(...)` call. `@fastify/swagger-ui` then mounts a
 // browser UI at `/docs` with "Try it out" buttons.
 //
-// Both are **dev-only**: in staging / production the plugin returns early
-// without registering anything, so:
-//   - GET /docs        → 404
-//   - GET /docs/json   → 404
-//   - GET /openapi.json → 404
-// This keeps a powerful introspection surface off the public prod API
-// (it would expose response shapes + every route's existence, which we
-// don't need shipped externally).
+// Demo project — we deliberately expose `/docs` + `/openapi.json` in every
+// NODE_ENV. The contract IS the deliverable: reviewers should be able to
+// open it on whatever URL the demo is hosted at, with no extra flag or
+// tunnel. If this ever turns into a real service, gate behind
+// `requireAdmin` or an internal-only ingress instead of NODE_ENV.
 
 import fastifySwagger from '@fastify/swagger'
 import fastifySwaggerUi from '@fastify/swagger-ui'
@@ -21,8 +18,6 @@ import fp from 'fastify-plugin'
 
 export const openapiPlugin = fp(
   async (app: FastifyInstance) => {
-    if (app.config.NODE_ENV === 'production') return
-
     await app.register(fastifySwagger, {
       openapi: {
         openapi: '3.0.3',

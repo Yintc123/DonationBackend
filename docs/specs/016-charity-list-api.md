@@ -641,18 +641,19 @@ function buildListService<T>(delegate: PrismaDelegate<T>) { ... }
 
 ---
 
-## 12.1 OpenAPI 文件(v0.13 — B5)
+## 12.1 OpenAPI 文件(v0.14 — B5)
 
-Fastify route schema 已是 JSON-Schema 起點,**dev 環境**自動產出 OpenAPI 屬零成本附加(spec 009 §1.3 原列 out of scope,本 spec 把產出路徑收進來,但仍**不**強制 prod 暴露)。
+Fastify route schema 已是 JSON-Schema 起點,自動產出 OpenAPI 屬零成本附加(spec 009 §1.3 原列 out of scope,本 spec 把產出路徑收進來)。
 
 規約:
 
 - 套件:`@fastify/swagger` + `@fastify/swagger-ui`(已在 `package.json` 預留 — 待 PR 接上)
-- 暴露條件:`NODE_ENV !== 'production'` 才註冊;prod 環境 `/openapi.json` / `/docs` 一律 404(避免無意間洩漏內部 schema 給攻擊者掃)
+- 暴露條件:**全環境註冊**(development / staging / production 皆暴露)— demo 專案,contract 本身就是交付物,評審打開 demo URL 就要能看;若日後轉成真實服務,改用 `requireAdmin` 或內網 ingress 把關,不要回頭用 `NODE_ENV` 切
 - 路徑:`GET /openapi.json` 回 JSON、`GET /docs` 回 Swagger UI
 - 來源:Fastify route schema **直接餵入**,本 spec §12 的 TypeBox 物件全部會自動進文件,無需手寫 YAML
 - security scheme:本 spec 三個 list endpoint 為 public,文件不必標 Bearer;若日後加 admin endpoint,在該 route 加 `tags: ['admin']` + `security: [{ bearerAuth: [] }]`
 - CORS:OpenAPI endpoint 不對外暴露,不必加白名單
+- rate-limit:`/docs` + `/docs/*` 在 spec 010 §9.1 為豁免清單(Swagger UI bundle 透過 `@fastify/static` 註冊 wildcard 路由,routeId 字面含 `*`,不豁免會撞 spec 010 §4.3 routeId 驗證)
 
 > 評審意義:7 天作業 demo 時開 `/docs` 直接看 spec 化的 contract,比手寫 README 列舉端點更有說服力;同時驗證「schema-driven 是真的,不是名義上」。
 
@@ -739,3 +740,4 @@ Fastify route schema 已是 JSON-Schema 起點,**dev 環境**自動產出 OpenAP
 | 0.14 | 2026-06-14 | `CATEGORY_UNKNOWN` 落實:(1) §5.1 註腳更新 — 不再用 TypeBox `Type.Union(literals)`(那會回 `VALIDATION_FAILED`),改在 route handler 啟動點呼叫 `src/domain/category/keys.ts::parseCategoryKey()`,把白名單檢查從 schema 層下放到 domain 層;`details` 帶 `{ category, allowed: [...16 keys] }` 方便 client 列示;(2) §13 unit test 描述同步;(3) `src/lib/errors/codes.ts` 註冊 `CATEGORY_UNKNOWN` → 400(spec 005 §4.4 governance);(4) `src/schemas/donation-item/shared.ts` `category` 從 `Type.Union(literals)` 鬆綁為 `Type.String({ minLength: 1, maxLength: 40 })`,保留長度檢查(對齊 spec 015 §3.3 VARCHAR(40));(5) 3 個 list route handler 呼叫 `parseCategoryKey(req.query.category)` 後再傳進 service。**邊界**:`?category=`(空字串)維持 `VALIDATION_FAILED`(被 schema minLength 擋掉);`?category=animals` 才是 `CATEGORY_UNKNOWN`(過 schema 但不在白名單)|
 | 0.15 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |
 | 0.16 | 2026-06-16 | §1 適用範圍欄位更新:`backend/src/routes/v1/donation/{charities,donation-projects,sale-items,categories}/*` → `backend/src/routes/user/donation/{charity-name}.ts`(每資源單檔,符合 spec 023 v0.2 §6.2 one-file-per-resource)。對應 backend code phase 3 file move(git mv),URL 完全不變 |
+| 0.17 | 2026-06-16 | §12.1 取消 prod 404 鎖:`/docs` + `/openapi.json` 改為全環境(development / staging / production)註冊。demo 專案,contract 即交付物,不再用 `NODE_ENV` 切;若日後轉真實服務改用 `requireAdmin` / 內網 ingress。順帶把 spec 010 §9.1 的 `/docs` + `/docs/*` 豁免引用補上(無此豁免 Swagger UI bundle 整個打不開,詳 spec 010 §9.1 / v0.3 變更紀錄)|

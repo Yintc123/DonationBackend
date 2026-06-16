@@ -1,11 +1,10 @@
-// Spec 016 §12.1 v0.13 (B5) — OpenAPI doc surface, dev-only.
+// Spec 016 §12.1 v0.14 (B5) — OpenAPI doc surface, all environments.
 //
 // Goal:
-//   - `GET /openapi.json` returns the generated OpenAPI 3.0 doc (200) when
-//     NODE_ENV ∈ {development, staging}.
-//   - `GET /docs` renders Swagger UI (200 / 301-to-trailing-slash) in dev.
-//   - Both routes return 404 in production — we MUST NOT leak schema to
-//     attackers scanning prod.
+//   - `GET /openapi.json` returns the generated OpenAPI 3.0 doc (200) in
+//     every NODE_ENV (development / staging / production). This is a demo
+//     project — exposing the contract everywhere is the explicit choice.
+//   - `GET /docs` renders Swagger UI (200) in every NODE_ENV.
 //   - The doc reflects the actual Fastify route schemas (smoke: list +
 //     detail endpoints appear in `paths`).
 
@@ -54,41 +53,30 @@ describe('OpenAPI surface — development', () => {
   })
 })
 
-describe('OpenAPI surface — staging (also enabled)', () => {
-  beforeEach(async () => {
-    app = await buildApp({
-      NODE_ENV: 'staging',
-      // Required outside development (spec 001 §4.4 / spec 010 §15.1).
-      RATE_LIMIT_TRUSTED_PROXIES: '10.0.0.0/8',
-      // ADR 008: staging/prod use ECS task role; static AWS creds must be empty.
-      AWS_ACCESS_KEY_ID: '',
-      AWS_SECRET_ACCESS_KEY: '',
+describe.each(['staging', 'production'] as const)(
+  'OpenAPI surface — %s (also enabled)',
+  (env) => {
+    beforeEach(async () => {
+      app = await buildApp({
+        NODE_ENV: env,
+        // Required outside development (spec 001 §4.4 / spec 010 §15.1).
+        RATE_LIMIT_TRUSTED_PROXIES: '10.0.0.0/8',
+        // ADR 008: staging/prod use ECS task role; static AWS creds must be empty.
+        AWS_ACCESS_KEY_ID: '',
+        AWS_SECRET_ACCESS_KEY: '',
+      })
     })
-  })
 
-  it('staging still exposes /openapi.json (enabled when NODE_ENV !== production)', async () => {
-    const res = await app!.inject({ method: 'GET', url: '/openapi.json' })
-    expect(res.statusCode).toBe(200)
-  })
-})
-
-describe('OpenAPI surface — production', () => {
-  beforeEach(async () => {
-    app = await buildApp({
-      NODE_ENV: 'production',
-      RATE_LIMIT_TRUSTED_PROXIES: '10.0.0.0/8',
-      AWS_ACCESS_KEY_ID: '',
-      AWS_SECRET_ACCESS_KEY: '',
+    it('GET /openapi.json returns 200 (demo project — contract exposed everywhere)', async () => {
+      const res = await app!.inject({ method: 'GET', url: '/openapi.json' })
+      expect(res.statusCode).toBe(200)
+      expect(res.headers['content-type']).toMatch(/application\/json/)
     })
-  })
 
-  it('GET /openapi.json returns 404 in production (no schema leak)', async () => {
-    const res = await app!.inject({ method: 'GET', url: '/openapi.json' })
-    expect(res.statusCode).toBe(404)
-  })
-
-  it('GET /docs returns 404 in production', async () => {
-    const res = await app!.inject({ method: 'GET', url: '/docs/' })
-    expect(res.statusCode).toBe(404)
-  })
-})
+    it('GET /docs renders the Swagger UI shell', async () => {
+      const res = await app!.inject({ method: 'GET', url: '/docs/' })
+      expect(res.statusCode).toBe(200)
+      expect(res.headers['content-type']).toMatch(/text\/html/)
+    })
+  },
+)
