@@ -3,11 +3,11 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.3 |
-| 日期 | 2026-06-13 |
+| 版本 | 0.4 |
+| 日期 | 2026-06-16 |
 | 適用範圍 | `backend/` |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`、`docs/decisions/003-database-postgresql.md`、`docs/decisions/004-auth-token-strategy.md` |
-| 相關 spec | 007/008(JWT、OIDC、Password)、010(Rate limit)、012(CORS、HSTS) |
+| 相關 spec | 007/008(JWT、OIDC、Password)、010(Rate limit)、012(CORS、HSTS)、018(S3 storage) |
 
 ---
 
@@ -63,7 +63,7 @@ DB 連線採**多參數拆分**設計,理由:
 | `DB_SSL_MODE` | | (空) | `require`(預設)/ `verify-full` | TLS 模式 |
 | `DB_CONNECTION_LIMIT` | | (空,Prisma 預設) | 由平台容量決定 | 連線池上限 |
 | `DB_POOL_TIMEOUT` | | (空,Prisma 預設 10) | 由 SLA 決定 | 取得連線 timeout(秒) |
-| `DATABASE_URL` | ✅(衍生) | 由上列組合 | 由上列組合或 secret manager 直接提供 | Prisma CLI / Client 實際讀取的連線字串 |
+| `DATABASE_URL` | ⚠️(衍生,**不在 app schema**)| 由 `.env` dotenv-expand 或啟動腳本組合 | 由啟動腳本組合或 secret manager 直接提供 | Prisma CLI 讀;**app 在執行期改由 `composeDatabaseUrl(DB_*)` 衍生**,不從 `process.env.DATABASE_URL` 讀(v0.4) |
 
 #### 3.2.1 組合機制
 
@@ -90,9 +90,10 @@ Prisma 內部採用 dotenv-expand,`${VAR}` 語法原生支援。
 
 #### 3.2.2 App 端使用
 
-- `@fastify/env` 於啟動時**個別驗證**拆分參數的型別與必填(`DB_HOST` 為字串、`DB_PORT` 為 number 等),**不**再驗證 `DATABASE_URL` 字串內容
-- `PrismaClient` 從 `process.env.DATABASE_URL` 取(由 dotenv-expand 或部署平台提供)
-- App 程式碼**禁止**自行拼接 `DATABASE_URL`(避免 encoding 不一致);若必須(例:測試動態建 DB),統一走 `src/lib/db/composeDatabaseUrl.ts`,內部用 `URL` API 處理 percent-encode
+- `@fastify/env`/TypeBox schema 於啟動時**個別驗證**拆分參數(`DB_HOST` 為字串、`DB_PORT` 為 number 等);`DATABASE_URL` **不在 schema** — 是衍生值,不屬 single source of truth(v0.4)
+- `PrismaClient` 由 `prismaPlugin` 用 `composeDatabaseUrl(DB_*)` 結果以 `datasourceUrl` 注入,不從 `process.env.DATABASE_URL` 讀(避免 dotenv 與 schema 兩個來源不同步)
+- Prisma CLI(`prisma migrate` 等)仍認 `process.env.DATABASE_URL`,因此 dev `.env` / CI / 部署啟動腳本仍要 export 該變數;這條供 CLI,不供 app
+- 統一組合於 `src/lib/db/compose-database-url.ts`,內部用 `URL` API 處理 percent-encode
 
 #### 3.2.3 規則
 
@@ -103,15 +104,22 @@ Prisma 內部採用 dotenv-expand,`${VAR}` 語法原生支援。
 - 切換環境時 Prisma migration 必須先在 stage 驗證再上 prod
 - `DB_PORT` 用整數型別,schema 限制 `1024 ≤ port ≤ 65535`
 
-### 3.3 Redis
+### 3.3 Redis(v0.4 — 拆分參數)
+
+對齊 §3.2 DB_* 設計,Redis 也採離散參數,理由:
+- 不必處理密碼含特殊字元時的 URL percent-encode
+- 部署平台 UI 個別欄位設定友善
+- ioredis 直接收 `{ host, port, password }` 物件,毋須先 parse URL
 
 | Key | 必填 | dev 預設 | stage / prod | 說明 |
 |---|---|---|---|---|
-| `REDIS_URL` | ✅ | `redis://localhost:6379` | 各環境獨立 instance | 用於 cache / JWT blacklist / rate-limit |
+| `REDIS_HOST` | ✅ | `localhost` | 各環境獨立 instance | Redis 主機 |
+| `REDIS_PORT` | | `6379` | 通常 `6379` | 1–65535 |
+| `REDIS_PASSWORD` | | (空,未認證) | secret manager 注入 | 空字串代表免認證(dev / LocalStack);stage / prod 必須設 |
 
 規則:
 - 三環境獨立 Redis instance,避免 cache 互相污染
-- 若 stage/prod 啟用 ACL,connection string 屬 secret
+- `REDIS_PASSWORD` 為 secret 等級,屬 spec 004 §7.1 redact 清單(v0.4 已落實)
 
 ### 3.4 JWT(access + refresh,落實 ADR 004)
 
@@ -163,6 +171,7 @@ Prisma 內部採用 dotenv-expand,`${VAR}` 語法原生支援。
 
 | Key | 必填 | dev 預設 | stage / prod | 說明 |
 |---|---|---|---|---|
+| `RATE_LIMIT_DISABLED` | | `false` | `false`(prod 嚴禁啟用) | v0.4 demo kill switch;`true` 時 `rateLimitPlugin` 不註冊 preHandler,完全 bypass |
 | `RATE_LIMIT_GLOBAL_PER_IP_LIMIT` | | `600` | `600` | L1 限制 |
 | `RATE_LIMIT_GLOBAL_PER_IP_WINDOW_SEC` | | `60` | `60` | L1 視窗 |
 | `RATE_LIMIT_DEFAULT_LIMIT` | | `120` | `120` | 路徑未指定時 L2 預設 |
@@ -173,6 +182,24 @@ Prisma 內部採用 dotenv-expand,`${VAR}` 語法原生支援。
 規則:
 - `RATE_LIMIT_TRUSTED_PROXIES` 在 prod / stage 為**強制非空**;空字串導致啟動失敗(防 `X-Forwarded-For` 偽造攻擊)
 - 接受 CIDR(`10.0.0.0/8`)或單一 IP
+
+### 3.9 S3 Storage(spec 018,v0.4 新增)
+
+| Key | 必填 | dev 預設 | stage / prod | 說明 |
+|---|---|---|---|---|
+| `S3_BUCKET` | ✅ | `jkodonation-dev` | 各環境獨立 bucket | S3 / R2 bucket 名 |
+| `S3_REGION` | ✅ | `ap-northeast-1` | 對應 bucket region | AWS / R2 region |
+| `S3_ENDPOINT` | | (空,走 AWS) | (空) 或 `https://<acct>.r2.cloudflarestorage.com` 之類 | LocalStack / R2 / MinIO 走自訂 endpoint |
+| `S3_FORCE_PATH_STYLE` | | `false` | `false`(AWS)/ `true`(LocalStack) | path-style addressing |
+| `S3_PUBLIC_URL_BASE` | | (空) | CDN base URL(可選) | 寫入 entity 的 url 欄位時拼接;空字串走 spec 018 §3 預設規則 |
+| `S3_PRESIGN_TTL_SECONDS` | | `300` | `300` | presigned PUT URL 有效期(30–3600) |
+| `S3_MAX_UPLOAD_BYTES` | | `5242880`(5 MiB) | `5242880` 或更高 | 上傳大小上限,進 ContentLength SigV4 簽章 |
+| `AWS_ACCESS_KEY_ID` | | (空,dev `aws-cli` profile) | secret manager 注入 | SDK 自動讀;non-dev 必非空 |
+| `AWS_SECRET_ACCESS_KEY` | | (空) | secret manager 注入 | 同上;`post-validate` 強制兩者成對存在 |
+
+規則:
+- `AWS_ACCESS_KEY_ID` 與 `AWS_SECRET_ACCESS_KEY` 必須成對(`post-validate` v0.4 強制),`stage` / `prod` 不允許空字串
+- `S3_FORCE_PATH_STYLE` 用 strict `'true'` 字串比對(spec 018 §4)
 
 ### 3.8 CORS 與 Security Headers(spec 012)
 
@@ -207,17 +234,20 @@ Prisma 內部採用 dotenv-expand,`${VAR}` 語法原生支援。
 
 ### 4.3 結構草案
 
+> v0.4:`DATABASE_URL` 不在 `required`(衍生值);`REDIS_URL` 由 `REDIS_HOST` / `REDIS_PORT` 取代;新增 `RATE_LIMIT_DISABLED`、S3 / AWS 區塊。實際 schema 改用 TypeBox(`@sinclair/typebox`),見 `src/config/schema.ts`。
+
 ```ts
 // src/config/schema.ts
 export const configSchema = {
   type: 'object',
   required: [
     'NODE_ENV', 'PORT',
-    'DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'DATABASE_URL',
-    'REDIS_URL',
+    'DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME',
+    'REDIS_HOST',
     'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET', 'JWT_ISSUER',
     'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_CALLBACK_URL',
     'CORS_ORIGIN',
+    'S3_BUCKET', 'S3_REGION',
   ],
   properties: {
     NODE_ENV:     { type: 'string', enum: ['development', 'staging', 'production'] },
@@ -235,10 +265,12 @@ export const configSchema = {
     DB_SSL_MODE:  { type: 'string', enum: ['', 'require', 'verify-ca', 'verify-full'], default: '' },
     DB_CONNECTION_LIMIT: { type: 'string', default: '' },
     DB_POOL_TIMEOUT:     { type: 'string', default: '' },
-    DATABASE_URL: { type: 'string', minLength: 1 },  // 衍生值,經 dotenv-expand 組合
+    // DATABASE_URL 故意省略 — Prisma CLI 由 process.env 讀;app runtime 用 composeDatabaseUrl(DB_*) 衍生
 
-    // === Redis ===
-    REDIS_URL:    { type: 'string', minLength: 1 },
+    // === Redis (v0.4 拆分) ===
+    REDIS_HOST:     { type: 'string', minLength: 1 },
+    REDIS_PORT:     { type: 'number', default: 6379, minimum: 1, maximum: 65535 },
+    REDIS_PASSWORD: { type: 'string', default: '' },  // 空 = 免認證 (dev / LocalStack)
 
     // === JWT(ADR 004 雙 token)===
     JWT_ACCESS_SECRET:    { type: 'string', minLength: 32 },
@@ -263,6 +295,7 @@ export const configSchema = {
     LOGIN_LOCK_WINDOW_SEC:     { type: 'number', default: 900, minimum: 60 },
 
     // === Rate Limit(spec 010)===
+    RATE_LIMIT_DISABLED:                 { type: 'boolean', default: false },  // v0.4 kill switch
     RATE_LIMIT_GLOBAL_PER_IP_LIMIT:      { type: 'number', default: 600 },
     RATE_LIMIT_GLOBAL_PER_IP_WINDOW_SEC: { type: 'number', default: 60 },
     RATE_LIMIT_DEFAULT_LIMIT:            { type: 'number', default: 120 },
@@ -276,6 +309,17 @@ export const configSchema = {
     HSTS_MAX_AGE_SEC:          { type: 'number', default: 31536000 },
     HSTS_INCLUDE_SUBDOMAINS:   { type: 'boolean', default: true },
     HSTS_PRELOAD:              { type: 'boolean', default: false },
+
+    // === S3 Storage(spec 018,v0.4 新增)===
+    S3_BUCKET:                 { type: 'string', minLength: 1 },
+    S3_REGION:                 { type: 'string', minLength: 1 },
+    S3_ENDPOINT:               { type: 'string', default: '' },
+    S3_FORCE_PATH_STYLE:       { type: 'string', default: 'false' },  // strict 'true' opt-in
+    S3_PUBLIC_URL_BASE:        { type: 'string', default: '' },
+    S3_PRESIGN_TTL_SECONDS:    { type: 'number', default: 300, minimum: 30, maximum: 3600 },
+    S3_MAX_UPLOAD_BYTES:       { type: 'number', default: 5_242_880, maximum: 5_368_709_120 },
+    AWS_ACCESS_KEY_ID:         { type: 'string', default: '' },
+    AWS_SECRET_ACCESS_KEY:     { type: 'string', default: '' },
   },
 } as const
 
@@ -298,6 +342,15 @@ if (config.NODE_ENV !== 'development' && config.RATE_LIMIT_TRUSTED_PROXIES === '
 }
 if (config.JWT_ACCESS_SECRET === config.JWT_REFRESH_SECRET) {
   throw new Error('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must differ')
+}
+// v0.4 — AWS keys must be both empty (dev IAM profile) or both non-empty
+// (non-dev). Avoids "key present, secret missing" silent S3 failures.
+if (config.NODE_ENV !== 'development') {
+  const hasKey = config.AWS_ACCESS_KEY_ID !== ''
+  const hasSec = config.AWS_SECRET_ACCESS_KEY !== ''
+  if (hasKey !== hasSec) {
+    throw new Error('AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set together')
+  }
 }
 ```
 
@@ -360,9 +413,10 @@ if (config.JWT_ACCESS_SECRET === config.JWT_REFRESH_SECRET) {
 - ✅ JWT access + refresh(JWT_ACCESS_SECRET / JWT_ACCESS_EXPIRES_IN / JWT_REFRESH_SECRET / JWT_REFRESH_EXPIRES_IN / JWT_ISSUER / JWT_AUDIENCE)
 - ✅ Google OAuth / OIDC(GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_CALLBACK_URL / OIDC_DISCOVERY_URL)
 - ✅ Password(PASSWORD_HASH_* × 3 / PASSWORD_MIN_LENGTH / LOGIN_LOCK_*)
-- ✅ Redis(REDIS_URL)
-- ✅ Rate Limit(RATE_LIMIT_* × 6)
+- ✅ Redis(REDIS_HOST / REDIS_PORT / REDIS_PASSWORD,v0.4 拆分)
+- ✅ Rate Limit(RATE_LIMIT_DISABLED + 6 條配置)
 - ✅ CORS / HSTS(CORS_ORIGIN / CORS_PREFLIGHT_MAX_AGE_SEC / HSTS_* × 3)
+- ✅ S3 / AWS(S3_BUCKET / S3_REGION / S3_ENDPOINT / S3_FORCE_PATH_STYLE / S3_PUBLIC_URL_BASE / S3_PRESIGN_TTL_SECONDS / S3_MAX_UPLOAD_BYTES / AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY,v0.4 新增)
 
 本 spec 與 `.env.example` 為**雙向綁定**:任一處新增 / 刪除 key,必須同 PR 修正另一處,並由 reviewer 把關。
 
@@ -379,3 +433,4 @@ if (config.JWT_ACCESS_SECRET === config.JWT_REFRESH_SECRET) {
 | 0.1 | 2026-06-13 | 初版 |
 | 0.2 | 2026-06-13 | §3.2 Database 改為多參數拆分(`DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` / `DB_SCHEMA` / `DB_SSL_MODE` / `DB_CONNECTION_LIMIT` / `DB_POOL_TIMEOUT`),`DATABASE_URL` 改為 dotenv-expand 衍生;§4.3 schema 範例同步;§8 同步缺漏清單 |
 | 0.3 | 2026-06-13 | §3.4 JWT 拆 access + refresh(ADR 004);§3.5 加 `OIDC_DISCOVERY_URL`;新增 §3.6 Password(Argon2 / login lock);新增 §3.7 Rate Limit;§3.8 CORS 擴含 HSTS;§4.3 schema 全量同步,加入 §4.4 跨欄位語意驗證(`RATE_LIMIT_TRUSTED_PROXIES` 在 prod 必填、access ≠ refresh secret);§5.2 安全等級表重排;§8 對應 `.env.example` 差距更新 |
+| 0.4 | 2026-06-16 | §3.2 `DATABASE_URL` 改為衍生(不在 schema)— app 由 `composeDatabaseUrl(DB_*)` 注入 `datasourceUrl`,Prisma CLI 走 env;§3.3 Redis 拆分 `REDIS_URL` → `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`(對齊 §3.2 DB_* 模式,免 percent-encode);§3.7 新增 `RATE_LIMIT_DISABLED` kill switch;新增 §3.9 S3 Storage(spec 018)— `S3_BUCKET` / `S3_REGION` / `S3_ENDPOINT` / `S3_FORCE_PATH_STYLE` / `S3_PUBLIC_URL_BASE` / `S3_PRESIGN_TTL_SECONDS` / `S3_MAX_UPLOAD_BYTES` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`;§4.3 schema 範例同步;§4.4 加 AWS keys 成對驗證;§8 對應 `.env.example` 差距同步 |

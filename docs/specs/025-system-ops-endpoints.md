@@ -182,3 +182,4 @@ Rate-limit 故意設低,避免手抖 / script bug 連按。Ops 真要在 1 hour 
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-16 | 初版 — `/cms/system/*` surface 歸屬規約 + `POST /cms/system/flush-redis`(全清 Redis logical DB)endpoint 完整規格;§4 風險警告(rate-limit 一併清掉、multi-app 共用 redis 注意);§5 test 策略(8 case)|
+| 0.2 | 2026-06-16 | §3.1.2 雙層配額對齊實作:flush-redis route 顯式設 `perIp: { limit: 12, windowMs: 1h }`(原僅 purpose 6/h);純文件補強,實作見 `src/routes/cms/system/flush-redis.ts` |

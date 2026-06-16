@@ -36,7 +36,7 @@
 - env 配置與 IAM 認證方式(ECS task role vs access key)
 - Key 命名規約(`donation/{entity}/{id}/{purpose}.{ext}`)
 - 公開 bucket 政策與 URL builder
-- `GET /v1/donation/uploads/presign` 端點(pre-signed PUT)
+- `POST /cms/uploads/presign` 端點(pre-signed PUT)
 - LocalStack 整合(dev + integration test)
 - 健康檢查(`/health/storage`,獨立非 readiness 必要)
 
@@ -87,8 +87,8 @@ backend/src/lib/s3/
 對應 routes / schemas(spec 016 系列):
 
 ```
-backend/src/routes/v1/donation/uploads/
-└── presign.ts             # GET /v1/donation/uploads/presign
+backend/src/routes/cms/
+└── uploads.ts             # POST /cms/uploads/presign (cutover v0.6)
 
 backend/src/schemas/uploads/
 └── presign.ts             # TypeBox: PresignQuery / PresignResponse
@@ -330,12 +330,17 @@ Bucket CORS rules:
 
 ---
 
-## 7. `GET /v1/donation/uploads/presign`
+## 7. `POST /cms/uploads/presign`
 
 ### 7.1 Request
 
+> v0.6 cutover:從 `GET /v1/donation/uploads/presign?...` 改成 `POST /cms/uploads/presign` + JSON body,並移到 `/cms` admin surface(spec 023 §4 / spec 024 §3)。query → body 的主因是 query string 中夾帶 `id` / `contentType` 對 CDN log 不友善,POST body 也讓 idempotency-key 自然套用。
+
 ```http
-GET /v1/donation/uploads/presign?entity=<entity>&id=<id>&purpose=<purpose>&contentType=<mime>&fileSize=<bytes> HTTP/1.1
+POST /cms/uploads/presign HTTP/1.1
+Content-Type: application/json
+
+{ "entity": "<entity>", "id": "<id>", "purpose": "<purpose>", "contentType": "<mime>", "fileSize": <bytes> }
 ```
 
 | 參數 | 必填 | 規則 |
@@ -733,3 +738,4 @@ export function mapS3Error(e: unknown): AppError {
 | 0.4 | 2026-06-14 | 第二輪 audit 補完(1 HIGH + 2 MEDIUM):**HIGH** (1) §5.1.1 新增 `contentType → ext` 固定映射表 — `image/jpeg` 固定產 `.jpg`(避免 `.jpeg/.jpg` 同圖兩 key 錯位);**MEDIUM** (2) §3 client.ts 註明 `closeS3Client()` 由 spec 011 graceful shutdown hook 呼叫 `client.destroy()` 釋放 HTTP handler;(3) §7.4.1 新增 entity → 404 code mapping 表 + `ensureEntityExists()` service 層實作範本(TDD 不必猜該寫在哪)|
 | 0.5 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |
 | 0.6 | 2026-06-16 | §1 適用範圍欄位更新:`backend/src/routes/v1/donation/uploads/*` → `backend/src/routes/cms/uploads.ts`(URL 已 cutover 至 `/cms/uploads/presign`,spec 023 階段 2 落地;file path 同步) |
+| 0.7 | 2026-06-16 | §1 / §3 / §7 同步:endpoint 由 `GET /v1/donation/uploads/presign?…` 改成 `POST /cms/uploads/presign` + JSON body(query → body,方便配合 spec 009 §7 idempotency-key + 移出 CDN log);§7 文字 / sample / file-tree 隨之更新 |

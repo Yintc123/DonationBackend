@@ -469,3 +469,4 @@ startupProbe:
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
+| 0.2 | 2026-06-16 | §4.4 `/health` 與 §4.5 `/health/db` / `/health/cache` 三個診斷端點落地(`src/lib/health/plugin.ts`);純 builder `buildOverallBody` / `buildComponentBody` 留在 `probes.ts` 並單測覆蓋;§14.2 原始錯誤訊息經 `categorizeProbeError` 抽成 `connection_timeout` / `connection_refused` / `dns_failure` / `auth_failed` / `unknown` 五種 bucket,絕不外洩 raw err / SQL / Redis key / connection string;`/health` 用同一 memoized 1s probe(共享 K8s readiness 緩存),`/health/db` `/health/cache` 故意 bypass cache(ops debug 要即時) |

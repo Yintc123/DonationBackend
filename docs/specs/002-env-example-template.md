@@ -3,10 +3,10 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.3 |
-| 日期 | 2026-06-13 |
+| 版本 | 0.4 |
+| 日期 | 2026-06-16 |
 | 適用範圍 | `backend/.env.example` |
-| 相關 spec | `001-environment-config.md`(v0.3) |
+| 相關 spec | `001-environment-config.md`(v0.4) |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`、`docs/decisions/003-database-postgresql.md`、`docs/decisions/004-auth-token-strategy.md` |
 
 ---
@@ -157,12 +157,21 @@ PASSWORD_MIN_LENGTH=8
 LOGIN_LOCK_THRESHOLD=10
 LOGIN_LOCK_WINDOW_SEC=900
 
-# === Redis ===
+# === Redis (v0.4 — discrete params, mirrors DB_*) ===
+#
+# Use REDIS_PASSWORD="" for unauthenticated local / LocalStack
+# Redis. In staging / prod it MUST be non-empty.
 
-REDIS_URL="redis://localhost:6379"
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
 
 # === Rate Limit (spec 010) ===
 
+# v0.4 — global kill switch. Set to "true" ONLY for demo/local
+# bypass; prod deploys must keep this false (the rateLimitPlugin
+# refuses to register its preHandler when this is true).
+RATE_LIMIT_DISABLED=false
 RATE_LIMIT_GLOBAL_PER_IP_LIMIT=600
 RATE_LIMIT_GLOBAL_PER_IP_WINDOW_SEC=60
 RATE_LIMIT_DEFAULT_LIMIT=120
@@ -186,6 +195,28 @@ CORS_PREFLIGHT_MAX_AGE_SEC=600
 HSTS_MAX_AGE_SEC=31536000
 HSTS_INCLUDE_SUBDOMAINS=true
 HSTS_PRELOAD=false
+
+# === S3 Storage (spec 018, v0.4) ===
+#
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY must be BOTH empty
+# (dev uses local AWS profile / LocalStack) or BOTH non-empty
+# (staging/prod inject via secret manager). post-validate.ts
+# fails fast if exactly one is set.
+
+S3_BUCKET=jkodonation-dev
+S3_REGION=ap-northeast-1
+# Empty = real AWS. Use http://localhost:4566 for LocalStack,
+# or the R2/MinIO endpoint URL for those backends.
+S3_ENDPOINT=
+# Strict 'true' parsing — anything else is treated as false.
+S3_FORCE_PATH_STYLE=false
+# Optional CDN base URL. Empty = use the default url() rule from spec 018.
+S3_PUBLIC_URL_BASE=
+S3_PRESIGN_TTL_SECONDS=300
+S3_MAX_UPLOAD_BYTES=5242880
+
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
 ```
 
 > 此草案經 review 通過後,作為實作目標。
@@ -266,3 +297,4 @@ PR review 時,reviewer 須確認:
 | 0.1 | 2026-06-13 | 初版;定義格式、列出當前缺漏(`NODE_ENV` / `JWT_EXPIRES_IN` / `CORS_ORIGIN`)、提供目標草案 |
 | 0.2 | 2026-06-13 | 同步 spec 001 v0.2:Database 區塊改為 `DB_*` 9 個拆分參數 + dotenv-expand 衍生 `DATABASE_URL`;備註特殊字元 percent-encoding 規則 |
 | 0.3 | 2026-06-13 | 同步 spec 001 v0.3:JWT 拆 access + refresh(ADR 004);新增 OIDC discovery;新增 Password / Login lock 區塊(Argon2);新增 Rate Limit 區塊(`RATE_LIMIT_TRUSTED_PROXIES` 提醒 prod 必填);CORS 擴充 HSTS;§3.1 反映當前實際 `.env.example` 狀態(commit `caa7b3d`);§3.2 改為「差距對照」表;§3.3 草案完整重寫 |
+| 0.4 | 2026-06-16 | 同步 spec 001 v0.4:Redis 拆 `REDIS_URL` → `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`;Rate Limit 新增 `RATE_LIMIT_DISABLED` kill switch;新增 S3 Storage 區塊(`S3_BUCKET` / `S3_REGION` / `S3_ENDPOINT` / `S3_FORCE_PATH_STYLE` / `S3_PUBLIC_URL_BASE` / `S3_PRESIGN_TTL_SECONDS` / `S3_MAX_UPLOAD_BYTES` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`);`DATABASE_URL` 維持 dotenv-expand 衍生供 Prisma CLI(app 不再讀,見 spec 001 v0.4 §3.2.2) |

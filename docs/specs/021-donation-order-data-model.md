@@ -245,7 +245,11 @@ model Order {
 
   lines       OrderLine[]
 
-  @@index([status, createdAt])
+  // (status, createdAt DESC, id DESC) — admin list keyset cursor (spec 022 §4.7).
+  // Sort columns match the cursor: filter on `status`, then walk
+  // (createdAt DESC, id DESC). Tightened from the v0.3 `(status, createdAt)`
+  // shape by migration `20260615141228_tighten_order_status_index`.
+  @@index([status, createdAt(sort: Desc), id(sort: Desc)])
   @@index([nextChargeAt])              // v0.5 — 未來 cron「找出今日該扣款的 order」走此 index
   @@map("orders")
 }
@@ -385,7 +389,7 @@ Prisma 反向 relation **純 client 端概念**,不產生 SQL 改動:
 
 | Index | 用途 |
 |---|---|
-| `Order.@@index([status, createdAt])` | admin list `?status=X` 加排序 |
+| `Order.@@index([status, createdAt(sort: Desc), id(sort: Desc)])` | admin list `?status=X` 走 (createdAt DESC, id DESC) keyset cursor(spec 022 §4.7) |
 | `OrderLine.@@index([orderId])` | 反向取某 order 的所有 line |
 | `OrderLine.@@index([charityId])` | 「這間 charity 收到多少訂單」 |
 | `OrderLine.@@index([donationProjectId])` | 同上 project |

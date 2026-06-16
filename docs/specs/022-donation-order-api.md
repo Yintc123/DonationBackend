@@ -528,7 +528,7 @@ Body(全部 optional,strict additionalProperties: false):
   Order 對應欄位 update;updatedAt 重設
   → 200 + 完整 OrderResponse(同 §4.1)
 
-狀態前置條件:
+狀態前置條件(v0.13 釐清:**僅對「有實際變更」的 patch 套用**):
   status ∈ { PENDING, PAID }   ✅ 可改
   status ∈ { CANCELLED, FAILED, REFUNDED } → 409 ORDER_STATUS_INVALID
   → 已終止 / 已退款的訂單視為帳務 frozen,user 端不允許再改
@@ -540,6 +540,9 @@ Body(全部 optional,strict additionalProperties: false):
 
 Empty patch(body = {} 或全部 undefined):
   → 200 + 當前 OrderResponse(no-op,不發 audit event)
+  → v0.13:**先於**狀態前置條件,連 CANCELLED / FAILED / REFUNDED 訂單也直接回 200。
+     語意:沒送變更 = 沒「動到帳務 frozen 的欄位」,因此 frozen guard 不觸發。
+     測試矩陣 §10.1 表列「empty body {} → 200」即為此規約。
 
 SALE_ITEM + receiptOption(非 null):
   → 409 INVALID_RECEIPT_OPTION_FOR_SUBJECT(對齊 spec 021 §7.5;v0.12 新 error code)
@@ -974,3 +977,4 @@ Body {
 | 0.10 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |
 | 0.11 | 2026-06-16 | §1 適用範圍欄位更新:public orders `routes/v1/donation/orders/*` → `routes/user/donation/orders.ts`;admin orders `routes/v1/admin/orders/*` → `routes/cms/orders.ts`(spec 023 v0.2 §6.2 one-file-per-resource,git mv 完成) |
 | 0.12 | 2026-06-16 | **加 user-side PATCH endpoint(§4.5a)** — `PATCH /v1/donation/orders/:id`,允許 user 在 status ∈ {PENDING, PAID} 改 `donorName` / `isAnonymous` / `note` / `receiptOption`。落 `/user/v{N}` surface(對齊 spec 024 §5.1 規約);trust model 為「持有 orderId = 擁有者」(同 §2.1 / §4.5 cancel,**非** admin)。CANCELLED / FAILED / REFUNDED 訂單帳務 frozen,user 不可改 → 409 `ORDER_STATUS_INVALID`。SALE_ITEM 訂單給非 null receiptOption → 409 `INVALID_RECEIPT_OPTION_FOR_SUBJECT`(對齊 spec 021 §7.5)。Empty patch / 值未變動 → 200 no-op,不發 audit。新 audit event `order_user_patched`(僅 fieldsChanged 非空才發,**不**含 accountId — 因 endpoint 無 auth)。Rate-limit 走既有 `order_lifecycle` bucket(60/h)。新 error code `INVALID_RECEIPT_OPTION_FOR_SUBJECT`。§3 端點 10 → 11;§10 +~11 integration test。§11 OQ #2 釐清「user-side update 已落地;list 仍為 future」。spec 024 §5.1「未來規劃」於 spec 024 v0.3 收束為「方案 A 落地」|
+| 0.13 | 2026-06-16 | §4.5a 文字釐清:**empty patch 早於 status 前置條件**,連 CANCELLED / FAILED / REFUNDED 訂單也回 200 no-op(對齊 §10.1 v0.12 測試矩陣)。語意:沒送變更 = 沒動到 frozen 欄位,frozen guard 不觸發。原 v0.12 文字字面上似乎 CANCELLED + `{}` → 409,與測試矩陣矛盾;v0.13 收束為 200。實作 `user-update-service.ts:61-68` 自始如此,屬純文件釐清 |
