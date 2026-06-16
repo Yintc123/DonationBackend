@@ -3,9 +3,9 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.10 |
+| 版本 | 0.11 |
 | 日期 | 2026-06-15 |
-| 適用範圍 | `backend/src/routes/v1/donation/orders/*`(新)、`backend/src/routes/v1/admin/orders/*`(新)、`backend/src/domain/order/*`(spec 021 共享)、`backend/src/lib/clock.ts`(spec 021 §7.7 共享) |
+| 適用範圍 | `backend/src/routes/user/donation/orders.ts`(新)、`backend/src/routes/cms/orders.ts`(新)、`backend/src/domain/order/*`(spec 021 共享)、`backend/src/lib/clock.ts`(spec 021 §7.7 共享) |
 | 相關 ADR | 待補 |
 | 相關 spec | `021-donation-order-data-model.md` v0.2(**OrderLine pattern** schema 基礎)、`020-donation-write-api.md`(admin role=0 gate)、`015-charity-data-model.md`、`005-error-handling.md`、`019-cache-policy.md`、`004-logger-module.md` |
 | 設計來源 | Figma 截圖補件 IMG_4885 / 4886 / 4887,2026-06-15 |
@@ -889,3 +889,4 @@ Body {
 | 0.8 | 2026-06-15 | spec drift 收斂(回應「規格 vs code 對齊」audit):**移除** `ORDER_LINES_REQUIRED` / `ORDER_TOO_MANY_LINES` error code(v0.2 加但從未實作 — TypeBox `items: { minItems: 1, maxItems: 1 }` 已涵蓋 → `VALIDATION_FAILED`)。§4.3 sale-item-purchase 錯誤段、§5.2 service 層 rule 表、§7 error code 表三處同步更新;對應 backend codes.ts 從未定義這兩個 code,本版本是消除規格與 code 漂移的純文件改動 |
 | 0.9 | 2026-06-15 | §4.1 / §4.2 註解釐清:**`isAnonymous` 三類訂單(Charity / DonationProject / SaleItem)都掛 checkbox** — Charity 對應 IMG_4888、Project 對應 IMG_4889、SaleItem 對應 IMG_4890(原 v0.5 文字偏重 IMG_4890,易誤解為僅 SaleItem 可匿名)。code 自 v0.5 起 schema + 三個 body / service / admin filter / admin PATCH 已全面支援,本版純文件對齊 + integration test 補強(Project / SaleItem 各加 isAnonymous=true 持久化驗證)。對應 spec 021 v0.8 |
 | 0.10 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |
+| 0.11 | 2026-06-16 | §1 適用範圍欄位更新:public orders `routes/v1/donation/orders/*` → `routes/user/donation/orders.ts`;admin orders `routes/v1/admin/orders/*` → `routes/cms/orders.ts`(spec 023 v0.2 §6.2 one-file-per-resource,git mv 完成) |

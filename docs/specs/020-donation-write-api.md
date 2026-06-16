@@ -3,9 +3,9 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.3 |
+| 版本 | 0.4 |
 | 日期 | 2026-06-15 |
-| 適用範圍 | `backend/src/routes/v1/donation/**/*.ts`(write handlers,新增)、`backend/src/domain/donation-item/write-services.ts`(新增)、`backend/src/domain/category/write-services.ts`(新增)、`backend/src/lib/cache/invalidate-donation.ts`(新增)|
+| 適用範圍 | `backend/src/routes/cms/donation/*.ts`(write handlers,新增)、`backend/src/domain/donation-item/write-services.ts`(新增)、`backend/src/domain/category/write-services.ts`(新增)、`backend/src/lib/cache/invalidate-donation.ts`(新增)|
 | 相關 ADR | 待補(預計 `docs/decisions/012-donation-write-surface.md` — 若需要把「無 auth 寫入」這個決策獨立 ADR)|
 | 相關 spec | `015-charity-data-model.md` v0.10(欄位、constraint、lifecycle)、`016-charity-list-api.md`(public read list)、`017-detail-apis.md`(public read detail)、`018-storage-module.md`(presign / S3 key pattern)、`019-cache-policy.md`(invalidation map §8.3)、`005-error-handling.md`(error code 與 RFC 7807)|
 
@@ -700,3 +700,4 @@ DB-persisted audit table 留作未來 ADR / 法務需求驅動。
 | 0.1 | 2026-06-15 | 初版 |
 | 0.2 | 2026-06-15 | §2.3 rewrite:從「無 auth」改為「JWT role 0 = ADMIN required」— 引入 `Role.ADMIN = 0` / `USER = 1` const(`src/lib/auth/role.ts`),`Account.role Int @default(1)`,JWT 攜帶 role claim,非 admin → 403。§11 rate-limit 隨之放寬(per-user + per-IP 雙層,「人類管理員實際操作上限」級別)。§14 收束 OQ #1(auth 已定),新增 OQ #10(第一個 admin bootstrap)、OQ #11(presign 是否也 gate),原 #10 改 #12。需後續更新 spec 007 §10 / §11(model + claim)與 spec 008 §4.2(register 預設 role=1)|
 | 0.3 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |
+| 0.4 | 2026-06-16 | §1 適用範圍欄位更新:`backend/src/routes/v1/donation/**/*.ts` → `backend/src/routes/cms/donation/*.ts`(每資源單檔,no admin.ts split,符合 spec 023 v0.2 §6.2)。git mv 完成,URL 不變 |

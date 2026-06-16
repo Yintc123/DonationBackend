@@ -11,20 +11,20 @@
 
 import type { FastifyInstance } from 'fastify'
 
-import { ensureEntityExists } from '../../../../domain/uploads/check-entity.js'
+import { ensureEntityExists } from '../../domain/uploads/check-entity.js'
 import {
   assertContentLength,
   buildKey,
   contentTypeToExt,
   getPresignedUploadUrl,
   objectUrl,
-} from '../../../../lib/s3/index.js'
+} from '../../lib/s3/index.js'
 import {
   PresignQuerySchema,
   PresignResponseSchema,
   type PresignQuery,
   type PresignResponse,
-} from '../../../../schemas/uploads/presign.js'
+} from '../../schemas/uploads/presign.js'
 
 // Spec 018 §7.4 — independent strict purpose bucket, NEVER shared with
 // read-endpoint pools (each call = 1 unit of S3-write capacity granted to

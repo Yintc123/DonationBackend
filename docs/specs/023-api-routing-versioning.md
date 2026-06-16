@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.1 |
+| 版本 | 0.2 |
 | 日期 | 2026-06-16 |
 | 適用範圍 | `backend/src/app.ts`(prefix register layout)、`backend/src/routes/**`(目錄結構重組)、`backend/src/lib/http/api-version.ts`(新,`apiVersion` 注入)、所有既有 endpoint spec(URL 對齊) |
 | 相關 ADR | 待補(預計 `docs/decisions/014-api-routing-versioning.md`)|
@@ -410,11 +410,11 @@ app.post('/donation/orders/charity-donation', {
 
 ## 6. 目錄結構建議
 
-### 6.1 重組後
+### 6.1 規範性目錄結構(v0.2 — 從「建議」升為「規約」)
 
 ```
 src/routes/
-  auth/                          # /auth prefix(原 src/routes/auth/)
+  auth/                          # /auth prefix
     password.ts                  # /register, /login, /password/change, /password/set
     google.ts                    # /google/authorize-init, /google/exchange, /refresh, /logout, /logout-all
     me.ts                        # /me (GET/PATCH/DELETE), /me/archive
@@ -436,14 +436,25 @@ src/routes/
       categories.ts              # PATCH + 4 lifecycle(無 POST,字典表)
     orders.ts                    # GET list / GET detail / PATCH / DELETE
     uploads.ts                   # GET /uploads/presign
+    lifecycle-routes-helper.ts   # 共用 4-action factory(只給 cms admin 用)
 ```
 
-### 6.2 規則
+### 6.2 規約(v0.2 收緊)
 
-- 一個 file 只屬於一個 surface(`auth/` / `user/` / `cms/`)
-- file 內**只寫該 surface 的 endpoint**;不允許「同 file 對 user + cms 各寫一份」
-- 共用業務邏輯放 `src/domain/{entity}/`(本已存在),route file 是 thin handler 引用 domain service
-- 模式 C 拆 handler 時,命名加版本後綴:`orders-v1.ts` / `orders-v2.ts`(同層 file,不是子目錄)
+| 規則 | 內容 |
+|---|---|
+| **One file = one surface** | 一個 route file **絕不能**同時包含兩個 surface 的 endpoint(例如不允許「同檔內 user GET + cms POST」)。違反 = 直接拒 PR |
+| **One file = one resource** | 一個 surface 內,一個 resource(charities / orders)= 一個 file。不允許「charities/index.ts + charities/admin.ts」這種按 method 拆檔(spec 023 v0.2 收緊;v0.1 容忍此 split 是 phase 1 過渡狀態,phase 3 已刪除)|
+| **File path 與 URL path 對稱** | `src/routes/{surface}/{path-segments}.ts` 對應 URL `/{surface-prefix}/{path-segments}/*`。例:`src/routes/cms/donation/charities.ts` ↔ `/cms/donation/charities/...` |
+| **共用 helper 跟著 surface** | 跨 entity 共用的 factory / helper(`lifecycle-routes-helper.ts`)放在使用它的 surface root(`src/routes/cms/` 因為只給 admin 用)。**不**放 `src/lib/`(那邊是 framework-agnostic helper)|
+| **Service / domain 邏輯放 `src/domain/`** | route file 是 thin handler;業務邏輯由 domain 層提供,route 只負責 schema validate + dep wiring + 呼叫 service + serialize response |
+| **模式 C 版本分歧** | 拆 handler 時命名 `orders-v1.ts` / `orders-v2.ts` 同層平鋪,**不**起子目錄(spec 023 §5.3)|
+
+### 6.3 為什麼 `cms/orders.ts` 沒中綴 `donation/`
+
+歷史脈絡:`/cms/orders` 沿用 spec 022 §3.2 的 admin URL,不含 `/donation/` 中綴(spec 022 設計時 Order 本就是 top-level 後台動作 — 訂單跨多個 donation 資源,非 donation 子資源)。
+
+→ file path 跟 URL path 對稱(規約 6.2),`/cms/orders` → `src/routes/cms/orders.ts`(不在 `donation/` 子目錄下)。spec 024 §6 OQ #3 收束:本期保留 `/cms/orders` 不改 `/cms/donation/orders`,理由(a) 訂單**不是** donation entity 的子資源(spec 024 §2.3 — Order 為 trade record);(b) 改 URL 等於 breaking change,既無業務需求也不對齊 entity invariant 改善。
 
 ### 6.3 import 路徑與 plugin 名
 
@@ -621,3 +632,4 @@ policy 詳細參數留 spec 010 補丁。
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-16 | 初版 — 三 surface + URI versioning + 模式 A/B/C + 落地骨架 + 遷移階段。對應 future ADR 014(待補)、所有既有 endpoint spec 後續對齊條目 |
+| 0.2 | 2026-06-16 | §6 從「建議」升為「規約」 — 補 §6.2 收緊規則表(one file = one surface / one resource;file path ↔ URL path 對稱;共用 helper 跟著 surface;模式 C 平鋪命名),§6.3 釐清 `cms/orders.ts` 沒 `donation/` 中綴的歷史脈絡(收束 spec 024 §6 OQ #3)。對應 backend code phase 3 file move:`routes/v1/donation/charities/{index,admin}.ts` → `routes/user/donation/charities.ts` + `routes/cms/donation/charities.ts`;其他 entity 同樣 split;`routes/v1/donation/lifecycle-routes-helper.ts` → `routes/cms/lifecycle-routes-helper.ts` |

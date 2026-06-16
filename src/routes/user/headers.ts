@@ -3,8 +3,8 @@
 
 import type { FastifyReply, FastifyRequest } from 'fastify'
 
-import { ifNoneMatch } from '../../../lib/http/index.js'
-import type { Locale } from '../../../lib/i18n/index.js'
+import { ifNoneMatch } from '../../lib/http/index.js'
+import type { Locale } from '../../lib/i18n/index.js'
 
 /**
  * Apply Content-Language + Vary headers per spec 016 §8 / spec 017 §2.

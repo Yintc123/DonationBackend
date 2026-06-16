@@ -15,13 +15,13 @@ import {
   createCharityDonation,
   createProjectDonation,
   createSaleItemPurchase,
-} from '../../../../domain/order/create-services.js'
+} from '../../../domain/order/create-services.js'
 import {
   cancelOrder,
   confirmPayment,
-} from '../../../../domain/order/lifecycle-services.js'
-import { getOrderByIdOrFail } from '../../../../domain/order/query-services.js'
-import { serializeOrder } from '../../../../domain/order/serialize.js'
+} from '../../../domain/order/lifecycle-services.js'
+import { getOrderByIdOrFail } from '../../../domain/order/query-services.js'
+import { serializeOrder } from '../../../domain/order/serialize.js'
 import {
   CharityDonationBody,
   ProjectDonationBody,
@@ -29,8 +29,8 @@ import {
   type CharityDonationBodyT,
   type ProjectDonationBodyT,
   type SaleItemPurchaseBodyT,
-} from '../../../../schemas/order/body.js'
-import { OrderResponse } from '../../../../schemas/order/response.js'
+} from '../../../schemas/order/body.js'
+import { OrderResponse } from '../../../schemas/order/response.js'
 
 const UUID_V4_PATTERN =
   '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'

@@ -3,16 +3,16 @@
 import type { FastifyInstance } from 'fastify'
 import { Type, type Static } from '@sinclair/typebox'
 
-import { createSaleItem, updateSaleItem } from '../../../../domain/donation-item/sale-item-write.js'
-import { ErrorCode } from '../../../../lib/errors/index.js'
-import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
-import { SaleItemDetail } from '../../../../schemas/donation-item/detail.js'
+import { createSaleItem, updateSaleItem } from '../../../domain/donation-item/sale-item-write.js'
+import { ErrorCode } from '../../../lib/errors/index.js'
+import { parseAcceptLanguage } from '../../../lib/i18n/index.js'
+import { SaleItemDetail } from '../../../schemas/donation-item/detail.js'
 import {
   SaleItemCreateBody,
   SaleItemPatchBody,
   type SaleItemCreateBodyT,
   type SaleItemPatchBodyT,
-} from '../../../../schemas/donation-item/sale-item-write.js'
+} from '../../../schemas/donation-item/sale-item-write.js'
 
 import { registerLifecycleRoutes } from '../lifecycle-routes-helper.js'
 

@@ -4,16 +4,16 @@
 import type { FastifyInstance } from 'fastify'
 import { Type, type Static } from '@sinclair/typebox'
 
-import { createProject, updateProject } from '../../../../domain/donation-item/project-write.js'
-import { ErrorCode } from '../../../../lib/errors/index.js'
-import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
-import { ProjectDetail } from '../../../../schemas/donation-item/detail.js'
+import { createProject, updateProject } from '../../../domain/donation-item/project-write.js'
+import { ErrorCode } from '../../../lib/errors/index.js'
+import { parseAcceptLanguage } from '../../../lib/i18n/index.js'
+import { ProjectDetail } from '../../../schemas/donation-item/detail.js'
 import {
   ProjectCreateBody,
   ProjectPatchBody,
   type ProjectCreateBodyT,
   type ProjectPatchBodyT,
-} from '../../../../schemas/donation-item/project-write.js'
+} from '../../../schemas/donation-item/project-write.js'
 
 import { registerLifecycleRoutes } from '../lifecycle-routes-helper.js'
 

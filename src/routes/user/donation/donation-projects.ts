@@ -1,22 +1,21 @@
-// Spec 016 §3 / spec 017 §3 — Charity list + detail.
+// Spec 016 §3 / spec 017 §4 — DonationProject list + detail.
 
 import type { FastifyInstance } from 'fastify'
 import { Type, type Static } from '@sinclair/typebox'
 
-import { paginatedEnvelope } from '../../../../lib/http/index.js'
-import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
-import { parseCategoryKey } from '../../../../domain/category/keys.js'
+import { paginatedEnvelope } from '../../../lib/http/index.js'
+import { parseAcceptLanguage } from '../../../lib/i18n/index.js'
+import { parseCategoryKey } from '../../../domain/category/keys.js'
+import { ProjectDetail } from '../../../schemas/donation-item/detail.js'
+import { ProjectListResponse } from '../../../schemas/donation-item/list-item.js'
 import {
-  CharityDetail,
-} from '../../../../schemas/donation-item/detail.js'
+  ListQueryWithCharityId,
+  type ListQueryWithCharity,
+} from '../../../schemas/donation-item/shared.js'
 import {
-  CharityListResponse,
-} from '../../../../schemas/donation-item/list-item.js'
-import { ListQueryBase, type ListQuery } from '../../../../schemas/donation-item/shared.js'
-import {
-  getCachedCharityById,
-  listCachedCharities,
-} from '../../../../services/cached-charity.js'
+  getCachedDonationProjectById,
+  listCachedDonationProjects,
+} from '../../../services/cached-donation-project.js'
 
 import { sendDetail, setI18nHeaders, setNoCache } from '../headers.js'
 
@@ -28,18 +27,18 @@ const IdParams = Type.Object({
 })
 type IdParamsT = Static<typeof IdParams>
 
-export async function registerCharityRoutes(app: FastifyInstance): Promise<void> {
-  app.route<{ Querystring: ListQuery }>({
+export async function registerDonationProjectRoutes(app: FastifyInstance): Promise<void> {
+  app.route<{ Querystring: ListQueryWithCharity }>({
     method: 'GET',
-    url: '/donation/charities',
+    url: '/donation/donation-projects',
     schema: {
-      querystring: ListQueryBase,
-      response: { 200: CharityListResponse },
+      querystring: ListQueryWithCharityId,
+      response: { 200: ProjectListResponse },
     },
     handler: async (req, reply) => {
       const locale = parseAcceptLanguage(req.headers['accept-language'])
       const category = parseCategoryKey(req.query.category)
-      const result = await listCachedCharities({
+      const result = await listCachedDonationProjects({
         prisma: app.prisma,
         redis: app.redis,
         logger: req.log,
@@ -56,14 +55,14 @@ export async function registerCharityRoutes(app: FastifyInstance): Promise<void>
 
   app.route<{ Params: IdParamsT }>({
     method: 'GET',
-    url: '/donation/charities/:id',
+    url: '/donation/donation-projects/:id',
     schema: {
       params: IdParams,
-      response: { 200: CharityDetail },
+      response: { 200: ProjectDetail },
     },
     handler: async (req, reply) => {
       const locale = parseAcceptLanguage(req.headers['accept-language'])
-      const result = await getCachedCharityById({
+      const result = await getCachedDonationProjectById({
         prisma: app.prisma,
         redis: app.redis,
         logger: req.log,

@@ -7,16 +7,16 @@
 import type { FastifyInstance } from 'fastify'
 import { Type, type Static } from '@sinclair/typebox'
 
-import { createCharity, updateCharity } from '../../../../domain/donation-item/charity-write.js'
-import { ErrorCode } from '../../../../lib/errors/index.js'
-import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
-import { CharityDetail } from '../../../../schemas/donation-item/detail.js'
+import { createCharity, updateCharity } from '../../../domain/donation-item/charity-write.js'
+import { ErrorCode } from '../../../lib/errors/index.js'
+import { parseAcceptLanguage } from '../../../lib/i18n/index.js'
+import { CharityDetail } from '../../../schemas/donation-item/detail.js'
 import {
   CharityCreateBody,
   CharityPatchBody,
   type CharityCreateBodyT,
   type CharityPatchBodyT,
-} from '../../../../schemas/donation-item/charity-write.js'
+} from '../../../schemas/donation-item/charity-write.js'
 
 import { registerLifecycleRoutes } from '../lifecycle-routes-helper.js'
 

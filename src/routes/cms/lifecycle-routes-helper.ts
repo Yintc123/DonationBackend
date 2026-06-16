@@ -20,9 +20,9 @@ import {
   restore as lifecycleRestore,
   softDelete as lifecycleSoftDelete,
   unarchive as lifecycleUnarchive,
-} from '../../../domain/donation-item/lifecycle-actions.js'
-import type { DonationEntity } from '../../../lib/cache/index.js'
-import { NotFoundError } from '../../../lib/errors/index.js'
+} from '../../domain/donation-item/lifecycle-actions.js'
+import type { DonationEntity } from '../../lib/cache/index.js'
+import { NotFoundError } from '../../lib/errors/index.js'
 
 const UUID_V4_PATTERN =
   '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'

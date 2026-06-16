@@ -1,21 +1,21 @@
-// Spec 016 §3 / spec 017 §4 — DonationProject list + detail.
+// Spec 016 §3 / spec 017 §5 — SaleItem list + detail.
 
 import type { FastifyInstance } from 'fastify'
 import { Type, type Static } from '@sinclair/typebox'
 
-import { paginatedEnvelope } from '../../../../lib/http/index.js'
-import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
-import { parseCategoryKey } from '../../../../domain/category/keys.js'
-import { ProjectDetail } from '../../../../schemas/donation-item/detail.js'
-import { ProjectListResponse } from '../../../../schemas/donation-item/list-item.js'
+import { paginatedEnvelope } from '../../../lib/http/index.js'
+import { parseAcceptLanguage } from '../../../lib/i18n/index.js'
+import { parseCategoryKey } from '../../../domain/category/keys.js'
+import { SaleItemDetail } from '../../../schemas/donation-item/detail.js'
+import { SaleItemListResponse } from '../../../schemas/donation-item/list-item.js'
 import {
   ListQueryWithCharityId,
   type ListQueryWithCharity,
-} from '../../../../schemas/donation-item/shared.js'
+} from '../../../schemas/donation-item/shared.js'
 import {
-  getCachedDonationProjectById,
-  listCachedDonationProjects,
-} from '../../../../services/cached-donation-project.js'
+  getCachedSaleItemById,
+  listCachedSaleItems,
+} from '../../../services/cached-sale-item.js'
 
 import { sendDetail, setI18nHeaders, setNoCache } from '../headers.js'
 
@@ -27,18 +27,18 @@ const IdParams = Type.Object({
 })
 type IdParamsT = Static<typeof IdParams>
 
-export async function registerDonationProjectRoutes(app: FastifyInstance): Promise<void> {
+export async function registerSaleItemRoutes(app: FastifyInstance): Promise<void> {
   app.route<{ Querystring: ListQueryWithCharity }>({
     method: 'GET',
-    url: '/donation/donation-projects',
+    url: '/donation/sale-items',
     schema: {
       querystring: ListQueryWithCharityId,
-      response: { 200: ProjectListResponse },
+      response: { 200: SaleItemListResponse },
     },
     handler: async (req, reply) => {
       const locale = parseAcceptLanguage(req.headers['accept-language'])
       const category = parseCategoryKey(req.query.category)
-      const result = await listCachedDonationProjects({
+      const result = await listCachedSaleItems({
         prisma: app.prisma,
         redis: app.redis,
         logger: req.log,
@@ -55,14 +55,14 @@ export async function registerDonationProjectRoutes(app: FastifyInstance): Promi
 
   app.route<{ Params: IdParamsT }>({
     method: 'GET',
-    url: '/donation/donation-projects/:id',
+    url: '/donation/sale-items/:id',
     schema: {
       params: IdParams,
-      response: { 200: ProjectDetail },
+      response: { 200: SaleItemDetail },
     },
     handler: async (req, reply) => {
       const locale = parseAcceptLanguage(req.headers['accept-language'])
-      const result = await getCachedDonationProjectById({
+      const result = await getCachedSaleItemById({
         prisma: app.prisma,
         redis: app.redis,
         logger: req.log,

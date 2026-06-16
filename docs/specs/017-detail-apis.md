@@ -3,9 +3,9 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.7 |
+| 版本 | 0.8 |
 | 日期 | 2026-06-14 |
-| 適用範圍 | `backend/src/routes/v1/donation/charities/get-by-id.ts`、`backend/src/routes/v1/donation/donation-projects/get-by-id.ts`、`backend/src/routes/v1/donation/sale-items/get-by-id.ts`、`backend/src/schemas/donation-item/detail.ts` |
+| 適用範圍 | `backend/src/routes/user/donation/charities.ts`、`backend/src/routes/user/donation/donation-projects.ts`、`backend/src/routes/user/donation/sale-items.ts`、`backend/src/schemas/donation-item/detail.ts` |
 | 相關 ADR | 同 spec 016(專案級 002 Fastify schema-driven、007 Prisma;backend 002 charity-category-model、**backend 004 i18n-storage-model**)+ **backend 006 lifecycle-fields-and-cascading-visibility**(v0.5 — detail endpoint 必須通過 `whereLive` 才回 200,否則 404 不洩漏 archived / deleted)|
 | 相關 spec | `015-charity-data-model.md` v0.9(資料來源,lifecycle 欄位來源)、`016-charity-list-api.md` v0.11(list endpoint + 共用 contract 規約 + cascading visibility 規約)、`009-api-response-and-http-status.md`(status / header)、`005-error-handling.md`(錯誤回應)|
 | 設計來源 | Figma 截圖補件 IMG_4876(公益團體介紹)/ IMG_4883(捐款專案介紹)/ IMG_4882(義賣商品介紹),2026-06-14 |
@@ -360,3 +360,4 @@ API 回傳 `name: string`,client 無法分辨「拿到的是 en 還是 fallback 
 | 0.5 | 2026-06-14 | Entity lifecycle 落實到 detail endpoint(**backend ADR 006 / spec 015 v0.9 / spec 016 v0.11**):(1) §2 共通規則加「Lifecycle filter」行 — public detail 必須走 `whereLive` 4 條件,任一不通過回 404 不洩漏存在;(2) Project / SaleItem 額外 cascading visibility — parent Charity 也必須通過 `whereLive`,否則同樣 404;(3) §2 末加 implementation hint;(4) §3.3 / §4.3 / §5.3 Prisma 查詢範例改用 `findFirst` + `whereLive(now)`,Project / SaleItem 加 `charity: { is: whereLive(now) }` cascade,Category include 加 `archivedAt: null, deletedAt: null` 過濾;(5) §7 補 8 條 lifecycle 整合測試(4 種 lifecycle 路徑各 → 404、Cascading visibility Project / SaleItem 各 + 反向恢復、archived category 不出現在 categories 內、ETag 不對 404 row 簽發)|
 | 0.6 | 2026-06-14 | 與實作對齊 + best practice 補強(對齊 spec 009 v0.2 / spec 016 v0.13):**(A 類 drift)** (1) §2 / §7 `VALIDATION_ERROR` → `VALIDATION_FAILED`(spec 005 §4.2 字典為命名權威,過去版本拼成 `_ERROR` 是 drift);(2) §2 / §3.2 / §4.2 / §5.2 / §7 可選欄位無值改為「回 `null`,key 永遠存在」 — 對齊 `src/schemas/donation-item/detail.ts` 既有 `Type.Union([String, Null])` schema 與 spec 009 v0.2;(3) §3.3 / §4.3 / §5.3 import 路徑 `@/domain/donation-item/where.js` → `@/domain/lifecycle/index.js`(對齊 code);(4) §4.3 / §5.3 改用 `whereLiveWithParent(now)` 單一 helper(語意等價於 `whereLive + charity: { is: whereLive(now) }`,可讀性與正確性都優於分開拼);(5) §3.3 `NotFoundError` 範例補上 `{ resource, id, code }` payload(對齊實作)。**(B 類 best practice)** (6) §2 新增 `Cache-Control(404): no-store`(B3) — cascading visibility 與 lifecycle window 會讓 404 ↔ 200 反覆切換,client / CDN 不可 cache 404;§7 補 1 條對應測試 |
 | 0.7 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |
+| 0.8 | 2026-06-16 | §1 適用範圍欄位更新:detail handler 從 `routes/v1/donation/{resource}/get-by-id.ts` 併入 list handler 同檔 `routes/user/donation/{resource}.ts`(spec 023 v0.2 §6.2 one-file-per-resource — list + detail 共用一個 resource file) |

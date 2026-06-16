@@ -3,14 +3,14 @@
 import type { FastifyInstance } from 'fastify'
 import { Type, type Static } from '@sinclair/typebox'
 
-import { updateCategory } from '../../../../domain/category/write.js'
-import { ErrorCode } from '../../../../lib/errors/index.js'
-import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
+import { updateCategory } from '../../../domain/category/write.js'
+import { ErrorCode } from '../../../lib/errors/index.js'
+import { parseAcceptLanguage } from '../../../lib/i18n/index.js'
 import {
   CategoryAdminResponse,
   CategoryPatchBody,
   type CategoryPatchBodyT,
-} from '../../../../schemas/category/admin.js'
+} from '../../../schemas/category/admin.js'
 
 import { registerLifecycleRoutes } from '../lifecycle-routes-helper.js'
 

@@ -10,9 +10,9 @@
 
 import type { FastifyInstance } from 'fastify'
 
-import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
-import { CategoryListResponse } from '../../../../schemas/category/list.js'
-import { listCachedCategories } from '../../../../services/cached-category.js'
+import { parseAcceptLanguage } from '../../../lib/i18n/index.js'
+import { CategoryListResponse } from '../../../schemas/category/list.js'
+import { listCachedCategories } from '../../../services/cached-category.js'
 
 import { sendCategories } from '../headers.js'
 

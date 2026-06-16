@@ -13,18 +13,18 @@ import {
   deleteOrderAsAdmin,
   listOrdersForAdmin,
   patchOrderAsAdmin,
-} from '../../../../domain/order/admin-services.js'
-import { normalizeNote } from '../../../../domain/order/normalize.js'
-import { getOrderByIdOrFail } from '../../../../domain/order/query-services.js'
-import { serializeOrder } from '../../../../domain/order/serialize.js'
-import { paginatedSchema } from '../../../../lib/http/index.js'
+} from '../../domain/order/admin-services.js'
+import { normalizeNote } from '../../domain/order/normalize.js'
+import { getOrderByIdOrFail } from '../../domain/order/query-services.js'
+import { serializeOrder } from '../../domain/order/serialize.js'
+import { paginatedSchema } from '../../lib/http/index.js'
 import {
   AdminListQuery,
   AdminPatchBody,
   type AdminListQueryT,
   type AdminPatchBodyT,
-} from '../../../../schemas/order/admin.js'
-import { OrderResponse } from '../../../../schemas/order/response.js'
+} from '../../schemas/order/admin.js'
+import { OrderResponse } from '../../schemas/order/response.js'
 
 const UUID_V4_PATTERN =
   '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
