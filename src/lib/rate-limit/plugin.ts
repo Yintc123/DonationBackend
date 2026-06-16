@@ -51,6 +51,18 @@ const rateLimitPluginAsync: FastifyPluginAsync<RateLimitPluginOptions> = async (
   const log = app.log.child({ module: 'rate-limit' })
   const cfg = app.config
 
+  // Spec 010 §9.4 — global kill switch for demo / smoke-test environments.
+  // When set, we skip registering the preHandler hook entirely, so the
+  // hot path stays a no-op (no Lua eval, no header stamping, no Redis
+  // round-trip). A WARN log makes the bypass impossible to miss in ops.
+  if (cfg.RATE_LIMIT_DISABLED) {
+    log.warn(
+      { event: 'rate_limit_disabled' },
+      'rate-limit globally disabled via RATE_LIMIT_DISABLED — preHandler not registered',
+    )
+    return
+  }
+
   const defaults: GlobalRateLimitDefaults = {
     globalPerIp: opts.defaults?.globalPerIp ?? {
       limit: cfg.RATE_LIMIT_GLOBAL_PER_IP_LIMIT,

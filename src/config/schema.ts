@@ -89,6 +89,11 @@ export const ConfigSchema = Type.Object({
   LOGIN_LOCK_WINDOW_SEC: Type.Number({ default: 900, minimum: 60 }),
 
   // === Rate Limit (spec 001 §3.7 / spec 010) ===
+  // Spec 010 §9.4 — demo-friendly global kill switch. When true, the
+  // rateLimitPlugin registers no preHandler at all (cheapest possible
+  // bypass, no Redis traffic, no header stamping). Default false so
+  // tests + fresh clones get the production-safe behaviour.
+  RATE_LIMIT_DISABLED: Type.Boolean({ default: false }),
   RATE_LIMIT_GLOBAL_PER_IP_LIMIT: Type.Number({ default: 600 }),
   RATE_LIMIT_GLOBAL_PER_IP_WINDOW_SEC: Type.Number({ default: 60 }),
   RATE_LIMIT_DEFAULT_LIMIT: Type.Number({ default: 120 }),

@@ -258,4 +258,36 @@ describe('rate-limit plugin (integration, spec 010)', () => {
       expect(r.statusCode).toBe(200)
     })
   })
+
+  // Spec 010 §9.4 — demo-friendly global kill switch.
+  describe('global kill switch — RATE_LIMIT_DISABLED (spec §9.4)', () => {
+    it('bypasses the preHandler entirely when set; route never 429s past its limit', async () => {
+      app = await buildAppWithRateLimit({
+        envOverrides: { RATE_LIMIT_DISABLED: 'true' },
+        // Tight per-route limit that would normally kill the 3rd hit.
+        routeConfig: { perIp: { limit: 2, windowMs: 60_000 } },
+      })
+      const responses = await Promise.all(
+        Array.from({ length: 5 }, () => app!.inject({ method: 'GET', url: '/test' })),
+      )
+      for (const r of responses) expect(r.statusCode).toBe(200)
+      // Without the preHandler, X-RateLimit-* headers MUST be absent —
+      // their presence would mean the layer ran and silently allowed past
+      // the limit (which would be a worse bug than just not skipping).
+      expect(responses[0]!.headers['x-ratelimit-limit']).toBeUndefined()
+    })
+
+    it('still 429s in the same setup when RATE_LIMIT_DISABLED is unset (control)', async () => {
+      app = await buildAppWithRateLimit({
+        // Tight per-route limit; no kill switch.
+        routeConfig: { perIp: { limit: 2, windowMs: 60_000 } },
+      })
+      const r1 = await app.inject({ method: 'GET', url: '/test' })
+      const r2 = await app.inject({ method: 'GET', url: '/test' })
+      const r3 = await app.inject({ method: 'GET', url: '/test' })
+      expect(r1.statusCode).toBe(200)
+      expect(r2.statusCode).toBe(200)
+      expect(r3.statusCode).toBe(429)
+    })
+  })
 })
