@@ -85,6 +85,22 @@ function loadCharityLogos(): ReadonlyMap<string, CharityLogoAsset> {
   ])
 }
 
+// FK-safe deletion order. We use deleteMany (idempotent per row) rather than
+// TRUNCATE because we need to coexist with accounts tables the seed doesn't
+// touch. Orders go first: OrderLine (spec 021 §3) holds onDelete: Restrict
+// FKs to Charity / DonationProject / SaleItem, so anything that survives
+// in the orders tables would block the donation-domain wipe below. Order →
+// OrderLine cascades, so deleting Order clears OrderLine too.
+// Exported for test coverage (tests/integration/seed-clear-donation-domain.test.ts).
+export async function clearDonationDomain(prisma: PrismaClient): Promise<void> {
+  await prisma.order.deleteMany({})
+  await prisma.saleItem.deleteMany({})
+  await prisma.donationProject.deleteMany({})
+  await prisma.charityOnCategory.deleteMany({})
+  await prisma.charity.deleteMany({})
+  await prisma.category.deleteMany({})
+}
+
 async function main(): Promise<void> {
   const config = loadConfig({ readDotenv: true })
   const prisma = new PrismaClient({ datasourceUrl: composeDatabaseUrl(config) })
@@ -106,16 +122,8 @@ async function main(): Promise<void> {
     uploadPlaceholder(put, key)
 
   try {
-    // FK-safe truncate order: sale_items + donation_projects (children) →
-    // charity_categories (M:N) → charities → categories.
-    // We use deleteMany (idempotent per row) rather than TRUNCATE because we
-    // need to coexist with accounts tables that the seed doesn't touch.
     console.log('→ clearing donation domain tables')
-    await prisma.saleItem.deleteMany({})
-    await prisma.donationProject.deleteMany({})
-    await prisma.charityOnCategory.deleteMany({})
-    await prisma.charity.deleteMany({})
-    await prisma.category.deleteMany({})
+    await clearDonationDomain(prisma)
 
     // Spec 020 v0.2 §14 OQ #10 — bootstrap admin account.
     // Idempotent upsert on username='admin'. Password from
@@ -266,7 +274,12 @@ async function bootstrapAdmin(
   }
 }
 
-main().catch((err: unknown) => {
-  console.error('seed failed:', err)
-  process.exit(1)
-})
+// Run main() only when invoked as the entry script (`tsx prisma/seed.ts`).
+// Test files import named exports (clearDonationDomain) and must not trigger
+// the full seed on module load.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err: unknown) => {
+    console.error('seed failed:', err)
+    process.exit(1)
+  })
+}
