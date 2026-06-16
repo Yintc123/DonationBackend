@@ -4,6 +4,7 @@
 // individual files, so internal layout can evolve without breaking callers.
 
 export { buildETag, ifNoneMatch } from './etag.js'
+export { default as idempotencyPlugin } from './idempotency-plugin.js'
 export { default as httpResponsePlugin } from './plugin.js'
 export { HttpStatus, type HttpSuccessStatus } from './status.js'
 export {

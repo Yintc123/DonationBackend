@@ -22,7 +22,7 @@ import { googleAuthPlugin } from './lib/auth-google/index.js'
 import { type Clock, systemClock } from './lib/clock.js'
 import { errorHandlerPlugin } from './lib/errors/index.js'
 import { healthPlugin } from './lib/health/index.js'
-import { httpResponsePlugin, USER_API_VERSIONS } from './lib/http/index.js'
+import { httpResponsePlugin, idempotencyPlugin, USER_API_VERSIONS } from './lib/http/index.js'
 import { createLogger, loggerPolicyPlugin } from './lib/logger/index.js'
 import { openapiPlugin } from './lib/openapi/index.js'
 import { prismaPlugin } from './lib/prisma/index.js'
@@ -101,6 +101,11 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   await app.register(prismaPlugin)
   await app.register(redisPlugin)
   await app.register(rateLimitPlugin)
+  // Spec 009 §7 — Idempotency-Key middleware. Depends on the redis plugin
+  // (lookup / save go to the cache tier). Placed AFTER rate-limit so a
+  // throttled request never enters the idempotency pipeline, and BEFORE
+  // routes so the preHandler hook can intercept the chain.
+  await app.register(idempotencyPlugin)
   await app.register(authPlugin)
   // Spec 020 §11 / spec 022 §8.2 — best-effort JWT decode into req.user on
   // every request (onRequest hook). Must register AFTER authPlugin (depends
