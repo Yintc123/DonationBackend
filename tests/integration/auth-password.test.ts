@@ -124,6 +124,46 @@ describe('auth/password integration (spec 008 §13.2)', () => {
       const body = res.json() as ProblemResponse
       expect(body.code).toBe('VALIDATION_FAILED')
     })
+
+    it('omits role → account is stored with role=USER (1)', async () => {
+      app = await buildAuthApp()
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { email: 'no-role@example.com', password: 'no-role-passwd-1' },
+      })
+      expect(res.statusCode).toBe(201)
+      const stored = await app.prisma.account.findUnique({
+        where: { email: 'no-role@example.com' },
+      })
+      expect(stored?.role).toBe(1)
+    })
+
+    it('accepts role=0 in body → account is stored with role=ADMIN', async () => {
+      app = await buildAuthApp()
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { email: 'admin-bod@example.com', password: 'admin-passwd-99', role: 0 },
+      })
+      expect(res.statusCode).toBe(201)
+      const stored = await app.prisma.account.findUnique({
+        where: { email: 'admin-bod@example.com' },
+      })
+      expect(stored?.role).toBe(0)
+    })
+
+    it('rejects role outside {0,1} with 400 VALIDATION_FAILED', async () => {
+      app = await buildAuthApp()
+      const res = await app.inject({
+        method: 'POST',
+        url: '/auth/register',
+        payload: { email: 'badrole@example.com', password: 'badrole-passwd-1', role: 7 },
+      })
+      expect(res.statusCode).toBe(400)
+      const body = res.json() as ProblemResponse
+      expect(body.code).toBe('VALIDATION_FAILED')
+    })
   })
 
   // ── /login ──────────────────────────────────────────────────────────────

@@ -32,7 +32,7 @@ import {
 } from './login-lock.js'
 import { hash as hashPassword, needsRehash, verify as verifyPassword } from './password.js'
 import type { PasswordHashOpts } from './password.js'
-import { loadAccountRole, Role } from './role.js'
+import { loadAccountRole, type RoleValue } from './role.js'
 import {
   createRefreshStore,
   signAccessToken,
@@ -79,6 +79,12 @@ export interface RegisterInput {
   /** Optional secondary identifier. At least one of (username, email) is required. */
   email?: string
   password: string
+  /**
+   * demo 專案策略:body 可帶 `role`(0=ADMIN / 1=USER),未帶則套 DB
+   * 預設值(USER)。Route schema 已限縮為 {0,1},非法值在 Fastify 那層
+   * 就被擋成 VALIDATION_FAILED,service 不再做防呆。
+   */
+  role?: RoleValue
 }
 
 export interface LoginInput {
@@ -155,15 +161,13 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         // Spec 007 §10.8 / spec 008 §5.4 — register IS an interactive auth
         // event (we issue a token bundle immediately on success), so seed the
         // audit columns at create time. Avoids a redundant UPDATE round-trip.
-        // Demo project policy: every self-registered account lands as
-        // ADMIN so the operator who just signed up can immediately reach
-        // /cms. Production deployments should default to USER and gate
-        // admin promotion behind an explicit flow.
+        // Demo project policy: caller-supplied `role` wins (route schema
+        // limits it to {0,1}); omitted → DB default 1 (USER) applies.
         const account = await deps.prisma.account.create({
           data: {
             username,
             email,
-            role: Role.ADMIN,
+            role: input.role,
             lastLoginAt: new Date(),
             lastLoginType: 'PASSWORD',
             passwordCredential: {

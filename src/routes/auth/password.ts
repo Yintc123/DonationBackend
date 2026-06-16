@@ -22,6 +22,7 @@ interface RegisterBody {
   username?: string
   email?: string
   password: string
+  role?: 0 | 1
 }
 
 interface LoginBody {
@@ -81,6 +82,10 @@ export async function registerAuthRoutes(
         ),
         email: Type.Optional(Type.String({ format: 'email', maxLength: 254 })),
         password: Type.String({ minLength: app.config.PASSWORD_MIN_LENGTH, maxLength: 256 }),
+        // 前端可帶 role:`0 = ADMIN`、`1 = USER`(spec 020 §2.3 role 編碼)。
+        // demo 專案策略:不設權限閘門,body 帶什麼就用什麼;未帶則由 DB
+        // 預設值 1(USER)生效。production 應改為 admin-only 升級流程。
+        role: Type.Optional(Type.Union([Type.Literal(0), Type.Literal(1)])),
       }),
     },
     config: {
