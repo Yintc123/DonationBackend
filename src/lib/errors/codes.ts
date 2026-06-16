@@ -36,6 +36,24 @@ export const ErrorCode = Object.freeze({
   // Surfaced when Redis is unreachable and the fail-closed policy fires.
   RATE_LIMIT_UNAVAILABLE: 'RATE_LIMIT_UNAVAILABLE',
 
+  // ── §4.2.4 idempotency (spec 009 §7) ───────────────────────────────────
+  // Owned by spec 009. Surfaced by the global idempotency-key middleware.
+  //   INVALID:  header present but not a UUID/ULID (400).
+  //   CONFLICT: same key replayed against a different method/path/body
+  //             hash within the TTL window (422 — caller-side bug; the
+  //             cache entry won the race but the new request disagrees).
+  IDEMPOTENCY_KEY_INVALID: 'IDEMPOTENCY_KEY_INVALID',
+  IDEMPOTENCY_KEY_CONFLICT: 'IDEMPOTENCY_KEY_CONFLICT',
+
+  // ── §4.2.* invariant violation (spec 021 §7) ───────────────────────────
+  // 500 — order-domain assertions that fire INSIDE the create transaction
+  // when application code has already filtered user-facing failures. By
+  // the time we reach validators.ts the only way to trip these is a code
+  // bug (line builder leaks an impossible state, transaction sees stale
+  // data, etc.), so the response is opaque (expose=false) while the log
+  // captures the rule name.
+  INVARIANT_VIOLATED: 'INVARIANT_VIOLATED',
+
   // ── §4.2.* pagination (spec 009 §5 / spec 016 §5.1) ───────────────────
   // Emitted by src/lib/cursor/ when a base64url cursor body fails any
   // structural check (alphabet, decode, JSON parse, required fields,
@@ -116,10 +134,14 @@ export const ErrorCode = Object.freeze({
   // only one this phase actually throws (TypeBox catches lines-required /
   // too-many at the schema layer with VALIDATION_FAILED). ORDER_NOT_FOUND
   // / ORDER_STATUS_INVALID land with Phase 3 (confirm-payment / cancel /
-  // GET / admin PATCH).
+  // GET / admin PATCH). INVALID_RECEIPT_OPTION_FOR_SUBJECT was added by
+  // spec 022 v0.12 user PATCH §4.5a — SALE_ITEM orders cannot carry a
+  // receiptOption; 409 because the caller's intent (change receipt) is
+  // semantically incompatible with the order's subject.
   INVALID_BILLING_DAY: 'INVALID_BILLING_DAY',
   ORDER_NOT_FOUND: 'ORDER_NOT_FOUND',
   ORDER_STATUS_INVALID: 'ORDER_STATUS_INVALID',
+  INVALID_RECEIPT_OPTION_FOR_SUBJECT: 'INVALID_RECEIPT_OPTION_FOR_SUBJECT',
 
   // ── §4.2.* donation write API (spec 020 §10) ───────────────────────────
   CHARITY_CATEGORY_INVALID: 'CHARITY_CATEGORY_INVALID',
@@ -149,6 +171,9 @@ export const ErrorCodeStatus: Readonly<Record<ErrorCodeValue, number>> = Object.
   [ErrorCode.UPSTREAM_TIMEOUT]: 504,
   [ErrorCode.GATEWAY_TIMEOUT]: 504,
   [ErrorCode.RATE_LIMIT_UNAVAILABLE]: 503,
+  [ErrorCode.IDEMPOTENCY_KEY_INVALID]: 400,
+  [ErrorCode.IDEMPOTENCY_KEY_CONFLICT]: 422,
+  [ErrorCode.INVARIANT_VIOLATED]: 500,
   [ErrorCode.PAGINATION_CURSOR_INVALID]: 400,
   [ErrorCode.UNIQUE_CONSTRAINT]: 409,
   [ErrorCode.FK_CONSTRAINT]: 400,
@@ -180,6 +205,7 @@ export const ErrorCodeStatus: Readonly<Record<ErrorCodeValue, number>> = Object.
   [ErrorCode.INVALID_BILLING_DAY]: 400,
   [ErrorCode.ORDER_NOT_FOUND]: 404,
   [ErrorCode.ORDER_STATUS_INVALID]: 409,
+  [ErrorCode.INVALID_RECEIPT_OPTION_FOR_SUBJECT]: 409,
   [ErrorCode.CHARITY_CATEGORY_INVALID]: 400,
   [ErrorCode.INVALID_S3_KEY_BINDING]: 400,
   [ErrorCode.INVALID_LIFECYCLE_RANGE]: 400,

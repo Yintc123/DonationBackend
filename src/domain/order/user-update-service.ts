@@ -27,6 +27,7 @@ import type { PrismaClient, ReceiptOption } from '@prisma/client'
 import type { FastifyBaseLogger } from 'fastify'
 
 import { ConflictError, NotFoundError } from '../../lib/errors/index.js'
+import { ErrorCode } from '../../lib/errors/codes.js'
 
 import { ORDER_INCLUDE, type HydratedOrder } from './include.js'
 import { normalizeNote } from './normalize.js'
@@ -105,7 +106,7 @@ export async function patchOrderAsUser(
     ) {
       throw new ConflictError({
         message: 'SALE_ITEM orders cannot have receiptOption',
-        code: 'INVALID_RECEIPT_OPTION_FOR_SUBJECT',
+        code: ErrorCode.INVALID_RECEIPT_OPTION_FOR_SUBJECT,
         details: { subjectType },
       })
     }

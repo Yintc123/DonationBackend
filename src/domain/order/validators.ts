@@ -24,6 +24,7 @@
 import type { DonationFrequency, BillingDay, OrderSubjectType, ReceiptOption } from '@prisma/client'
 
 import { AppError } from '../../lib/errors/AppError.js'
+import { ErrorCode } from '../../lib/errors/codes.js'
 
 // ── Error class ────────────────────────────────────────────────────────────
 
@@ -32,7 +33,7 @@ export class InvariantError extends AppError {
     super({
       message,
       statusCode: 500,
-      code: 'INVARIANT_VIOLATED',
+      code: ErrorCode.INVARIANT_VIOLATED,
     })
   }
 }
