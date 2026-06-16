@@ -3,8 +3,8 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.11 |
-| 日期 | 2026-06-15 |
+| 版本 | 0.12 |
+| 日期 | 2026-06-16 |
 | 適用範圍 | `backend/src/routes/user/donation/orders.ts`(新)、`backend/src/routes/cms/orders.ts`(新)、`backend/src/domain/order/*`(spec 021 共享)、`backend/src/lib/clock.ts`(spec 021 §7.7 共享) |
 | 相關 ADR | 待補 |
 | 相關 spec | `021-donation-order-data-model.md` v0.2(**OrderLine pattern** schema 基礎)、`020-donation-write-api.md`(admin role=0 gate)、`015-charity-data-model.md`、`005-error-handling.md`、`019-cache-policy.md`、`004-logger-module.md` |
@@ -31,7 +31,7 @@
 
 ### 1.2 In scope
 
-- 6 個公開端點 + 4 個 admin 端點(總 10 個)
+- 7 個公開端點 + 4 個 admin 端點(總 11 個 — v0.12 新加 user PATCH §4.5a)
 - TypeBox request / response schema(對齊 spec 021 v0.2 Order + OrderLine shape)
 - Mock payment `POST /confirm-payment`
 - Validation 雙層(TypeBox + service;invariant 在 spec 021 §7)
@@ -101,9 +101,9 @@
 
 ---
 
-## 3. 端點清單(10 個,同 v0.1)
+## 3. 端點清單(11 個,v0.12 +1)
 
-### 3.1 公開(6 個)
+### 3.1 公開(7 個)
 
 | Method | Path | 用途 |
 |---|---|---|
@@ -112,6 +112,7 @@
 | POST | `/v1/donation/orders/sale-item-purchase` | 對 SaleItem 購買 |
 | POST | `/v1/donation/orders/:id/confirm-payment` | Mock 結帳:PENDING → PAID |
 | POST | `/v1/donation/orders/:id/cancel` | User 取消:PENDING → CANCELLED |
+| PATCH | `/v1/donation/orders/:id` | User 修改自己的訂單資訊(donorName / isAnonymous / note / receiptOption;§4.5a v0.12 新)|
 | GET | `/v1/donation/orders/:id` | Detail |
 
 ### 3.2 Admin(4 個,role=0)
@@ -508,6 +509,64 @@ Idempotent:
   REFUNDED  → 409
 ```
 
+### 4.5a `PATCH /v1/donation/orders/:id`(v0.12 新加)
+
+User 端訂單修正 — 持有 `orderId` 視同擁有者(同 §2.1 風險表 / 同 §4.5 cancel 的 trust model),允許在 **PENDING / PAID** 階段修改自己填過的資訊(打錯字、改受贈人姓名、改抬頭、加備注)。**不**經 admin gate,**不**走 `/cms`(對齊 spec 024 §5.1 規約:操作者是 user 自己,非 admin)。
+
+**安全注意**:本期 trust model 為「持有 orderId = 擁有者」(UUIDv4 不可枚舉),與 GET / cancel 一致。若 orderId 被分享 / log 洩露,任何持有者皆可修改;更嚴格的 `manageToken` 機制留 §11 OQ #2 / spec 024 §5.1 未來工作。
+
+```
+Body(全部 optional,strict additionalProperties: false):
+{
+  "donorName"?: string,                            // minLength 1, maxLength 120
+  "isAnonymous"?: boolean,
+  "note"?: string | null,                          // null = 清空;空字串 / 全空白 → service 層 normalize → null
+  "receiptOption"?: ReceiptOption | null            // 僅 CHARITY/PROJECT 訂單可給;SALE_ITEM 訂單給非 null → 409 INVALID_RECEIPT_OPTION_FOR_SUBJECT
+}
+
+成功:
+  Order 對應欄位 update;updatedAt 重設
+  → 200 + 完整 OrderResponse(同 §4.1)
+
+狀態前置條件:
+  status ∈ { PENDING, PAID }   ✅ 可改
+  status ∈ { CANCELLED, FAILED, REFUNDED } → 409 ORDER_STATUS_INVALID
+  → 已終止 / 已退款的訂單視為帳務 frozen,user 端不允許再改
+
+不可改欄位(送了會 400 VALIDATION_FAILED,被 additionalProperties: false 擋):
+  status / paidAt / cancelledAt        ← lifecycle,由 confirm-payment / cancel / admin 控制
+  amountTwd / nextChargeAt              ← 由 service 算,immutable(spec 021 §7.7)
+  lines / subjectType / FK              ← order 建立後不可變(spec 021 §7.6)
+
+Empty patch(body = {} 或全部 undefined):
+  → 200 + 當前 OrderResponse(no-op,不發 audit event)
+
+SALE_ITEM + receiptOption(非 null):
+  → 409 INVALID_RECEIPT_OPTION_FOR_SUBJECT(對齊 spec 021 §7.5;v0.12 新 error code)
+  service 層擋(不用 TypeBox 擋,因為 PATCH body 對三種 subjectType 共用 schema)
+
+note normalize:
+  傳 ""  → 寫 null
+  傳 "  " → 寫 null
+  傳 null → 寫 null
+  傳 "x" → 寫 "x"
+  不傳 → 不改(undefined)
+```
+
+**Audit**:`order_user_patched`(info,§9.1 v0.12 補 payload 樣本)。僅在 `fieldsChanged.length > 0` 才發;empty patch / 值未實際變動 不發。
+
+**Rate-limit**:`order_lifecycle`(60/h per-IP),同 cancel / confirm-payment 共 bucket(§8.1)。
+
+**Error code matrix**:
+| 場景 | HTTP | Code |
+|---|---|---|
+| order 不存在 | 404 | `ORDER_NOT_FOUND` |
+| status 不允許(CANCELLED/FAILED/REFUNDED) | 409 | `ORDER_STATUS_INVALID` |
+| SALE_ITEM 訂單給非 null `receiptOption` | 409 | `INVALID_RECEIPT_OPTION_FOR_SUBJECT`(v0.12 新) |
+| body 帶未宣告欄位(e.g. `status`、`amountTwd`)| 400 | `VALIDATION_FAILED`(`additionalProperties: false` 擋) |
+| `donorName` 空字串 / 超長 | 400 | `VALIDATION_FAILED`(TypeBox `minLength: 1, maxLength: 120`) |
+| `note` 超 500 | 400 | `VALIDATION_FAILED` |
+
 ### 4.6 `GET /v1/donation/orders/:id`
 
 ```
@@ -697,6 +756,9 @@ Body {
 | `note` 為空字串或全空白(v0.4,v0.7 釐清落點)| **service 層** trim:`const trimmed = body.note?.trim(); const note = trimmed === '' || trimmed == null ? null : trimmed`。TypeBox 不擋空字串(允許 `Type.String({ maxLength: 500 })` minLength 預設 0);避免 `""` 與 `null` 兩種「無備注」狀態並存 |
 | `isAnonymous` 省略(v0.7)| **service 層** fallback `body.isAnonymous ?? false`;**不**依賴 Ajv `useDefaults`(降低設定依賴 + 行為對 TDD 一目了然) |
 | `nextChargeAt` 計算(v0.5,RECURRING 才算)| 依 spec 021 §7.7 公式 — 由 service 層算 + 進 transaction 寫進 DB;`now` 經 `deps.clock()` 注入(v0.7),不在 service 內 `new Date()` |
+| **User PATCH §4.5a `status` 前置條件(v0.12)** | `status ∈ { PENDING, PAID }` 才允許改;其他 status → 409 `ORDER_STATUS_INVALID`(已終止 / 已退款訂單帳務 frozen) |
+| **User PATCH §4.5a SALE_ITEM + `receiptOption`(v0.12)** | `subjectType === SALE_ITEM && body.receiptOption != null` → 409 `INVALID_RECEIPT_OPTION_FOR_SUBJECT`(對齊 spec 021 §7.5;SALE_ITEM 訂單 `receiptOption` 必為 null)|
+| **User PATCH §4.5a empty patch(v0.12)** | body 等於 `{}` 或所有欄位都是 undefined → 直接回 200 + 當前 order(no-op,不發 audit、不寫 DB)|
 
 ### 5.3 Domain 層(invariant)
 
@@ -712,13 +774,14 @@ Body {
 
 ---
 
-## 7. Error codes(新增 5 個)
+## 7. Error codes(新增 5 個 + v0.12 補 1 個)
 
 | Code | HTTP | 場景 |
 |---|---|---|
 | `INVALID_BILLING_DAY` | 400 | RECURRING 沒選 billingDay,或 ONE_TIME 給了 |
 | `ORDER_NOT_FOUND` | 404 | orderId 不存在 |
-| `ORDER_STATUS_INVALID` | 409 | confirm / cancel 起始 status 錯,或 admin PATCH 違反 |
+| `ORDER_STATUS_INVALID` | 409 | confirm / cancel / **user PATCH(v0.12)** 起始 status 錯,或 admin PATCH 違反 |
+| `INVALID_RECEIPT_OPTION_FOR_SUBJECT`(v0.12 新)| 409 | user PATCH 對 SALE_ITEM 訂單給非 null `receiptOption`(對齊 spec 021 §7.5)|
 
 > **v0.8 spec drift 修正**:`ORDER_LINES_REQUIRED` / `ORDER_TOO_MANY_LINES`(v0.2 引入)實際上**從未需要落地** — TypeBox `items.length min=max=1`(spec §4.3 / §5.1)在 route 層直接 reject 成 `VALIDATION_FAILED`。為避免規格 / code 漂移,從表格與規約移除這兩個 code 編號。
 
@@ -737,7 +800,7 @@ Body {
 | 端點群 | per-IP |
 |---|---|
 | 3 個 create | 30 / hour |
-| confirm-payment / cancel | 60 / hour |
+| confirm-payment / cancel / **user PATCH §4.5a(v0.12)** | 60 / hour(共 `order_lifecycle` bucket)|
 | GET detail | 300 / hour |
 
 ### 8.2 Admin
@@ -759,6 +822,7 @@ Body {
 | `order_created` | 三個 create 成功 | info | ✅ |
 | `order_payment_confirmed` | confirm-payment 實際改 PAID | info | ✅ |
 | `order_cancelled` | cancel 實際改 CANCELLED | info | ✅ |
+| `order_user_patched`(v0.12 新)| user PATCH 實際改動欄位(`fieldsChanged.length > 0`)| info | ✅ |
 | `order_admin_patched` | admin PATCH 成功 | info | ✅ |
 | `order_admin_deleted` | admin DELETE 成功 | warn | ✅ |
 
@@ -774,6 +838,13 @@ Body {
 
 // order_cancelled — cancel 「實際改 CANCELLED」(idempotent no-op 不發)
 { "event": "order_cancelled", "orderId": "<uuid>", "reqId": "<uuid>", "audit": true }
+
+// order_user_patched (v0.12) — user 在 PENDING/PAID 改自己訂單;
+//   無 accountId(public endpoint,trust = 持有 orderId);
+//   只有 fieldsChanged.length > 0 才發(empty patch / 值未變動 不發)。
+{ "event": "order_user_patched", "orderId": "<uuid>",
+  "fieldsChanged": ["donorName", "isAnonymous"],
+  "reqId": "<uuid>", "audit": true }
 
 // order_admin_patched — 含 statusBefore / statusAfter(若 status 有改)
 { "event": "order_admin_patched", "orderId": "<uuid>", "accountId": "<admin uuid>",
@@ -833,8 +904,20 @@ Body {
 | **v0.5** Create with isAnonymous 缺(default)| DB row 寫入 false |
 | **v0.5** Response 含 inflated subject(charity / project + parent / saleItem + parent)| 對應 IMG_4888/4889/4890 顯示資料 |
 | **v0.5** Admin list `?isAnonymous=true` | 結果只含匿名訂單 |
+| **v0.12** User PATCH PENDING 改 donorName | 200 + DB row donorName 更新 + audit `order_user_patched` fieldsChanged:["donorName"] |
+| **v0.12** User PATCH PAID 改 receiptOption(CHARITY) | 200 + DB row updated |
+| **v0.12** User PATCH 全部欄位 | 200 + DB row 對應更新 + audit fieldsChanged 含全欄位 |
+| **v0.12** User PATCH note=""(空字串)| 200 + DB row note=null + audit fieldsChanged 含 note |
+| **v0.12** User PATCH empty body `{}` | 200 + DB row 不變 + **不**發 audit(no-op) |
+| **v0.12** User PATCH 值未實際變動(donorName 等於原值)| 200 + 不發 audit(fieldsChanged 為空)|
+| **v0.12** User PATCH CANCELLED 訂單 | 409 `ORDER_STATUS_INVALID` |
+| **v0.12** User PATCH FAILED 訂單 | 409 `ORDER_STATUS_INVALID` |
+| **v0.12** User PATCH REFUNDED 訂單 | 409 `ORDER_STATUS_INVALID` |
+| **v0.12** User PATCH SALE_ITEM 帶 receiptOption=DONATION_RECEIPT | 409 `INVALID_RECEIPT_OPTION_FOR_SUBJECT` |
+| **v0.12** User PATCH 帶 status / paidAt / amountTwd 等禁止欄位 | 400 `VALIDATION_FAILED`(additionalProperties: false 擋)|
+| **v0.12** User PATCH 不存在 orderId | 404 `ORDER_NOT_FOUND` |
 
-合計約 33 ~ 40 個 integration test(v0.5 新加 8 個 + v0.7 新加 3 個邊界 case)。
+合計約 45 個 integration test(v0.5 新加 8 個 + v0.7 新加 3 個 + v0.12 新加 ~11 個)。
 
 ### 10.2 不測試
 
@@ -848,7 +931,7 @@ Body {
 | # | 問題 | 暫定方向 |
 |---|---|---|
 | 1 | 真實 payment gateway | Stripe / Line Pay / 街口;ADR + webhook + secrets;本期不做 |
-| 2 | End-user 訂單查詢 / 取消(無 Account) | donorEmail + manageToken 寄信流程;本期不做 |
+| 2 | End-user 訂單查詢 / 取消 / **修改(v0.12 §4.5a 部分落地)**(無 Account) | **v0.12**:user PATCH 已落地(trust = 持有 orderId,同 GET/cancel 的 trust model)。剩餘未做:user-side **list**(看「我的全部訂單」)— 需 donorEmail + manageToken 寄信流程,本期不做 |
 | 3 | Cart(SaleItem 多品)+ 混合單(donation + sale-item 同單)| 放寬 SALE_ITEM_PURCHASE 的 items maxItems;或加 `POST /cart` endpoint 接受 mixed lines;schema 已 future-proof,只需放寬端點 |
 | 4 | 退款 / 部分退款 endpoint | admin PATCH `status=REFUNDED` 已可表達整單退;部分退款需 `RefundLine` 子表(對應 spec 021 OQ #3) |
 | 5 | 訂單收據 / 確認信 | 無寄信能力 |
@@ -890,3 +973,4 @@ Body {
 | 0.9 | 2026-06-15 | §4.1 / §4.2 註解釐清:**`isAnonymous` 三類訂單(Charity / DonationProject / SaleItem)都掛 checkbox** — Charity 對應 IMG_4888、Project 對應 IMG_4889、SaleItem 對應 IMG_4890(原 v0.5 文字偏重 IMG_4890,易誤解為僅 SaleItem 可匿名)。code 自 v0.5 起 schema + 三個 body / service / admin filter / admin PATCH 已全面支援,本版純文件對齊 + integration test 補強(Project / SaleItem 各加 isAnonymous=true 持久化驗證)。對應 spec 021 v0.8 |
 | 0.10 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |
 | 0.11 | 2026-06-16 | §1 適用範圍欄位更新:public orders `routes/v1/donation/orders/*` → `routes/user/donation/orders.ts`;admin orders `routes/v1/admin/orders/*` → `routes/cms/orders.ts`(spec 023 v0.2 §6.2 one-file-per-resource,git mv 完成) |
+| 0.12 | 2026-06-16 | **加 user-side PATCH endpoint(§4.5a)** — `PATCH /v1/donation/orders/:id`,允許 user 在 status ∈ {PENDING, PAID} 改 `donorName` / `isAnonymous` / `note` / `receiptOption`。落 `/user/v{N}` surface(對齊 spec 024 §5.1 規約);trust model 為「持有 orderId = 擁有者」(同 §2.1 / §4.5 cancel,**非** admin)。CANCELLED / FAILED / REFUNDED 訂單帳務 frozen,user 不可改 → 409 `ORDER_STATUS_INVALID`。SALE_ITEM 訂單給非 null receiptOption → 409 `INVALID_RECEIPT_OPTION_FOR_SUBJECT`(對齊 spec 021 §7.5)。Empty patch / 值未變動 → 200 no-op,不發 audit。新 audit event `order_user_patched`(僅 fieldsChanged 非空才發,**不**含 accountId — 因 endpoint 無 auth)。Rate-limit 走既有 `order_lifecycle` bucket(60/h)。新 error code `INVALID_RECEIPT_OPTION_FOR_SUBJECT`。§3 端點 10 → 11;§10 +~11 integration test。§11 OQ #2 釐清「user-side update 已落地;list 仍為 future」。spec 024 §5.1「未來規劃」於 spec 024 v0.3 收束為「方案 A 落地」|

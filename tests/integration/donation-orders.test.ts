@@ -786,3 +786,227 @@ describe('POST /user/v1/donation/orders/:id/cancel (spec 022 §4.5)', () => {
     expect(res.json()).toMatchObject({ code: 'ORDER_NOT_FOUND' })
   })
 })
+
+// ── PATCH /:id (§4.5a, v0.12) ──────────────────────────────────────────────
+
+describe('PATCH /user/v1/donation/orders/:id (spec 022 §4.5a v0.12)', () => {
+  it('PENDING: updates donorName and persists to DB', async () => {
+    const created = await createPendingCharityOrder()
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${created.id}`,
+      payload: { donorName: 'New Name' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as OrderJson
+    expect(body.donorName).toBe('New Name')
+    const row = await app.prisma.order.findUnique({ where: { id: created.id } })
+    expect(row?.donorName).toBe('New Name')
+  })
+
+  it('PAID order can still be patched (receiptOption change is a common reason)', async () => {
+    const created = await createPendingCharityOrder()
+    await app.inject({
+      method: 'POST',
+      url: `/user/v1/donation/orders/${created.id}/confirm-payment`,
+    })
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${created.id}`,
+      payload: { receiptOption: 'INDIVIDUAL' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as OrderJson).receiptOption).toBe('INDIVIDUAL')
+    const row = await app.prisma.order.findUnique({ where: { id: created.id } })
+    expect(row?.receiptOption).toBe('INDIVIDUAL')
+    expect(row?.status).toBe('PAID')
+  })
+
+  it('updates all four whitelisted fields at once', async () => {
+    const created = await createPendingCharityOrder()
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${created.id}`,
+      payload: {
+        donorName: 'All Four',
+        isAnonymous: true,
+        note: '請以匿名顯示',
+        receiptOption: 'CORPORATE',
+      },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as OrderJson
+    expect(body.donorName).toBe('All Four')
+    expect(body.isAnonymous).toBe(true)
+    expect(body.note).toBe('請以匿名顯示')
+    expect(body.receiptOption).toBe('CORPORATE')
+  })
+
+  it('note="" normalises to null in DB (spec 022 §5.2)', async () => {
+    const created = await createPendingCharityOrder()
+    // seed a note first so we can verify the clear
+    await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${created.id}`,
+      payload: { note: 'initial' },
+    })
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${created.id}`,
+      payload: { note: '' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as OrderJson).note).toBe(null)
+    const row = await app.prisma.order.findUnique({ where: { id: created.id } })
+    expect(row?.note).toBe(null)
+  })
+
+  it('empty body {} is a 200 no-op (no DB write, no audit)', async () => {
+    const created = await createPendingCharityOrder()
+    const before = await app.prisma.order.findUnique({ where: { id: created.id } })
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${created.id}`,
+      payload: {},
+    })
+    expect(res.statusCode).toBe(200)
+    const after = await app.prisma.order.findUnique({ where: { id: created.id } })
+    // updatedAt must NOT change — Prisma stamps it on every update().
+    expect(after?.updatedAt.toISOString()).toBe(before?.updatedAt.toISOString())
+  })
+
+  it('value-equal-to-current is a 200 no-op (no DB write)', async () => {
+    const created = await createPendingCharityOrder()
+    const before = await app.prisma.order.findUnique({ where: { id: created.id } })
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${created.id}`,
+      payload: { donorName: before!.donorName }, // already 'X'
+    })
+    expect(res.statusCode).toBe(200)
+    const after = await app.prisma.order.findUnique({ where: { id: created.id } })
+    expect(after?.updatedAt.toISOString()).toBe(before?.updatedAt.toISOString())
+  })
+
+  it('returns 409 ORDER_STATUS_INVALID when status is CANCELLED', async () => {
+    const created = await createPendingCharityOrder()
+    await app.inject({
+      method: 'POST',
+      url: `/user/v1/donation/orders/${created.id}/cancel`,
+    })
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${created.id}`,
+      payload: { donorName: 'X' },
+    })
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toMatchObject({ code: 'ORDER_STATUS_INVALID' })
+  })
+
+  it('returns 409 ORDER_STATUS_INVALID when status is FAILED', async () => {
+    const created = await createPendingCharityOrder()
+    // FAILED is only reachable via admin patch in current code; flip directly.
+    await app.prisma.order.update({
+      where: { id: created.id },
+      data: { status: 'FAILED' },
+    })
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${created.id}`,
+      payload: { donorName: 'X' },
+    })
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toMatchObject({ code: 'ORDER_STATUS_INVALID' })
+  })
+
+  it('returns 409 ORDER_STATUS_INVALID when status is REFUNDED', async () => {
+    const created = await createPendingCharityOrder()
+    await app.prisma.order.update({
+      where: { id: created.id },
+      data: { status: 'REFUNDED' },
+    })
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${created.id}`,
+      payload: { donorName: 'X' },
+    })
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toMatchObject({ code: 'ORDER_STATUS_INVALID' })
+  })
+
+  it('returns 409 INVALID_RECEIPT_OPTION_FOR_SUBJECT for SALE_ITEM order + non-null receiptOption', async () => {
+    // SALE_ITEM order is born receiptOption=null (spec 021 §7.5).
+    const charity = await seedCharity()
+    const item = await seedSaleItem(charity.id, { priceTwd: 100 })
+    const create = await app.inject({
+      method: 'POST',
+      url: '/user/v1/donation/orders/sale-item-purchase',
+      payload: {
+        donorName: 'Buyer',
+        items: [{ saleItemId: item.id, quantity: 1 }],
+      },
+    })
+    const order = create.json() as OrderJson
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${order.id}`,
+      payload: { receiptOption: 'INDIVIDUAL' },
+    })
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toMatchObject({ code: 'INVALID_RECEIPT_OPTION_FOR_SUBJECT' })
+  })
+
+  it('SALE_ITEM order may patch receiptOption=null explicitly (no-op since already null)', async () => {
+    const charity = await seedCharity()
+    const item = await seedSaleItem(charity.id, { priceTwd: 100 })
+    const create = await app.inject({
+      method: 'POST',
+      url: '/user/v1/donation/orders/sale-item-purchase',
+      payload: {
+        donorName: 'Buyer',
+        items: [{ saleItemId: item.id, quantity: 1 }],
+      },
+    })
+    const order = create.json() as OrderJson
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${order.id}`,
+      payload: { receiptOption: null, donorName: 'Buyer Renamed' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect((res.json() as OrderJson).donorName).toBe('Buyer Renamed')
+    expect((res.json() as OrderJson).receiptOption).toBe(null)
+  })
+
+  it('returns 400 VALIDATION_FAILED when body contains forbidden fields (status / paidAt / amountTwd)', async () => {
+    const created = await createPendingCharityOrder()
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${created.id}`,
+      payload: { status: 'PAID' },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toMatchObject({ code: 'VALIDATION_FAILED' })
+  })
+
+  it('returns 400 VALIDATION_FAILED when donorName is empty string', async () => {
+    const created = await createPendingCharityOrder()
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/user/v1/donation/orders/${created.id}`,
+      payload: { donorName: '' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('returns 404 ORDER_NOT_FOUND when order does not exist', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/user/v1/donation/orders/44444444-4444-4444-8444-444444444444',
+      payload: { donorName: 'ghost' },
+    })
+    expect(res.statusCode).toBe(404)
+    expect(res.json()).toMatchObject({ code: 'ORDER_NOT_FOUND' })
+  })
+})

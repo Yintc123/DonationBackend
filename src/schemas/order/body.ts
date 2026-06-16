@@ -93,3 +93,27 @@ export const SaleItemPurchaseBody = Type.Object(
   { additionalProperties: false },
 )
 export type SaleItemPurchaseBodyT = Static<typeof SaleItemPurchaseBody>
+
+// spec 022 §4.5a (v0.12) — user-side PATCH body. Whitelist is a strict
+// subset of admin PATCH (`status` / `paidAt` / `cancelledAt` are lifecycle-
+// controlled and forbidden here; `amountTwd` / `nextChargeAt` / `lines`
+// are immutable per spec 021 §7.6 / §7.7). All fields optional — empty
+// body is a no-op (service layer returns current row, no audit).
+//
+// `donorName` here is `Type.Optional` (vs `DonorName` plain in the create
+// bodies) so user can omit it without erroring out.
+//
+// `receiptOption` allows `null` because CHARITY/PROJECT orders may legit-
+// imately clear it (e.g. user changed their mind). Service layer rejects
+// non-null on SALE_ITEM orders with 409 INVALID_RECEIPT_OPTION_FOR_SUBJECT
+// (spec 022 §5.2 v0.12 / spec 021 §7.5).
+export const UserPatchBody = Type.Object(
+  {
+    donorName: Type.Optional(DonorName),
+    isAnonymous: IsAnonymous,
+    note: Note,
+    receiptOption: Type.Optional(Type.Union([Type.Null(), ReceiptOptionUnion])),
+  },
+  { additionalProperties: false },
+)
+export type UserPatchBodyT = Static<typeof UserPatchBody>

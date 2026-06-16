@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.2 |
+| 版本 | 0.3 |
 | 日期 | 2026-06-16 |
 | 適用範圍 | 所有 backend HTTP endpoints 的 URL surface 分配規約(對 spec 023 的補強)|
 | 相關 ADR | 待補 |
@@ -148,8 +148,9 @@ Account 的「CUD」分布:
 | Detail(持有 orderId)| `GET /user/v1/donation/orders/:id` | spec 022 §4.6 |
 | Confirm payment(mock 結帳) | `POST /user/v1/donation/orders/:id/confirm-payment` | spec 022 §4.4 |
 | Cancel(user 取消)| `POST /user/v1/donation/orders/:id/cancel` | spec 022 §4.5 |
+| **Update(user 改自己訂單,v0.3 加)** | `PATCH /user/v1/donation/orders/:id` | spec 022 §4.5a(v0.12)|
 
-→ 全部維持原狀,**不**遷至 `/cms`(理由 §2.3)。
+→ 全部維持原狀,**不**遷至 `/cms`(理由 §2.3)。**注意**:user PATCH §4.5a 雖然「修改 Order 欄位」看似 entity update,但**操作者是 user 自己**(trust = 持有 orderId,非 admin role=0),語意上仍是「交易紀錄的自助修正」,故走 `/user/v{N}`,不違反 §2.1 invariant(invariant 精確版本是「需 admin 權限的寫入 → /cms」,user 對自己訂單的修正不需 admin 權限)。
 
 ---
 
@@ -179,17 +180,36 @@ Account 的「CUD」分布:
 
 ## 5. 未來規劃
 
-### 5.1 User-side Order Update(spec 022 §11 OQ #2 的可能落地)
+### 5.1 User-side Order Update — ✅ v0.3 收束(方案 A 已落地)
 
-目前持有 orderId 的人只能 `GET /:id` / `confirm-payment` / `cancel`。未來若使用者要在結帳後修改自己的訂單資訊(改 donorName / receiptOption / note / isAnonymous),要做:
+**狀態**:`PATCH /user/v1/donation/orders/:id` 已實作,對應 spec 022 §4.5a(v0.12)。
 
-| 設計選項 | 評估 |
+#### 5.1.1 方案歷史評估
+
+| 設計選項 | 評估 | 採用 |
+|---|---|---|
+| **A. 持有 orderId 視同擁有者(UUIDv4 = token)** | 與既有 GET / cancel / confirm-payment 一致的 trust model;**簡單但弱安全**(orderId 被分享 / log 洩露即任何持有者皆可改)| ✅ **採用**(v0.3) |
+| B. `manageToken` 機制(create 時 server 發短期 token,後續 PATCH 需帶) | 真實世界 e-commerce 標準作法;需 schema 加欄位 + token 失效規則 | ⏳ 未來工作(spec 022 §11 OQ #2 剩餘部分) |
+| C. Email magic link(寄編輯連結到 donorEmail) | 需寄信能力(spec 011 / 014 OQ #4) | ⏳ 等寄信能力 |
+
+採用方案 A 的理由:本期 demo 範圍內 `Order` 系列 endpoint 已全部用 trust = 持有 orderId 的 model(spec 022 §2.1 風險表 v0.7 已 documented);新 PATCH 沿用同一 model 符合 surface 一致性,降低 UX / client 端負擔(BFF 不需帶第二個 token)。`manageToken` 是真實世界 e-commerce 標準,但屬於 spec 022 §11 OQ #2 未來工作,需 spec patch + 新 ADR + Order schema 加欄位。
+
+#### 5.1.2 落地規約(v0.3 鎖死)
+
+| 維度 | 規約 |
 |---|---|
-| A. `PATCH /user/v1/donation/orders/:id`,持有 orderId 視同擁有者 | UUID 不可枚舉視同 token;與既有 GET / cancel 一致。**簡單但弱安全**(orderId 被分享 / log 洩露即任何人能改)|
-| B. 加 `manageToken` 機制(create 時 server 發 token,後續 PATCH 要帶)| 真實世界 e-commerce 標準作法;需 spec 022 補章節定 token shape + 失效規則 |
-| C. 走 email magic link(send link to donorEmail → click → 進編輯頁) | 需寄信能力(spec 011 / 014 OQ #4) |
+| URL | `PATCH /user/v1/donation/orders/:id`(**不**到 `/cms` — 操作者為 user 自己,非 admin)|
+| 可改欄位 | `donorName` / `isAnonymous` / `note` / `receiptOption` — 全 optional + strict `additionalProperties: false` 擋 unknown |
+| **不**可改欄位 | `status` / `paidAt` / `cancelledAt`(lifecycle,confirm-payment / cancel / admin 控制)、`amountTwd` / `nextChargeAt`(service derived,immutable)、`lines` / `subjectType` / FK(spec 021 §7.6)|
+| Status 前置條件 | `status ∈ { PENDING, PAID }` 可改;`{ CANCELLED, FAILED, REFUNDED }` → 409 `ORDER_STATUS_INVALID`(帳務 frozen)|
+| SALE_ITEM 規約 | `receiptOption` 必為 null(對齊 spec 021 §7.5);否則 409 `INVALID_RECEIPT_OPTION_FOR_SUBJECT` |
+| Audit event | `order_user_patched`(僅 `fieldsChanged.length > 0` 才發;**不**含 accountId,因 endpoint 無 auth)|
+| Rate-limit | 60/h per-IP,共 `order_lifecycle` bucket(同 cancel / confirm-payment)|
 
-**本 spec 不選方案**;若真要落地走 spec 022 補丁 v0.11+ + 新 ADR。**本 spec 規範路徑**: 該 endpoint 落 `/user/v{N}/donation/orders/:id`,**不**到 `/cms`(因為操作者是 user 自己,非 admin)。
+#### 5.1.3 仍為未來工作
+
+- **User-side order list**(看「我的全部訂單」):需 donorEmail + manageToken 寄信流程;本期不做(spec 022 §11 OQ #2 剩餘部分)
+- **manageToken 升級**:若 trust = 持有 orderId 在 production 不堪用,走方案 B(schema patch + 短期 token + 失效規則)
 
 ### 5.2 Admin Account Management(spec 020 §14 OQ #10)
 
@@ -234,3 +254,4 @@ invariant 適用,不需特別規約。
 |---|---|---|
 | 0.1 | 2026-06-16 | 初版 — 鎖死「entity CUD → `/cms`」invariant;Order 為交易流程例外;Account 為身分自助例外;新增 entity 決策樹;§5 列未來 user-side order update / admin account management / 新業務 entity 的擴展路徑。對應 spec 023 §2.3 的補強 |
 | 0.2 | 2026-06-16 | §6 OQ #3 收束 — `/cms/orders` 保留現狀(不改 `/cms/donation/orders`),理由:Order 非 donation entity 的子資源 + 改 URL 是 breaking 而無業務需求。對應 spec 023 v0.2 §6.3 同步釐清 |
+| 0.3 | 2026-06-16 | **§5.1 收束 — user-side Order Update 落地(方案 A)** — `PATCH /user/v1/donation/orders/:id` 落 `/user/v{N}` surface(對齊 §2.3 規約:操作者為 user 自己,非 admin)。trust model = 「持有 orderId = 擁有者」,與既有 GET / cancel / confirm-payment 一致;manageToken(方案 B)+ email magic link(方案 C)留為 spec 022 §11 OQ #2 未來工作。§3.4 表加一行 Update endpoint + 釐清「user 對自己訂單的修正不需 admin → 不違反 §2.1 invariant」。完整 endpoint 規格見 spec 022 v0.12 §4.5a |

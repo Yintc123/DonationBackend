@@ -22,13 +22,16 @@ import {
 } from '../../../domain/order/lifecycle-services.js'
 import { getOrderByIdOrFail } from '../../../domain/order/query-services.js'
 import { serializeOrder } from '../../../domain/order/serialize.js'
+import { patchOrderAsUser } from '../../../domain/order/user-update-service.js'
 import {
   CharityDonationBody,
   ProjectDonationBody,
   SaleItemPurchaseBody,
+  UserPatchBody,
   type CharityDonationBodyT,
   type ProjectDonationBodyT,
   type SaleItemPurchaseBodyT,
+  type UserPatchBodyT,
 } from '../../../schemas/order/body.js'
 import { OrderResponse } from '../../../schemas/order/response.js'
 
@@ -161,6 +164,30 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
       const order = await cancelOrder(
         { prisma: app.prisma, clock: app.clock, logger: req.log },
         req.params.id,
+      )
+      return reply.ok(serializeOrder(order, app.objectUrl))
+    },
+  })
+
+  // ── PATCH /user/v1/donation/orders/:id (spec 022 §4.5a v0.12) ────────────────
+  // User self-update: holder of orderId can change donorName / isAnonymous /
+  // note / receiptOption while status ∈ {PENDING, PAID}. Same trust model as
+  // GET / cancel (spec 022 §2.1 risk table). Rate-limit shares the
+  // `order_lifecycle` bucket with cancel + confirm-payment (60/h).
+  app.route<{ Params: OrderIdParamsT; Body: UserPatchBodyT }>({
+    method: 'PATCH',
+    url: '/donation/orders/:id',
+    schema: {
+      params: OrderIdParams,
+      body: UserPatchBody,
+      response: { 200: OrderResponse },
+    },
+    config: { rateLimit: { purposes: [ORDER_LIFECYCLE_PURPOSE] } },
+    handler: async (req, reply) => {
+      const order = await patchOrderAsUser(
+        { prisma: app.prisma, logger: req.log },
+        req.params.id,
+        req.body,
       )
       return reply.ok(serializeOrder(order, app.objectUrl))
     },
