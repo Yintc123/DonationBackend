@@ -41,6 +41,7 @@ import { registerOrderRoutes } from './routes/user/donation/orders.js'
 import { registerSaleItemAdminRoutes } from './routes/cms/donation/sale-items.js'
 import { registerSaleItemRoutes } from './routes/user/donation/sale-items.js'
 import { registerPresignUploadRoute } from './routes/cms/uploads.js'
+import { registerFlushRedisRoute } from './routes/cms/system/flush-redis.js'
 import type { Config } from './config/schema.js'
 
 declare module 'fastify' {
@@ -161,6 +162,8 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
       await cms.register(registerAdminOrderRoutes)
       // S3 presign (spec 018; moved from /v1/donation/uploads/presign).
       await cms.register(registerPresignUploadRoute)
+      // Ops endpoints (spec 025 §2 — /cms/system/* sub-surface).
+      await cms.register(registerFlushRedisRoute)
     },
     { prefix: '/cms' },
   )
