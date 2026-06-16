@@ -8,7 +8,6 @@ import type { FastifyInstance } from 'fastify'
 import { Type, type Static } from '@sinclair/typebox'
 
 import { createCharity, updateCharity } from '../../../../domain/donation-item/charity-write.js'
-import { requireAdmin } from '../../../../lib/auth/index.js'
 import { ErrorCode } from '../../../../lib/errors/index.js'
 import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
 import { CharityDetail } from '../../../../schemas/donation-item/detail.js'
@@ -34,14 +33,13 @@ const UPDATE_LIMITS = { perUser: { limit: 120, windowMs: HOUR }, perIp: { limit:
 const LIFECYCLE_LIMITS = { perUser: { limit: 60, windowMs: HOUR }, perIp: { limit: 300, windowMs: HOUR } }
 
 export async function registerCharityAdminRoutes(app: FastifyInstance): Promise<void> {
-  // ── POST /v1/donation/charities (spec 020 §5.1.1) ───────────────────────
+  // ── POST /cms/donation/charities (spec 020 §5.1.1) ───────────────────────
   app.route<{ Body: CharityCreateBodyT }>({
     method: 'POST',
     url: '/donation/charities',
     schema: { body: CharityCreateBody, response: { 201: CharityDetail } },
     config: { rateLimit: CREATE_LIMITS },
     handler: async (req, reply) => {
-      await requireAdmin(req, app.prisma, app.tokenSecrets)
       const locale = parseAcceptLanguage(req.headers['accept-language'])
       const body = await createCharity(
         {
@@ -53,18 +51,17 @@ export async function registerCharityAdminRoutes(app: FastifyInstance): Promise<
         },
         req.body,
       )
-      return reply.created(`/v1/donation/charities/${body.id}`, body)
+      return reply.created(`/cms/donation/charities/${body.id}`, body)
     },
   })
 
-  // ── PATCH /v1/donation/charities/:id (spec 020 §5.1.2) ──────────────────
+  // ── PATCH /cms/donation/charities/:id (spec 020 §5.1.2) ──────────────────
   app.route<{ Params: IdParamsT; Body: CharityPatchBodyT }>({
     method: 'PATCH',
     url: '/donation/charities/:id',
     schema: { params: IdParams, body: CharityPatchBody, response: { 200: CharityDetail } },
     config: { rateLimit: UPDATE_LIMITS },
     handler: async (req, reply) => {
-      await requireAdmin(req, app.prisma, app.tokenSecrets)
       const locale = parseAcceptLanguage(req.headers['accept-language'])
       const body = await updateCharity(
         {

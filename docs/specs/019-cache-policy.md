@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.2 |
+| 版本 | 0.3 |
 | 日期 | 2026-06-15 |
 | 適用範圍 | `backend/src/lib/cache/`、`backend/src/services/cached-*/`(新)、`backend/src/routes/v1/donation/**/*.ts`(改) |
 | 相關 ADR | `docs/decisions/011-cache-strategy.md`(adapter 層 + cache-aside + 熱門白名單 + TTL 表 + stampede 暫不啟用 + 失效 API 預留)|
@@ -12,6 +12,13 @@
 ---
 
 ## 1. 目的與範圍
+
+> **URL prefix(spec 023 §2 已落地)**:本 spec 列的 endpoint path **不含 surface prefix**。實際 client URL 依 surface 加前綴:
+> - Public read endpoints → `/user/v{N}/...`(spec 023 §2.2;當前 `v1`)
+> - Admin write endpoints → `/cms/...`(spec 023 §2.3,scope-level `requireAdmin` 由 `/cms` plugin attach)
+> - Auth endpoints → `/auth/...`(spec 023 §2.1,不版本化)
+>
+> Endpoint URL 完整 mapping 表見 spec 023 §2.4。
 
 ### 1.1 目的
 
@@ -437,3 +444,4 @@ spec 006 §9.3 列出三種防護(request coalescing / probabilistic early refre
 |---|---|---|
 | 0.1 | 2026-06-15 | 初版 |
 | 0.2 | 2026-06-15 | §7.3 — `parseWithDates` 改名 `parseJson`(名稱誤導,實際不 reify Date);與 `src/lib/cache/json.ts` 實作對齊;補上 `withCache` deserialize 預設值的名稱對齊 |
+| 0.3 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |

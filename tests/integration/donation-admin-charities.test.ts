@@ -63,7 +63,7 @@ describe('Auth gate (spec 020 §2.3)', () => {
   it('rejects unauthenticated POST with 401', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       payload: BASE_BODY,
     })
     expect(res.statusCode).toBe(401)
@@ -73,7 +73,7 @@ describe('Auth gate (spec 020 §2.3)', () => {
     const token = await userToken()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       headers: { authorization: `Bearer ${token}` },
       payload: BASE_BODY,
     })
@@ -81,19 +81,19 @@ describe('Auth gate (spec 020 §2.3)', () => {
   })
 })
 
-// ── POST /v1/donation/charities ────────────────────────────────────────────
+// ── POST /cms/donation/charities ────────────────────────────────────────────
 
-describe('POST /v1/donation/charities (spec 020 §5.1.1)', () => {
+describe('POST /cms/donation/charities (spec 020 §5.1.1)', () => {
   it('creates a charity and returns 201 + Location + detail body', async () => {
     const token = await adminToken()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       headers: { authorization: `Bearer ${token}` },
       payload: BASE_BODY,
     })
     expect(res.statusCode).toBe(201)
-    expect(res.headers.location).toMatch(/^\/v1\/donation\/charities\//)
+    expect(res.headers.location).toMatch(/^\/cms\/donation\/charities\//)
     const body = res.json() as CharityResp
     expect(body.name).toBe(BASE_BODY.name)
     expect(body.categories).toEqual([])
@@ -105,7 +105,7 @@ describe('POST /v1/donation/charities (spec 020 §5.1.1)', () => {
     const token = await adminToken()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       headers: { authorization: `Bearer ${token}` },
       payload: { description: 'no name' },
     })
@@ -117,7 +117,7 @@ describe('POST /v1/donation/charities (spec 020 §5.1.1)', () => {
     const token = await adminToken()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       headers: { authorization: `Bearer ${token}` },
       payload: { ...BASE_BODY, foo: 'bar' },
     })
@@ -129,7 +129,7 @@ describe('POST /v1/donation/charities (spec 020 §5.1.1)', () => {
     const cat = await seedCategory('cat-a')
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       headers: { authorization: `Bearer ${token}` },
       payload: { ...BASE_BODY, categoryIds: [cat.id] },
     })
@@ -142,7 +142,7 @@ describe('POST /v1/donation/charities (spec 020 §5.1.1)', () => {
     const token = await adminToken()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       headers: { authorization: `Bearer ${token}` },
       payload: {
         ...BASE_BODY,
@@ -157,7 +157,7 @@ describe('POST /v1/donation/charities (spec 020 §5.1.1)', () => {
     const token = await adminToken()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       headers: { authorization: `Bearer ${token}` },
       payload: {
         ...BASE_BODY,
@@ -173,7 +173,7 @@ describe('POST /v1/donation/charities (spec 020 §5.1.1)', () => {
     const token = await adminToken()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       headers: { authorization: `Bearer ${token}` },
       payload: { ...BASE_BODY, logoKey: 'not-a-key' },
     })
@@ -181,16 +181,16 @@ describe('POST /v1/donation/charities (spec 020 §5.1.1)', () => {
   })
 })
 
-// ── PATCH /v1/donation/charities/:id ───────────────────────────────────────
+// ── PATCH /cms/donation/charities/:id ───────────────────────────────────────
 
-describe('PATCH /v1/donation/charities/:id (spec 020 §5.1.2)', () => {
+describe('PATCH /cms/donation/charities/:id (spec 020 §5.1.2)', () => {
   it('updates name + replaces categoryIds (full replace, not append)', async () => {
     const token = await adminToken()
     const catA = await seedCategory('cat-a')
     const catB = await seedCategory('cat-b')
     const create = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       headers: { authorization: `Bearer ${token}` },
       payload: { ...BASE_BODY, categoryIds: [catA.id] },
     })
@@ -198,7 +198,7 @@ describe('PATCH /v1/donation/charities/:id (spec 020 §5.1.2)', () => {
 
     const patch = await app.inject({
       method: 'PATCH',
-      url: `/v1/donation/charities/${id}`,
+      url: `/cms/donation/charities/${id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { name: 'Renamed', categoryIds: [catB.id] },
     })
@@ -212,7 +212,7 @@ describe('PATCH /v1/donation/charities/:id (spec 020 §5.1.2)', () => {
     const token = await adminToken()
     const res = await app.inject({
       method: 'PATCH',
-      url: '/v1/donation/charities/11111111-1111-4111-8111-111111111111',
+      url: '/cms/donation/charities/11111111-1111-4111-8111-111111111111',
       headers: { authorization: `Bearer ${token}` },
       payload: { name: 'X' },
     })
@@ -224,14 +224,14 @@ describe('PATCH /v1/donation/charities/:id (spec 020 §5.1.2)', () => {
     const token = await adminToken()
     const create = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       headers: { authorization: `Bearer ${token}` },
       payload: { ...BASE_BODY, contactEmail: 'a@example.com' },
     })
     const id = (create.json() as CharityResp).id
     const patch = await app.inject({
       method: 'PATCH',
-      url: `/v1/donation/charities/${id}`,
+      url: `/cms/donation/charities/${id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { contactEmail: null },
     })
@@ -244,14 +244,14 @@ describe('PATCH /v1/donation/charities/:id (spec 020 §5.1.2)', () => {
     const token = await adminToken()
     const create = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       headers: { authorization: `Bearer ${token}` },
       payload: { ...BASE_BODY, contactEmail: 'a@example.com' },
     })
     const id = (create.json() as CharityResp).id
     await app.inject({
       method: 'PATCH',
-      url: `/v1/donation/charities/${id}`,
+      url: `/cms/donation/charities/${id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { name: 'Only name' },
     })
@@ -267,7 +267,7 @@ describe('Lifecycle actions (spec 020 §5.1.3 ~ §5.1.6)', () => {
   async function createOne(token: string): Promise<string> {
     const create = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       headers: { authorization: `Bearer ${token}` },
       payload: BASE_BODY,
     })
@@ -279,7 +279,7 @@ describe('Lifecycle actions (spec 020 §5.1.3 ~ §5.1.6)', () => {
     const id = await createOne(token)
     const res = await app.inject({
       method: 'POST',
-      url: `/v1/donation/charities/${id}/archive`,
+      url: `/cms/donation/charities/${id}/archive`,
       headers: { authorization: `Bearer ${token}` },
     })
     expect(res.statusCode).toBe(204)
@@ -287,7 +287,7 @@ describe('Lifecycle actions (spec 020 §5.1.3 ~ §5.1.6)', () => {
     expect(row?.archivedAt).not.toBe(null)
 
     // Public list must not include it now.
-    const list = await app.inject({ method: 'GET', url: '/v1/donation/charities' })
+    const list = await app.inject({ method: 'GET', url: '/user/v1/donation/charities' })
     const listBody = list.json() as { items: { id: string }[] }
     expect(listBody.items.map((i) => i.id)).not.toContain(id)
   })
@@ -297,13 +297,13 @@ describe('Lifecycle actions (spec 020 §5.1.3 ~ §5.1.6)', () => {
     const id = await createOne(token)
     await app.inject({
       method: 'POST',
-      url: `/v1/donation/charities/${id}/archive`,
+      url: `/cms/donation/charities/${id}/archive`,
       headers: { authorization: `Bearer ${token}` },
     })
     const before = await app.prisma.charity.findUnique({ where: { id } })
     const secondCall = await app.inject({
       method: 'POST',
-      url: `/v1/donation/charities/${id}/archive`,
+      url: `/cms/donation/charities/${id}/archive`,
       headers: { authorization: `Bearer ${token}` },
     })
     expect(secondCall.statusCode).toBe(204)
@@ -315,7 +315,7 @@ describe('Lifecycle actions (spec 020 §5.1.3 ~ §5.1.6)', () => {
     const token = await adminToken()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities/11111111-1111-4111-8111-111111111111/archive',
+      url: '/cms/donation/charities/11111111-1111-4111-8111-111111111111/archive',
       headers: { authorization: `Bearer ${token}` },
     })
     expect(res.statusCode).toBe(404)
@@ -326,16 +326,16 @@ describe('Lifecycle actions (spec 020 §5.1.3 ~ §5.1.6)', () => {
     const id = await createOne(token)
     await app.inject({
       method: 'POST',
-      url: `/v1/donation/charities/${id}/archive`,
+      url: `/cms/donation/charities/${id}/archive`,
       headers: { authorization: `Bearer ${token}` },
     })
     const res = await app.inject({
       method: 'POST',
-      url: `/v1/donation/charities/${id}/unarchive`,
+      url: `/cms/donation/charities/${id}/unarchive`,
       headers: { authorization: `Bearer ${token}` },
     })
     expect(res.statusCode).toBe(204)
-    const list = await app.inject({ method: 'GET', url: '/v1/donation/charities' })
+    const list = await app.inject({ method: 'GET', url: '/user/v1/donation/charities' })
     const ids = (list.json() as { items: { id: string }[] }).items.map((i) => i.id)
     expect(ids).toContain(id)
   })
@@ -345,7 +345,7 @@ describe('Lifecycle actions (spec 020 §5.1.3 ~ §5.1.6)', () => {
     const id = await createOne(token)
     const res = await app.inject({
       method: 'DELETE',
-      url: `/v1/donation/charities/${id}`,
+      url: `/cms/donation/charities/${id}`,
       headers: { authorization: `Bearer ${token}` },
     })
     expect(res.statusCode).toBe(204)
@@ -359,12 +359,12 @@ describe('Lifecycle actions (spec 020 §5.1.3 ~ §5.1.6)', () => {
     const id = await createOne(token)
     await app.inject({
       method: 'DELETE',
-      url: `/v1/donation/charities/${id}`,
+      url: `/cms/donation/charities/${id}`,
       headers: { authorization: `Bearer ${token}` },
     })
     const res = await app.inject({
       method: 'POST',
-      url: `/v1/donation/charities/${id}/restore`,
+      url: `/cms/donation/charities/${id}/restore`,
       headers: { authorization: `Bearer ${token}` },
     })
     expect(res.statusCode).toBe(204)
@@ -390,7 +390,7 @@ describe('Cache invalidation graceful degradation (spec 019 §9.1)', () => {
     try {
       const res = await app.inject({
         method: 'POST',
-        url: '/v1/donation/charities',
+        url: '/cms/donation/charities',
         headers: { authorization: `Bearer ${token}` },
         payload: BASE_BODY,
       })
@@ -428,7 +428,7 @@ describe('Rate limit (spec 020 §11 dual-layer)', () => {
     for (let i = 0; i < 6; i++) {
       const r = await app.inject({
         method: 'POST',
-        url: '/v1/donation/charities',
+        url: '/cms/donation/charities',
         headers: { authorization: `Bearer ${token}` },
         payload: BASE_BODY,
       })
@@ -444,7 +444,7 @@ describe('Cache invalidation on write', () => {
     // Prime a list cache slot via the public list endpoint.
     const listRes = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
     })
     expect(listRes.statusCode).toBe(200)
 
@@ -456,7 +456,7 @@ describe('Cache invalidation on write', () => {
     // Admin POST a charity → invalidator should DEL the slot.
     const create = await app.inject({
       method: 'POST',
-      url: '/v1/donation/charities',
+      url: '/cms/donation/charities',
       headers: { authorization: `Bearer ${token}` },
       payload: BASE_BODY,
     })

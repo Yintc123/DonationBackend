@@ -4,7 +4,6 @@ import type { FastifyInstance } from 'fastify'
 import { Type, type Static } from '@sinclair/typebox'
 
 import { createSaleItem, updateSaleItem } from '../../../../domain/donation-item/sale-item-write.js'
-import { requireAdmin } from '../../../../lib/auth/index.js'
 import { ErrorCode } from '../../../../lib/errors/index.js'
 import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
 import { SaleItemDetail } from '../../../../schemas/donation-item/detail.js'
@@ -35,13 +34,12 @@ export async function registerSaleItemAdminRoutes(app: FastifyInstance): Promise
     schema: { body: SaleItemCreateBody, response: { 201: SaleItemDetail } },
     config: { rateLimit: CREATE_LIMITS },
     handler: async (req, reply) => {
-      await requireAdmin(req, app.prisma, app.tokenSecrets)
       const locale = parseAcceptLanguage(req.headers['accept-language'])
       const body = await createSaleItem(
         { prisma: app.prisma, redis: app.redis, logger: req.log, locale, objectUrl: app.objectUrl },
         req.body,
       )
-      return reply.created(`/v1/donation/sale-items/${body.id}`, body)
+      return reply.created(`/cms/donation/sale-items/${body.id}`, body)
     },
   })
 
@@ -51,7 +49,6 @@ export async function registerSaleItemAdminRoutes(app: FastifyInstance): Promise
     schema: { params: IdParams, body: SaleItemPatchBody, response: { 200: SaleItemDetail } },
     config: { rateLimit: UPDATE_LIMITS },
     handler: async (req, reply) => {
-      await requireAdmin(req, app.prisma, app.tokenSecrets)
       const locale = parseAcceptLanguage(req.headers['accept-language'])
       const body = await updateSaleItem(
         { prisma: app.prisma, redis: app.redis, logger: req.log, locale, objectUrl: app.objectUrl },

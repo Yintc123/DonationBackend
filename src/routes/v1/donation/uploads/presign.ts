@@ -1,4 +1,4 @@
-// Spec 018 §7 — GET /v1/donation/uploads/presign.
+// Spec 018 §7 — GET /cms/uploads/presign.
 //
 // Flow:
 //   1. Validate query via TypeBox (Fastify schema → spec 005 errorHandler).
@@ -12,7 +12,6 @@
 import type { FastifyInstance } from 'fastify'
 
 import { ensureEntityExists } from '../../../../domain/uploads/check-entity.js'
-import { requireAdmin } from '../../../../lib/auth/index.js'
 import {
   assertContentLength,
   buildKey,
@@ -41,7 +40,7 @@ const PRESIGN_PURPOSE = {
 export async function registerPresignUploadRoute(app: FastifyInstance): Promise<void> {
   app.route<{ Querystring: PresignQuery; Reply: PresignResponse }>({
     method: 'GET',
-    url: '/donation/uploads/presign',
+    url: '/uploads/presign',
     schema: {
       querystring: PresignQuerySchema,
       response: {
@@ -59,7 +58,6 @@ export async function registerPresignUploadRoute(app: FastifyInstance): Promise<
       // entities they manage). Same fail-safe semantics as the spec 020 §5
       // write endpoints: 401 on missing / expired JWT, 401 on disabled
       // account, 403 on role !== Role.ADMIN.
-      await requireAdmin(req, app.prisma, app.tokenSecrets)
       const { entity, id, purpose, contentType, fileSize } = req.query
 
       assertContentLength(fileSize, app.s3Config.maxUploadBytes)

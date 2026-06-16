@@ -16,13 +16,13 @@
 
 import Fastify, { type FastifyInstance } from 'fastify'
 
-import { authContextPlugin, authPlugin } from './lib/auth/index.js'
+import { authContextPlugin, authPlugin, requireAdmin } from './lib/auth/index.js'
 import type { TokenSecrets } from './lib/auth/index.js'
 import { googleAuthPlugin } from './lib/auth-google/index.js'
 import { type Clock, systemClock } from './lib/clock.js'
 import { errorHandlerPlugin } from './lib/errors/index.js'
 import { healthPlugin } from './lib/health/index.js'
-import { httpResponsePlugin } from './lib/http/index.js'
+import { httpResponsePlugin, USER_API_VERSIONS } from './lib/http/index.js'
 import { createLogger, loggerPolicyPlugin } from './lib/logger/index.js'
 import { openapiPlugin } from './lib/openapi/index.js'
 import { prismaPlugin } from './lib/prisma/index.js'
@@ -112,30 +112,57 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   // by detecting the s3HealthProbe decorator (spec 018 §10 / spec 011 §3).
   await app.register(s3Plugin)
   await app.register(healthPlugin)
-  // Spec 023 §4.1 — `/v1` URL surface(階段 1:public read + admin write
-  // 暫共用同一 prefix,URL 對 client 不變;階段 2 再拆 /user/v1 + /cms)。
-  // Route files inside this scope hold relative paths(去掉 `/v1` 前綴),
-  // Fastify 在 mount 時把 prefix + relative URL 拼回 `/v1/...`。
+  // === Spec 023 §2 — three URL surfaces ===
+  //
+  // `/auth/*` is mounted by authPlugin / googleAuthPlugin (prefix wrapper
+  // inside each plugin); not visible here.
+  //
+  // Below: `/user/v{N}/*` for user-facing business APIs (spec 016/017/022
+  // public) and `/cms/*` for admin write APIs (spec 018/020/022 admin).
+
+  // === Surface: /user/v{N} — versioned user-facing business APIs ===
+  // Spec 023 §3.3 — the version array drives the mount loop. Adding 'v2'
+  // mounts a second prefix automatically and the onRequest hook seeds
+  // req.apiVersion for handlers that need to branch (spec 023 §5.2).
+  for (const version of USER_API_VERSIONS) {
+    await app.register(
+      async (userApi) => {
+        userApi.addHook('onRequest', async (req) => {
+          req.apiVersion = version
+        })
+        // Donation public read endpoints (spec 016 / spec 017).
+        await userApi.register(registerCategoryRoutes)
+        await userApi.register(registerCharityRoutes)
+        await userApi.register(registerDonationProjectRoutes)
+        await userApi.register(registerSaleItemRoutes)
+        // Donation order create + lifecycle + GET detail (spec 022 phase 2-3).
+        await userApi.register(registerOrderRoutes)
+      },
+      { prefix: `/user/${version}` },
+    )
+  }
+
+  // === Surface: /cms — admin / back-office (unversioned per spec 023 §2.3) ===
+  // Scope-level preHandler gates the entire surface — individual handlers
+  // no longer call `requireAdmin` (spec 023 §4.4). Spec 020 §2.3 contract
+  // (401 missing / expired / disabled, 403 wrong role) is enforced once,
+  // here, before any handler body runs.
   await app.register(
-    async (v1) => {
-      // Donation public read endpoints(spec 016 / spec 017)。
-      await v1.register(registerCategoryRoutes)
-      await v1.register(registerCharityRoutes)
-      await v1.register(registerDonationProjectRoutes)
-      await v1.register(registerSaleItemRoutes)
-      // Donation order create + lifecycle + GET detail(spec 022 Phase 2-3)。
-      await v1.register(registerOrderRoutes)
-      // Admin order endpoints(spec 022 Phase 4, role=0 gated)。
-      await v1.register(registerAdminOrderRoutes)
-      // Donation entity admin write endpoints(spec 020 §5, role=0 gated)。
-      await v1.register(registerCharityAdminRoutes)
-      await v1.register(registerProjectAdminRoutes)
-      await v1.register(registerSaleItemAdminRoutes)
-      await v1.register(registerCategoryAdminRoutes)
-      // Presign(spec 018,role=0 gated;階段 2 將移至 /cms)。
-      await v1.register(registerPresignUploadRoute)
+    async (cms) => {
+      cms.addHook('preHandler', async (req) => {
+        await requireAdmin(req, cms.prisma, cms.tokenSecrets)
+      })
+      // Donation entity admin write endpoints (spec 020 §5).
+      await cms.register(registerCharityAdminRoutes)
+      await cms.register(registerProjectAdminRoutes)
+      await cms.register(registerSaleItemAdminRoutes)
+      await cms.register(registerCategoryAdminRoutes)
+      // Admin order endpoints (spec 022 phase 4).
+      await cms.register(registerAdminOrderRoutes)
+      // S3 presign (spec 018; moved from /v1/donation/uploads/presign).
+      await cms.register(registerPresignUploadRoute)
     },
-    { prefix: '/v1' },
+    { prefix: '/cms' },
   )
 
   return app

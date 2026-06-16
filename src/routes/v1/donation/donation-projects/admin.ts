@@ -5,7 +5,6 @@ import type { FastifyInstance } from 'fastify'
 import { Type, type Static } from '@sinclair/typebox'
 
 import { createProject, updateProject } from '../../../../domain/donation-item/project-write.js'
-import { requireAdmin } from '../../../../lib/auth/index.js'
 import { ErrorCode } from '../../../../lib/errors/index.js'
 import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
 import { ProjectDetail } from '../../../../schemas/donation-item/detail.js'
@@ -37,13 +36,12 @@ export async function registerProjectAdminRoutes(app: FastifyInstance): Promise<
     schema: { body: ProjectCreateBody, response: { 201: ProjectDetail } },
     config: { rateLimit: CREATE_LIMITS },
     handler: async (req, reply) => {
-      await requireAdmin(req, app.prisma, app.tokenSecrets)
       const locale = parseAcceptLanguage(req.headers['accept-language'])
       const body = await createProject(
         { prisma: app.prisma, redis: app.redis, logger: req.log, locale, objectUrl: app.objectUrl },
         req.body,
       )
-      return reply.created(`/v1/donation/donation-projects/${body.id}`, body)
+      return reply.created(`/cms/donation/donation-projects/${body.id}`, body)
     },
   })
 
@@ -53,7 +51,6 @@ export async function registerProjectAdminRoutes(app: FastifyInstance): Promise<
     schema: { params: IdParams, body: ProjectPatchBody, response: { 200: ProjectDetail } },
     config: { rateLimit: UPDATE_LIMITS },
     handler: async (req, reply) => {
-      await requireAdmin(req, app.prisma, app.tokenSecrets)
       const locale = parseAcceptLanguage(req.headers['accept-language'])
       const body = await updateProject(
         { prisma: app.prisma, redis: app.redis, logger: req.log, locale, objectUrl: app.objectUrl },

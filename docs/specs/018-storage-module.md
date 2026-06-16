@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.4 |
+| 版本 | 0.5 |
 | 日期 | 2026-06-14 |
 | 適用範圍 | `backend/src/lib/s3/*`、`backend/src/routes/v1/donation/uploads/*`、`backend/src/schemas/uploads/*` |
 | 相關 ADR | `../../docs/decisions/008-ecs-cicd-pilot.md`(專案級 — ECS Fargate IAM role 是 S3 認證來源)|
@@ -13,6 +13,13 @@
 ---
 
 ## 1. 目的與範圍
+
+> **URL prefix(spec 023 §2 已落地)**:本 spec 列的 endpoint path **不含 surface prefix**。實際 client URL 依 surface 加前綴:
+> - Public read endpoints → `/user/v{N}/...`(spec 023 §2.2;當前 `v1`)
+> - Admin write endpoints → `/cms/...`(spec 023 §2.3,scope-level `requireAdmin` 由 `/cms` plugin attach)
+> - Auth endpoints → `/auth/...`(spec 023 §2.1,不版本化)
+>
+> Endpoint URL 完整 mapping 表見 spec 023 §2.4。
 
 ### 1.1 目的
 
@@ -724,3 +731,4 @@ export function mapS3Error(e: unknown): AppError {
 | 0.2 | 2026-06-14 | conflict audit 修正:(1) §6.3 新增 **bucket CORS** 配置 — 沒這個 browser 跨域上傳會炸;(2) §7.2 修正 `Cache-Control: no-store`(每次簽章不同,原 `private, max-age=0` 語意不對);(3) §7.4 **rate limit 改獨立嚴格 bucket** `10 req/min/IP`,**禁**與 read endpoint 共用(每次簽章 = 核發 1 次 S3 寫 capacity);(4) cache busting open question 對齊「DB 存 key」(spec 015 v0.8 / spec 016 v0.10 同步)|
 | 0.3 | 2026-06-14 | 實作前 audit 修正(2 CRITICAL + 3 HIGH + 5 MEDIUM/LOW):**CRITICAL** (1) §6.3 CORS `AllowedHeaders` `["x-amz-*"]` → `["*"]`(S3 不支援 prefix wildcard);(2) §9.3 bootstrap script 補 CORS 設定(沒這段 dev 跨域 PUT 整個跑不起來)。**HIGH** (3) §4.2 新增 fail-fast 啟動驗證;(4) §7.1.1 新增 `ContentLength` 必須進簽章(否則 S3 端不卡上傳大小,有 abuse 風險);(5) §7.5 Step 0 補「entity 必須先存在 DB」two-step create 註腳。**MEDIUM/LOW** (6) §3.1 新增套件清單;(7) §4 boolean parse strict `'true'`;(8) §4.1.1 新增 ECS task role IAM policy JSON;(9) §10.2.1 套用 spec 011 §7.2 1s coalesce cache;(10) §11.2 釐清 presign 不打 S3 = 不 retry;(11) §4.2 加 bucket name dot 限制;(12) §12 + §13 補 CORS e2e scope 釐清 |
 | 0.4 | 2026-06-14 | 第二輪 audit 補完(1 HIGH + 2 MEDIUM):**HIGH** (1) §5.1.1 新增 `contentType → ext` 固定映射表 — `image/jpeg` 固定產 `.jpg`(避免 `.jpeg/.jpg` 同圖兩 key 錯位);**MEDIUM** (2) §3 client.ts 註明 `closeS3Client()` 由 spec 011 graceful shutdown hook 呼叫 `client.destroy()` 釋放 HTTP handler;(3) §7.4.1 新增 entity → 404 code mapping 表 + `ensureEntityExists()` service 層實作範本(TDD 不必猜該寫在哪)|
+| 0.5 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |

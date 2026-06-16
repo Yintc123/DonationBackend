@@ -107,14 +107,14 @@ interface OrderJson {
   }[]
 }
 
-// ── POST /v1/donation/orders/charity-donation (§4.1) ───────────────────────
+// ── POST /user/v1/donation/orders/charity-donation (§4.1) ───────────────────────
 
-describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
+describe('POST /user/v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
   it('creates a ONE_TIME donation: 201 + line subjectType=CHARITY, frequency=ONE_TIME, billingDay=null', async () => {
     const charity = await seedCharity({ name: 'Helpful Org' })
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '張三',
         receiptOption: 'NONE',
@@ -124,7 +124,7 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
       },
     })
     expect(res.statusCode).toBe(201)
-    expect(res.headers.location).toMatch(/^\/v1\/donation\/orders\//)
+    expect(res.headers.location).toMatch(/^\/user\/v1\/donation\/orders\//)
     const body = res.json() as OrderJson
     expect(body.status).toBe('PENDING')
     expect(body.donorName).toBe('張三')
@@ -153,7 +153,7 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '李四',
         receiptOption: 'INDIVIDUAL',
@@ -174,7 +174,7 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '張三',
         receiptOption: 'NONE',
@@ -191,7 +191,7 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '張三',
         receiptOption: 'NONE',
@@ -209,7 +209,7 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
     const charity = await seedCharity({ publishEndAt: new Date('2020-01-01T00:00:00Z') })
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '張三',
         receiptOption: 'NONE',
@@ -226,7 +226,7 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '張三',
         charityId: charity.id,
@@ -242,7 +242,7 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '張三',
         receiptOption: 'NONE',
@@ -260,7 +260,7 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '張三',
         isAnonymous: true,
@@ -281,7 +281,7 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '張三',
         receiptOption: 'NONE',
@@ -300,7 +300,7 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '張三',
         receiptOption: 'NONE',
@@ -319,7 +319,7 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '張三',
         receiptOption: 'NONE',
@@ -337,7 +337,7 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
     const charity = await seedCharity({ logoKey: 'charities/abc/logo.png' })
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '張三',
         receiptOption: 'NONE',
@@ -358,7 +358,7 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '張三',
         receiptOption: 'INDIVIDUAL',
@@ -374,15 +374,15 @@ describe('POST /v1/donation/orders/charity-donation (spec 022 §4.1)', () => {
   })
 })
 
-// ── POST /v1/donation/orders/project-donation (§4.2) ───────────────────────
+// ── POST /user/v1/donation/orders/project-donation (§4.2) ───────────────────────
 
-describe('POST /v1/donation/orders/project-donation (spec 022 §4.2)', () => {
+describe('POST /user/v1/donation/orders/project-donation (spec 022 §4.2)', () => {
   it('creates with inflated donationProject + parent charity', async () => {
     const charity = await seedCharity({ name: 'Parent C' })
     const project = await seedProject(charity.id, { name: 'Cute project' })
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/project-donation',
+      url: '/user/v1/donation/orders/project-donation',
       payload: {
         donorName: '王五',
         receiptOption: 'CORPORATE',
@@ -411,7 +411,7 @@ describe('POST /v1/donation/orders/project-donation (spec 022 §4.2)', () => {
     const project = await seedProject(charity.id)
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/project-donation',
+      url: '/user/v1/donation/orders/project-donation',
       payload: {
         donorName: 'X',
         receiptOption: 'NONE',
@@ -429,7 +429,7 @@ describe('POST /v1/donation/orders/project-donation (spec 022 §4.2)', () => {
     const project = await seedProject(charity.id)
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/project-donation',
+      url: '/user/v1/donation/orders/project-donation',
       payload: {
         donorName: '匿名專案捐款者',
         isAnonymous: true,
@@ -447,15 +447,15 @@ describe('POST /v1/donation/orders/project-donation (spec 022 §4.2)', () => {
   })
 })
 
-// ── POST /v1/donation/orders/sale-item-purchase (§4.3) ─────────────────────
+// ── POST /user/v1/donation/orders/sale-item-purchase (§4.3) ─────────────────────
 
-describe('POST /v1/donation/orders/sale-item-purchase (spec 022 §4.3)', () => {
+describe('POST /user/v1/donation/orders/sale-item-purchase (spec 022 §4.3)', () => {
   it('creates with snapshot priceTwd and computes subtotal = qty × price', async () => {
     const charity = await seedCharity({ name: 'Seller Org' })
     const item = await seedSaleItem(charity.id, { name: 'Noodle', priceTwd: 449 })
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/sale-item-purchase',
+      url: '/user/v1/donation/orders/sale-item-purchase',
       payload: {
         donorName: 'Buyer',
         items: [{ saleItemId: item.id, quantity: 2 }],
@@ -479,7 +479,7 @@ describe('POST /v1/donation/orders/sale-item-purchase (spec 022 §4.3)', () => {
   it('returns 400 VALIDATION_FAILED for empty items array (minItems: 1)', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/sale-item-purchase',
+      url: '/user/v1/donation/orders/sale-item-purchase',
       payload: { donorName: 'Buyer', items: [] },
     })
     expect(res.statusCode).toBe(400)
@@ -492,7 +492,7 @@ describe('POST /v1/donation/orders/sale-item-purchase (spec 022 §4.3)', () => {
     const b = await seedSaleItem(charity.id)
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/sale-item-purchase',
+      url: '/user/v1/donation/orders/sale-item-purchase',
       payload: {
         donorName: 'Buyer',
         items: [
@@ -508,7 +508,7 @@ describe('POST /v1/donation/orders/sale-item-purchase (spec 022 §4.3)', () => {
   it('returns 404 when saleItem does not exist', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/sale-item-purchase',
+      url: '/user/v1/donation/orders/sale-item-purchase',
       payload: {
         donorName: 'Buyer',
         items: [{ saleItemId: '11111111-1111-4111-8111-111111111111', quantity: 1 }],
@@ -523,7 +523,7 @@ describe('POST /v1/donation/orders/sale-item-purchase (spec 022 §4.3)', () => {
     const item = await seedSaleItem(charity.id)
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/sale-item-purchase',
+      url: '/user/v1/donation/orders/sale-item-purchase',
       payload: {
         donorName: 'Buyer',
         receiptOption: 'INDIVIDUAL',
@@ -539,7 +539,7 @@ describe('POST /v1/donation/orders/sale-item-purchase (spec 022 §4.3)', () => {
     const item = await seedSaleItem(charity.id, { priceTwd: 100 })
     const create = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/sale-item-purchase',
+      url: '/user/v1/donation/orders/sale-item-purchase',
       payload: { donorName: 'B', items: [{ saleItemId: item.id, quantity: 3 }] },
     })
     const body = create.json() as OrderJson
@@ -556,7 +556,7 @@ describe('POST /v1/donation/orders/sale-item-purchase (spec 022 §4.3)', () => {
     const item = await seedSaleItem(charity.id)
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/sale-item-purchase',
+      url: '/user/v1/donation/orders/sale-item-purchase',
       payload: {
         donorName: '匿名買家',
         isAnonymous: true,
@@ -577,7 +577,7 @@ async function createPendingCharityOrder(): Promise<OrderJson> {
   const charity = await seedCharity()
   const res = await app.inject({
     method: 'POST',
-    url: '/v1/donation/orders/charity-donation',
+    url: '/user/v1/donation/orders/charity-donation',
     payload: {
       donorName: 'X',
       receiptOption: 'NONE',
@@ -589,12 +589,12 @@ async function createPendingCharityOrder(): Promise<OrderJson> {
   return res.json() as OrderJson
 }
 
-// ── GET /v1/donation/orders/:id (§4.6) ─────────────────────────────────────
+// ── GET /user/v1/donation/orders/:id (§4.6) ─────────────────────────────────────
 
-describe('GET /v1/donation/orders/:id (spec 022 §4.6)', () => {
+describe('GET /user/v1/donation/orders/:id (spec 022 §4.6)', () => {
   it('returns the order with the same shape as the create response', async () => {
     const created = await createPendingCharityOrder()
-    const res = await app.inject({ method: 'GET', url: `/v1/donation/orders/${created.id}` })
+    const res = await app.inject({ method: 'GET', url: `/user/v1/donation/orders/${created.id}` })
     expect(res.statusCode).toBe(200)
     const body = res.json() as OrderJson
     expect(body.id).toBe(created.id)
@@ -606,14 +606,14 @@ describe('GET /v1/donation/orders/:id (spec 022 §4.6)', () => {
   it('returns 404 ORDER_NOT_FOUND for an unknown id', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/orders/11111111-1111-4111-8111-111111111111',
+      url: '/user/v1/donation/orders/11111111-1111-4111-8111-111111111111',
     })
     expect(res.statusCode).toBe(404)
     expect(res.json()).toMatchObject({ code: 'ORDER_NOT_FOUND' })
   })
 
   it('returns 400 VALIDATION_FAILED for a malformed (non-UUID) id', async () => {
-    const res = await app.inject({ method: 'GET', url: '/v1/donation/orders/not-a-uuid' })
+    const res = await app.inject({ method: 'GET', url: '/user/v1/donation/orders/not-a-uuid' })
     expect(res.statusCode).toBe(400)
   })
 
@@ -621,7 +621,7 @@ describe('GET /v1/donation/orders/:id (spec 022 §4.6)', () => {
     const charity = await seedCharity()
     const create = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/charity-donation',
+      url: '/user/v1/donation/orders/charity-donation',
       payload: {
         donorName: '匿名先生',
         isAnonymous: true,
@@ -633,7 +633,7 @@ describe('GET /v1/donation/orders/:id (spec 022 §4.6)', () => {
       },
     })
     const created = create.json() as OrderJson
-    const res = await app.inject({ method: 'GET', url: `/v1/donation/orders/${created.id}` })
+    const res = await app.inject({ method: 'GET', url: `/user/v1/donation/orders/${created.id}` })
     const body = res.json() as OrderJson
     expect(body.donorName).toBe('匿名先生')
     expect(body.isAnonymous).toBe(true)
@@ -643,7 +643,7 @@ describe('GET /v1/donation/orders/:id (spec 022 §4.6)', () => {
 
 // ── POST /:id/confirm-payment (§4.4) ───────────────────────────────────────
 
-describe('POST /v1/donation/orders/:id/confirm-payment (spec 022 §4.4)', () => {
+describe('POST /user/v1/donation/orders/:id/confirm-payment (spec 022 §4.4)', () => {
   it('transitions PENDING → PAID and stamps paidAt', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-07-01T10:00:00.000Z'))
@@ -651,7 +651,7 @@ describe('POST /v1/donation/orders/:id/confirm-payment (spec 022 §4.4)', () => 
 
     const res = await app.inject({
       method: 'POST',
-      url: `/v1/donation/orders/${created.id}/confirm-payment`,
+      url: `/user/v1/donation/orders/${created.id}/confirm-payment`,
     })
     expect(res.statusCode).toBe(200)
     const body = res.json() as OrderJson
@@ -666,7 +666,7 @@ describe('POST /v1/donation/orders/:id/confirm-payment (spec 022 §4.4)', () => 
     const created = await createPendingCharityOrder()
     const first = await app.inject({
       method: 'POST',
-      url: `/v1/donation/orders/${created.id}/confirm-payment`,
+      url: `/user/v1/donation/orders/${created.id}/confirm-payment`,
     })
     const firstBody = first.json() as OrderJson
     expect(firstBody.status).toBe('PAID')
@@ -675,7 +675,7 @@ describe('POST /v1/donation/orders/:id/confirm-payment (spec 022 §4.4)', () => 
     vi.setSystemTime(new Date('2026-07-02T10:00:00.000Z'))
     const second = await app.inject({
       method: 'POST',
-      url: `/v1/donation/orders/${created.id}/confirm-payment`,
+      url: `/user/v1/donation/orders/${created.id}/confirm-payment`,
     })
     expect(second.statusCode).toBe(200)
     const secondBody = second.json() as OrderJson
@@ -687,11 +687,11 @@ describe('POST /v1/donation/orders/:id/confirm-payment (spec 022 §4.4)', () => 
     const created = await createPendingCharityOrder()
     await app.inject({
       method: 'POST',
-      url: `/v1/donation/orders/${created.id}/cancel`,
+      url: `/user/v1/donation/orders/${created.id}/cancel`,
     })
     const res = await app.inject({
       method: 'POST',
-      url: `/v1/donation/orders/${created.id}/confirm-payment`,
+      url: `/user/v1/donation/orders/${created.id}/confirm-payment`,
     })
     expect(res.statusCode).toBe(409)
     expect(res.json()).toMatchObject({ code: 'ORDER_STATUS_INVALID' })
@@ -700,7 +700,7 @@ describe('POST /v1/donation/orders/:id/confirm-payment (spec 022 §4.4)', () => 
   it('returns 404 ORDER_NOT_FOUND for a missing order', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/22222222-2222-4222-8222-222222222222/confirm-payment',
+      url: '/user/v1/donation/orders/22222222-2222-4222-8222-222222222222/confirm-payment',
     })
     expect(res.statusCode).toBe(404)
     expect(res.json()).toMatchObject({ code: 'ORDER_NOT_FOUND' })
@@ -718,7 +718,7 @@ describe('POST /v1/donation/orders/:id/confirm-payment (spec 022 §4.4)', () => 
       Array.from({ length: 5 }, () =>
         app.inject({
           method: 'POST',
-          url: `/v1/donation/orders/${created.id}/confirm-payment`,
+          url: `/user/v1/donation/orders/${created.id}/confirm-payment`,
         }),
       ),
     )
@@ -736,14 +736,14 @@ describe('POST /v1/donation/orders/:id/confirm-payment (spec 022 §4.4)', () => 
 
 // ── POST /:id/cancel (§4.5) ────────────────────────────────────────────────
 
-describe('POST /v1/donation/orders/:id/cancel (spec 022 §4.5)', () => {
+describe('POST /user/v1/donation/orders/:id/cancel (spec 022 §4.5)', () => {
   it('transitions PENDING → CANCELLED and stamps cancelledAt', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-07-03T08:00:00.000Z'))
     const created = await createPendingCharityOrder()
     const res = await app.inject({
       method: 'POST',
-      url: `/v1/donation/orders/${created.id}/cancel`,
+      url: `/user/v1/donation/orders/${created.id}/cancel`,
     })
     expect(res.statusCode).toBe(200)
     const body = res.json() as OrderJson
@@ -754,10 +754,10 @@ describe('POST /v1/donation/orders/:id/cancel (spec 022 §4.5)', () => {
 
   it('is idempotent when already CANCELLED', async () => {
     const created = await createPendingCharityOrder()
-    await app.inject({ method: 'POST', url: `/v1/donation/orders/${created.id}/cancel` })
+    await app.inject({ method: 'POST', url: `/user/v1/donation/orders/${created.id}/cancel` })
     const res = await app.inject({
       method: 'POST',
-      url: `/v1/donation/orders/${created.id}/cancel`,
+      url: `/user/v1/donation/orders/${created.id}/cancel`,
     })
     expect(res.statusCode).toBe(200)
     expect((res.json() as OrderJson).status).toBe('CANCELLED')
@@ -767,11 +767,11 @@ describe('POST /v1/donation/orders/:id/cancel (spec 022 §4.5)', () => {
     const created = await createPendingCharityOrder()
     await app.inject({
       method: 'POST',
-      url: `/v1/donation/orders/${created.id}/confirm-payment`,
+      url: `/user/v1/donation/orders/${created.id}/confirm-payment`,
     })
     const res = await app.inject({
       method: 'POST',
-      url: `/v1/donation/orders/${created.id}/cancel`,
+      url: `/user/v1/donation/orders/${created.id}/cancel`,
     })
     expect(res.statusCode).toBe(409)
     expect(res.json()).toMatchObject({ code: 'ORDER_STATUS_INVALID' })
@@ -780,7 +780,7 @@ describe('POST /v1/donation/orders/:id/cancel (spec 022 §4.5)', () => {
   it('returns 404 ORDER_NOT_FOUND for a missing order', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/orders/33333333-3333-4333-8333-333333333333/cancel',
+      url: '/user/v1/donation/orders/33333333-3333-4333-8333-333333333333/cancel',
     })
     expect(res.statusCode).toBe(404)
     expect(res.json()).toMatchObject({ code: 'ORDER_NOT_FOUND' })

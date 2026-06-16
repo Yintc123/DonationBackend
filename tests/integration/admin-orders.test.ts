@@ -67,7 +67,7 @@ async function seedSaleItemRow(charityId: string, priceTwd = 449): Promise<{ id:
 async function createCharityOrder(charityId: string): Promise<{ id: string }> {
   const res = await app.inject({
     method: 'POST',
-    url: '/v1/donation/orders/charity-donation',
+    url: '/user/v1/donation/orders/charity-donation',
     payload: {
       donorName: 'X',
       receiptOption: 'NONE',
@@ -83,7 +83,7 @@ async function createCharityOrder(charityId: string): Promise<{ id: string }> {
 async function createSaleItemOrder(saleItemId: string): Promise<{ id: string }> {
   const res = await app.inject({
     method: 'POST',
-    url: '/v1/donation/orders/sale-item-purchase',
+    url: '/user/v1/donation/orders/sale-item-purchase',
     payload: { donorName: 'B', items: [{ saleItemId, quantity: 1 }] },
   })
   return res.json() as { id: string }
@@ -98,7 +98,7 @@ interface ListBody {
 
 describe('Admin auth gate (spec 020 §2.3 / spec 022 §2.4)', () => {
   it('rejects unauthenticated requests with 401', async () => {
-    const res = await app.inject({ method: 'GET', url: '/v1/admin/orders' })
+    const res = await app.inject({ method: 'GET', url: '/cms/orders' })
     expect(res.statusCode).toBe(401)
   })
 
@@ -106,7 +106,7 @@ describe('Admin auth gate (spec 020 §2.3 / spec 022 §2.4)', () => {
     const { token } = await seedUser()
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/admin/orders',
+      url: '/cms/orders',
       headers: { authorization: `Bearer ${token}` },
     })
     expect(res.statusCode).toBe(403)
@@ -120,7 +120,7 @@ describe('Admin auth gate (spec 020 §2.3 / spec 022 §2.4)', () => {
     })
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/admin/orders',
+      url: '/cms/orders',
       headers: { authorization: `Bearer ${admin.token}` },
     })
     expect(res.statusCode).toBe(401)
@@ -134,16 +134,16 @@ describe('Admin auth gate (spec 020 §2.3 / spec 022 §2.4)', () => {
     const { token } = await seedUser()
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/admin/orders',
+      url: '/cms/orders',
       headers: { authorization: `Bearer ${token}` },
     })
     expect(res.statusCode).toBe(403)
   })
 })
 
-// ── GET /v1/admin/orders (spec 022 §4.7) ───────────────────────────────────
+// ── GET /cms/orders (spec 022 §4.7) ───────────────────────────────────
 
-describe('GET /v1/admin/orders (spec 022 §4.7)', () => {
+describe('GET /cms/orders (spec 022 §4.7)', () => {
   it('returns all orders in createdAt DESC order with hydrated inflate', async () => {
     const admin = await seedAdmin()
     const charity = await seedCharityRow()
@@ -151,7 +151,7 @@ describe('GET /v1/admin/orders (spec 022 §4.7)', () => {
     const o2 = await createCharityOrder(charity.id)
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/admin/orders',
+      url: '/cms/orders',
       headers: { authorization: `Bearer ${admin.token}` },
     })
     expect(res.statusCode).toBe(200)
@@ -168,11 +168,11 @@ describe('GET /v1/admin/orders (spec 022 §4.7)', () => {
     // PAY one of them
     await app.inject({
       method: 'POST',
-      url: `/v1/donation/orders/${o1.id}/confirm-payment`,
+      url: `/user/v1/donation/orders/${o1.id}/confirm-payment`,
     })
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/admin/orders?status=PAID',
+      url: '/cms/orders?status=PAID',
       headers: { authorization: `Bearer ${admin.token}` },
     })
     const body = res.json() as ListBody
@@ -191,7 +191,7 @@ describe('GET /v1/admin/orders (spec 022 §4.7)', () => {
     await createSaleItemOrder(itemB.id)
     const res = await app.inject({
       method: 'GET',
-      url: `/v1/admin/orders?subjectType=CHARITY&charityId=${charityA.id}`,
+      url: `/cms/orders?subjectType=CHARITY&charityId=${charityA.id}`,
       headers: { authorization: `Bearer ${admin.token}` },
     })
     const body = res.json() as ListBody
@@ -207,7 +207,7 @@ describe('GET /v1/admin/orders (spec 022 §4.7)', () => {
     await createCharityOrder(charity.id)
     const page1 = await app.inject({
       method: 'GET',
-      url: '/v1/admin/orders?limit=2',
+      url: '/cms/orders?limit=2',
       headers: { authorization: `Bearer ${admin.token}` },
     })
     const p1 = page1.json() as ListBody
@@ -216,7 +216,7 @@ describe('GET /v1/admin/orders (spec 022 §4.7)', () => {
     expect(p1.pageInfo.nextCursor).not.toBe(null)
     const page2 = await app.inject({
       method: 'GET',
-      url: `/v1/admin/orders?limit=2&cursor=${encodeURIComponent(p1.pageInfo.nextCursor!)}`,
+      url: `/cms/orders?limit=2&cursor=${encodeURIComponent(p1.pageInfo.nextCursor!)}`,
       headers: { authorization: `Bearer ${admin.token}` },
     })
     const p2 = page2.json() as ListBody
@@ -229,7 +229,7 @@ describe('GET /v1/admin/orders (spec 022 §4.7)', () => {
     const admin = await seedAdmin()
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/admin/orders?cursor=not-a-real-cursor',
+      url: '/cms/orders?cursor=not-a-real-cursor',
       headers: { authorization: `Bearer ${admin.token}` },
     })
     expect(res.statusCode).toBe(400)
@@ -237,16 +237,16 @@ describe('GET /v1/admin/orders (spec 022 §4.7)', () => {
   })
 })
 
-// ── GET /v1/admin/orders/:id (spec 022 §4.8) ───────────────────────────────
+// ── GET /cms/orders/:id (spec 022 §4.8) ───────────────────────────────
 
-describe('GET /v1/admin/orders/:id (spec 022 §4.8)', () => {
+describe('GET /cms/orders/:id (spec 022 §4.8)', () => {
   it('returns the order detail with inflated subject', async () => {
     const admin = await seedAdmin()
     const charity = await seedCharityRow()
     const order = await createCharityOrder(charity.id)
     const res = await app.inject({
       method: 'GET',
-      url: `/v1/admin/orders/${order.id}`,
+      url: `/cms/orders/${order.id}`,
       headers: { authorization: `Bearer ${admin.token}` },
     })
     expect(res.statusCode).toBe(200)
@@ -257,7 +257,7 @@ describe('GET /v1/admin/orders/:id (spec 022 §4.8)', () => {
     const admin = await seedAdmin()
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/admin/orders/11111111-1111-4111-8111-111111111111',
+      url: '/cms/orders/11111111-1111-4111-8111-111111111111',
       headers: { authorization: `Bearer ${admin.token}` },
     })
     expect(res.statusCode).toBe(404)
@@ -265,16 +265,16 @@ describe('GET /v1/admin/orders/:id (spec 022 §4.8)', () => {
   })
 })
 
-// ── PATCH /v1/admin/orders/:id (spec 022 §4.9) ─────────────────────────────
+// ── PATCH /cms/orders/:id (spec 022 §4.9) ─────────────────────────────
 
-describe('PATCH /v1/admin/orders/:id (spec 022 §4.9)', () => {
+describe('PATCH /cms/orders/:id (spec 022 §4.9)', () => {
   it('updates status + donorName + isAnonymous in one call', async () => {
     const admin = await seedAdmin()
     const charity = await seedCharityRow()
     const order = await createCharityOrder(charity.id)
     const res = await app.inject({
       method: 'PATCH',
-      url: `/v1/admin/orders/${order.id}`,
+      url: `/cms/orders/${order.id}`,
       headers: { authorization: `Bearer ${admin.token}` },
       payload: { status: 'REFUNDED', donorName: 'Renamed', isAnonymous: true },
     })
@@ -291,7 +291,7 @@ describe('PATCH /v1/admin/orders/:id (spec 022 §4.9)', () => {
     const order = await createCharityOrder(charity.id)
     const res = await app.inject({
       method: 'PATCH',
-      url: `/v1/admin/orders/${order.id}`,
+      url: `/cms/orders/${order.id}`,
       headers: { authorization: `Bearer ${admin.token}` },
       payload: { amountTwd: 9999 },
     })
@@ -305,7 +305,7 @@ describe('PATCH /v1/admin/orders/:id (spec 022 §4.9)', () => {
     const order = await createCharityOrder(charity.id)
     const res = await app.inject({
       method: 'PATCH',
-      url: `/v1/admin/orders/${order.id}`,
+      url: `/cms/orders/${order.id}`,
       headers: { authorization: `Bearer ${admin.token}` },
       payload: { note: '  hello  ' },
     })
@@ -317,7 +317,7 @@ describe('PATCH /v1/admin/orders/:id (spec 022 §4.9)', () => {
     const admin = await seedAdmin()
     const res = await app.inject({
       method: 'PATCH',
-      url: '/v1/admin/orders/22222222-2222-4222-8222-222222222222',
+      url: '/cms/orders/22222222-2222-4222-8222-222222222222',
       headers: { authorization: `Bearer ${admin.token}` },
       payload: { status: 'REFUNDED' },
     })
@@ -331,7 +331,7 @@ describe('PATCH /v1/admin/orders/:id (spec 022 §4.9)', () => {
     const order = await createCharityOrder(charity.id)
     const res = await app.inject({
       method: 'PATCH',
-      url: `/v1/admin/orders/${order.id}`,
+      url: `/cms/orders/${order.id}`,
       headers: { authorization: `Bearer ${user.token}` },
       payload: { status: 'REFUNDED' },
     })
@@ -339,16 +339,16 @@ describe('PATCH /v1/admin/orders/:id (spec 022 §4.9)', () => {
   })
 })
 
-// ── DELETE /v1/admin/orders/:id (spec 022 §4.10) ───────────────────────────
+// ── DELETE /cms/orders/:id (spec 022 §4.10) ───────────────────────────
 
-describe('DELETE /v1/admin/orders/:id (spec 022 §4.10)', () => {
+describe('DELETE /cms/orders/:id (spec 022 §4.10)', () => {
   it('hard-deletes the order and cascades to OrderLine', async () => {
     const admin = await seedAdmin()
     const charity = await seedCharityRow()
     const order = await createCharityOrder(charity.id)
     const res = await app.inject({
       method: 'DELETE',
-      url: `/v1/admin/orders/${order.id}`,
+      url: `/cms/orders/${order.id}`,
       headers: { authorization: `Bearer ${admin.token}` },
     })
     expect(res.statusCode).toBe(204)
@@ -362,7 +362,7 @@ describe('DELETE /v1/admin/orders/:id (spec 022 §4.10)', () => {
     const admin = await seedAdmin()
     const res = await app.inject({
       method: 'DELETE',
-      url: '/v1/admin/orders/33333333-3333-4333-8333-333333333333',
+      url: '/cms/orders/33333333-3333-4333-8333-333333333333',
       headers: { authorization: `Bearer ${admin.token}` },
     })
     expect(res.statusCode).toBe(404)
@@ -375,7 +375,7 @@ describe('DELETE /v1/admin/orders/:id (spec 022 §4.10)', () => {
     const order = await createCharityOrder(charity.id)
     const res = await app.inject({
       method: 'DELETE',
-      url: `/v1/admin/orders/${order.id}`,
+      url: `/cms/orders/${order.id}`,
       headers: { authorization: `Bearer ${user.token}` },
     })
     expect(res.statusCode).toBe(403)

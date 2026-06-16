@@ -1,9 +1,10 @@
 // Spec 022 §4.7-§4.10 — admin order endpoints.
 //
-// Every route is gated by `requireAdmin` (spec 020 §2.3): valid access JWT,
-// account not disabled, claims.role === Role.ADMIN. Failures → 401 / 403
-// before any service code runs. We thread the resolved `accountId` into the
-// admin services so audit payloads can attribute the actor.
+// `/cms/orders/*`. Spec 023 §4.4 — auth gating is done by the scope-level
+// `requireAdmin` preHandler hook attached at the `/cms` mount in app.ts;
+// individual handlers no longer call `requireAdmin`. accountId is read
+// from `req.user.sub` (set by authContextPlugin from the verified JWT
+// claims and validated by the CMS hook before this handler runs).
 
 import type { FastifyInstance } from 'fastify'
 import { Type, type Static } from '@sinclair/typebox'
@@ -16,7 +17,6 @@ import {
 import { normalizeNote } from '../../../../domain/order/normalize.js'
 import { getOrderByIdOrFail } from '../../../../domain/order/query-services.js'
 import { serializeOrder } from '../../../../domain/order/serialize.js'
-import { requireAdmin } from '../../../../lib/auth/index.js'
 import { paginatedSchema } from '../../../../lib/http/index.js'
 import {
   AdminListQuery,
@@ -25,7 +25,6 @@ import {
   type AdminPatchBodyT,
 } from '../../../../schemas/order/admin.js'
 import { OrderResponse } from '../../../../schemas/order/response.js'
-import type { TokenSecrets } from '../../../../lib/auth/index.js'
 
 const UUID_V4_PATTERN =
   '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
@@ -51,19 +50,16 @@ const ADMIN_WRITE_LIMITS = {
 }
 
 export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<void> {
-  const tokenSecrets: TokenSecrets = app.tokenSecrets
-
-  // ── GET /v1/admin/orders (spec 022 §4.7) ────────────────────────────────
+  // ── GET /cms/orders (spec 022 §4.7) ─────────────────────────────────────
   app.route<{ Querystring: AdminListQueryT }>({
     method: 'GET',
-    url: '/admin/orders',
+    url: '/orders',
     schema: {
       querystring: AdminListQuery,
       response: { 200: paginatedSchema(OrderResponse) },
     },
     config: { rateLimit: ADMIN_LIST_LIMITS },
     handler: async (req, reply) => {
-      await requireAdmin(req, app.prisma, tokenSecrets)
       const q = req.query
       const result = await listOrdersForAdmin(
         { prisma: app.prisma },
@@ -89,26 +85,25 @@ export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<vo
     },
   })
 
-  // ── GET /v1/admin/orders/:id (spec 022 §4.8) ────────────────────────────
+  // ── GET /cms/orders/:id (spec 022 §4.8) ────────────────────────────
   app.route<{ Params: OrderIdParamsT }>({
     method: 'GET',
-    url: '/admin/orders/:id',
+    url: '/orders/:id',
     schema: {
       params: OrderIdParams,
       response: { 200: OrderResponse },
     },
     config: { rateLimit: ADMIN_DETAIL_LIMITS },
     handler: async (req, reply) => {
-      await requireAdmin(req, app.prisma, tokenSecrets)
       const order = await getOrderByIdOrFail({ prisma: app.prisma }, req.params.id)
       return reply.ok(serializeOrder(order, app.objectUrl))
     },
   })
 
-  // ── PATCH /v1/admin/orders/:id (spec 022 §4.9) ──────────────────────────
+  // ── PATCH /cms/orders/:id (spec 022 §4.9) ──────────────────────────
   app.route<{ Params: OrderIdParamsT; Body: AdminPatchBodyT }>({
     method: 'PATCH',
-    url: '/admin/orders/:id',
+    url: '/orders/:id',
     schema: {
       params: OrderIdParams,
       body: AdminPatchBody,
@@ -116,7 +111,7 @@ export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<vo
     },
     config: { rateLimit: ADMIN_WRITE_LIMITS },
     handler: async (req, reply) => {
-      const accountId = await requireAdmin(req, app.prisma, tokenSecrets)
+      const accountId = req.user!.sub
       const body = req.body
       const order = await patchOrderAsAdmin(
         { prisma: app.prisma, logger: req.log },
@@ -142,16 +137,16 @@ export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<vo
     },
   })
 
-  // ── DELETE /v1/admin/orders/:id (spec 022 §4.10) ────────────────────────
+  // ── DELETE /cms/orders/:id (spec 022 §4.10) ────────────────────────
   app.route<{ Params: OrderIdParamsT }>({
     method: 'DELETE',
-    url: '/admin/orders/:id',
+    url: '/orders/:id',
     schema: {
       params: OrderIdParams,
     },
     config: { rateLimit: ADMIN_WRITE_LIMITS },
     handler: async (req, reply) => {
-      const accountId = await requireAdmin(req, app.prisma, tokenSecrets)
+      const accountId = req.user!.sub
       await deleteOrderAsAdmin(
         { prisma: app.prisma, logger: req.log },
         accountId,

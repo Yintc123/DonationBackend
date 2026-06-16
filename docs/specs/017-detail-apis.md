@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.6 |
+| 版本 | 0.7 |
 | 日期 | 2026-06-14 |
 | 適用範圍 | `backend/src/routes/v1/donation/charities/get-by-id.ts`、`backend/src/routes/v1/donation/donation-projects/get-by-id.ts`、`backend/src/routes/v1/donation/sale-items/get-by-id.ts`、`backend/src/schemas/donation-item/detail.ts` |
 | 相關 ADR | 同 spec 016(專案級 002 Fastify schema-driven、007 Prisma;backend 002 charity-category-model、**backend 004 i18n-storage-model**)+ **backend 006 lifecycle-fields-and-cascading-visibility**(v0.5 — detail endpoint 必須通過 `whereLive` 才回 200,否則 404 不洩漏 archived / deleted)|
@@ -13,6 +13,13 @@
 ---
 
 ## 1. 目的與範圍
+
+> **URL prefix(spec 023 §2 已落地)**:本 spec 列的 endpoint path **不含 surface prefix**。實際 client URL 依 surface 加前綴:
+> - Public read endpoints → `/user/v{N}/...`(spec 023 §2.2;當前 `v1`)
+> - Admin write endpoints → `/cms/...`(spec 023 §2.3,scope-level `requireAdmin` 由 `/cms` plugin attach)
+> - Auth endpoints → `/auth/...`(spec 023 §2.1,不版本化)
+>
+> Endpoint URL 完整 mapping 表見 spec 023 §2.4。
 
 對應前端 [spec 004 系列詳情頁](../../../frontend/docs/specs/004-detail-pages.md):呈現單一 resource 的完整資料(超過 list 卡片需要的欄位)。
 
@@ -352,3 +359,4 @@ API 回傳 `name: string`,client 無法分辨「拿到的是 en 還是 fallback 
 | 0.4 | 2026-06-14 | 同步 spec 015 v0.8 / spec 018 v0.2:detail response 中的 `logoUrl` / `coverImageUrl` / `charity.logoUrl` 由 server 端 `objectUrl(key)` 拼接(DB 存 key,**response shape 對 client 不變**)。§2 共通規則加註圖片 URL 拼接來源;§7 不必新測試(URL 完整性已在 spec 018 §12 testcontainer e2e 覆蓋)|
 | 0.5 | 2026-06-14 | Entity lifecycle 落實到 detail endpoint(**backend ADR 006 / spec 015 v0.9 / spec 016 v0.11**):(1) §2 共通規則加「Lifecycle filter」行 — public detail 必須走 `whereLive` 4 條件,任一不通過回 404 不洩漏存在;(2) Project / SaleItem 額外 cascading visibility — parent Charity 也必須通過 `whereLive`,否則同樣 404;(3) §2 末加 implementation hint;(4) §3.3 / §4.3 / §5.3 Prisma 查詢範例改用 `findFirst` + `whereLive(now)`,Project / SaleItem 加 `charity: { is: whereLive(now) }` cascade,Category include 加 `archivedAt: null, deletedAt: null` 過濾;(5) §7 補 8 條 lifecycle 整合測試(4 種 lifecycle 路徑各 → 404、Cascading visibility Project / SaleItem 各 + 反向恢復、archived category 不出現在 categories 內、ETag 不對 404 row 簽發)|
 | 0.6 | 2026-06-14 | 與實作對齊 + best practice 補強(對齊 spec 009 v0.2 / spec 016 v0.13):**(A 類 drift)** (1) §2 / §7 `VALIDATION_ERROR` → `VALIDATION_FAILED`(spec 005 §4.2 字典為命名權威,過去版本拼成 `_ERROR` 是 drift);(2) §2 / §3.2 / §4.2 / §5.2 / §7 可選欄位無值改為「回 `null`,key 永遠存在」 — 對齊 `src/schemas/donation-item/detail.ts` 既有 `Type.Union([String, Null])` schema 與 spec 009 v0.2;(3) §3.3 / §4.3 / §5.3 import 路徑 `@/domain/donation-item/where.js` → `@/domain/lifecycle/index.js`(對齊 code);(4) §4.3 / §5.3 改用 `whereLiveWithParent(now)` 單一 helper(語意等價於 `whereLive + charity: { is: whereLive(now) }`,可讀性與正確性都優於分開拼);(5) §3.3 `NotFoundError` 範例補上 `{ resource, id, code }` payload(對齊實作)。**(B 類 best practice)** (6) §2 新增 `Cache-Control(404): no-store`(B3) — cascading visibility 與 lifecycle window 會讓 404 ↔ 200 反覆切換,client / CDN 不可 cache 404;§7 補 1 條對應測試 |
+| 0.7 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |

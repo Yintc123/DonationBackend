@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.9 |
+| 版本 | 0.10 |
 | 日期 | 2026-06-15 |
 | 適用範圍 | `backend/src/routes/v1/donation/orders/*`(新)、`backend/src/routes/v1/admin/orders/*`(新)、`backend/src/domain/order/*`(spec 021 共享)、`backend/src/lib/clock.ts`(spec 021 §7.7 共享) |
 | 相關 ADR | 待補 |
@@ -13,6 +13,13 @@
 ---
 
 ## 1. 目的與範圍
+
+> **URL prefix(spec 023 §2 已落地)**:本 spec 列的 endpoint path **不含 surface prefix**。實際 client URL 依 surface 加前綴:
+> - Public read endpoints → `/user/v{N}/...`(spec 023 §2.2;當前 `v1`)
+> - Admin write endpoints → `/cms/...`(spec 023 §2.3,scope-level `requireAdmin` 由 `/cms` plugin attach)
+> - Auth endpoints → `/auth/...`(spec 023 §2.1,不版本化)
+>
+> Endpoint URL 完整 mapping 表見 spec 023 §2.4。
 
 ### 1.1 目的
 
@@ -881,3 +888,4 @@ Body {
 | 0.7 | 2026-06-15 | 補 6 個最佳實踐落點(回應「足夠開發?」review):(1) §4.0 共通慣例 + §5.1 規約 **所有 request body `Type.Object` 設 `additionalProperties: false`**(strict mode,拒未宣告欄位);(2) §4.0 + spec 021 §7.7 規範 **Clock 注入**:service 接收 `deps.clock: () => Date`,production 從 Fastify decorator,test 用 `vi.useFakeTimers` / fixed Date;(3) §4.7 補 **admin list inflate 行為** — 與 detail 同 shape,Prisma 一次 `include` 帶 charity/project/saleItem 避 N+1,logoKey → logoUrl batch 過 spec 018;(4) §5.2 釐清 **`isAnonymous` 缺值 service 層 fallback `false`**(不依賴 Ajv `useDefaults`);(5) §5.2 釐清 **`note` trim 落點 = service 層**;(6) §2.1 風險表補 **cancel endpoint 風險**(任何拿 orderId 者可 cancel,本期接受 UUID 視同擁有者,未來改 manageToken)。**移除** `RECEIPT_OPTION_NOT_APPLICABLE` error code(v0.5 加,v0.7 改由 schema 層擋成 `VALIDATION_FAILED`,避免雙層校驗);§10 新加 3 個 integration test case(unknown property / clock 邊界 / admin list inflate)。對應 spec 021 v0.7 |
 | 0.8 | 2026-06-15 | spec drift 收斂(回應「規格 vs code 對齊」audit):**移除** `ORDER_LINES_REQUIRED` / `ORDER_TOO_MANY_LINES` error code(v0.2 加但從未實作 — TypeBox `items: { minItems: 1, maxItems: 1 }` 已涵蓋 → `VALIDATION_FAILED`)。§4.3 sale-item-purchase 錯誤段、§5.2 service 層 rule 表、§7 error code 表三處同步更新;對應 backend codes.ts 從未定義這兩個 code,本版本是消除規格與 code 漂移的純文件改動 |
 | 0.9 | 2026-06-15 | §4.1 / §4.2 註解釐清:**`isAnonymous` 三類訂單(Charity / DonationProject / SaleItem)都掛 checkbox** — Charity 對應 IMG_4888、Project 對應 IMG_4889、SaleItem 對應 IMG_4890(原 v0.5 文字偏重 IMG_4890,易誤解為僅 SaleItem 可匿名)。code 自 v0.5 起 schema + 三個 body / service / admin filter / admin PATCH 已全面支援,本版純文件對齊 + integration test 補強(Project / SaleItem 各加 isAnonymous=true 持久化驗證)。對應 spec 021 v0.8 |
+| 0.10 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |

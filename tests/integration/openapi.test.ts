@@ -35,12 +35,15 @@ describe('OpenAPI surface — development', () => {
       paths: Record<string, unknown>
     }
     expect(body.openapi).toMatch(/^3\./)
-    // Smoke: spec 016 endpoints must be in the document.
-    expect(body.paths['/v1/donation/charities']).toBeDefined()
-    expect(body.paths['/v1/donation/charities/{id}']).toBeDefined()
-    expect(body.paths['/v1/donation/donation-projects']).toBeDefined()
-    expect(body.paths['/v1/donation/sale-items']).toBeDefined()
-    expect(body.paths['/v1/donation/categories']).toBeDefined()
+    // Smoke: spec 016 endpoints (public reads) under /user/v1 + admin
+    // write endpoints (spec 020) under /cms (spec 023 surfaces).
+    expect(body.paths['/user/v1/donation/charities']).toBeDefined()
+    expect(body.paths['/user/v1/donation/charities/{id}']).toBeDefined()
+    expect(body.paths['/user/v1/donation/donation-projects']).toBeDefined()
+    expect(body.paths['/user/v1/donation/sale-items']).toBeDefined()
+    expect(body.paths['/user/v1/donation/categories']).toBeDefined()
+    expect(body.paths['/cms/donation/charities']).toBeDefined()
+    expect(body.paths['/cms/donation/charities/{id}']).toBeDefined()
   })
 
   it('GET /docs renders the Swagger UI shell', async () => {

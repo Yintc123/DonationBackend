@@ -61,7 +61,7 @@ const ORDER_DETAIL_PURPOSE = {
 }
 
 export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
-  // ── POST /v1/donation/orders/charity-donation (spec 022 §4.1) ───────────
+  // ── POST /user/v1/donation/orders/charity-donation (spec 022 §4.1) ───────────
   app.route<{ Body: CharityDonationBodyT }>({
     method: 'POST',
     url: '/donation/orders/charity-donation',
@@ -75,11 +75,11 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
         { prisma: app.prisma, clock: app.clock, logger: req.log },
         req.body,
       )
-      return reply.created(`/v1/donation/orders/${order.id}`, serializeOrder(order, app.objectUrl))
+      return reply.created(`/user/v1/donation/orders/${order.id}`, serializeOrder(order, app.objectUrl))
     },
   })
 
-  // ── POST /v1/donation/orders/project-donation (spec 022 §4.2) ───────────
+  // ── POST /user/v1/donation/orders/project-donation (spec 022 §4.2) ───────────
   app.route<{ Body: ProjectDonationBodyT }>({
     method: 'POST',
     url: '/donation/orders/project-donation',
@@ -93,11 +93,11 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
         { prisma: app.prisma, clock: app.clock, logger: req.log },
         req.body,
       )
-      return reply.created(`/v1/donation/orders/${order.id}`, serializeOrder(order, app.objectUrl))
+      return reply.created(`/user/v1/donation/orders/${order.id}`, serializeOrder(order, app.objectUrl))
     },
   })
 
-  // ── POST /v1/donation/orders/sale-item-purchase (spec 022 §4.3) ─────────
+  // ── POST /user/v1/donation/orders/sale-item-purchase (spec 022 §4.3) ─────────
   app.route<{ Body: SaleItemPurchaseBodyT }>({
     method: 'POST',
     url: '/donation/orders/sale-item-purchase',
@@ -111,11 +111,11 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
         { prisma: app.prisma, clock: app.clock, logger: req.log },
         req.body,
       )
-      return reply.created(`/v1/donation/orders/${order.id}`, serializeOrder(order, app.objectUrl))
+      return reply.created(`/user/v1/donation/orders/${order.id}`, serializeOrder(order, app.objectUrl))
     },
   })
 
-  // ── GET /v1/donation/orders/:id (spec 022 §4.6) ─────────────────────────
+  // ── GET /user/v1/donation/orders/:id (spec 022 §4.6) ─────────────────────────
   app.route<{ Params: OrderIdParamsT }>({
     method: 'GET',
     url: '/donation/orders/:id',
@@ -130,7 +130,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
     },
   })
 
-  // ── POST /v1/donation/orders/:id/confirm-payment (spec 022 §4.4) ────────
+  // ── POST /user/v1/donation/orders/:id/confirm-payment (spec 022 §4.4) ────────
   app.route<{ Params: OrderIdParamsT }>({
     method: 'POST',
     url: '/donation/orders/:id/confirm-payment',
@@ -148,7 +148,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
     },
   })
 
-  // ── POST /v1/donation/orders/:id/cancel (spec 022 §4.5) ─────────────────
+  // ── POST /user/v1/donation/orders/:id/cancel (spec 022 §4.5) ─────────────────
   app.route<{ Params: OrderIdParamsT }>({
     method: 'POST',
     url: '/donation/orders/:id/cancel',

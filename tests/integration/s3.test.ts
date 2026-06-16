@@ -78,13 +78,13 @@ describe('s3 plugin (integration, spec 018 §12)', () => {
     expect(url.endsWith(`/${key}`)).toBe(true)
   })
 
-  // ── GET /v1/donation/uploads/presign ───────────────────────────────────
+  // ── GET /cms/uploads/presign ───────────────────────────────────
 
   it('GET .../presign → 401 when no admin JWT is supplied (spec 020 §14 OQ #11)', async () => {
     app = await buildApp()
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/uploads/presign',
+      url: '/cms/uploads/presign',
       query: {
         entity: 'charities',
         id: VALID_UUID,
@@ -101,7 +101,7 @@ describe('s3 plugin (integration, spec 018 §12)', () => {
     const headers = await adminAuth(app)
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/uploads/presign',
+      url: '/cms/uploads/presign',
       headers,
       query: {
         entity: 'charities',
@@ -124,7 +124,7 @@ describe('s3 plugin (integration, spec 018 §12)', () => {
     const headers = await adminAuth(app)
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/uploads/presign',
+      url: '/cms/uploads/presign',
       headers,
       query: {
         entity: 'charities',
@@ -144,7 +144,7 @@ describe('s3 plugin (integration, spec 018 §12)', () => {
     const headers = await adminAuth(app)
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/uploads/presign',
+      url: '/cms/uploads/presign',
       headers,
       query: {
         entity: 'charities',
@@ -162,7 +162,7 @@ describe('s3 plugin (integration, spec 018 §12)', () => {
     const headers = await adminAuth(app)
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/uploads/presign',
+      url: '/cms/uploads/presign',
       headers,
       query: {
         entity: 'charities',
@@ -194,7 +194,7 @@ describe('s3 plugin (integration, spec 018 §12)', () => {
 
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/uploads/presign',
+      url: '/cms/uploads/presign',
       headers,
       query: {
         entity: 'charities',

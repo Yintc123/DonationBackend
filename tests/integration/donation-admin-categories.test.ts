@@ -63,7 +63,7 @@ describe('Category admin auth gate', () => {
     const cat = await seedCategory()
     const res = await app.inject({
       method: 'PATCH',
-      url: `/v1/donation/categories/${cat.id}`,
+      url: `/cms/donation/categories/${cat.id}`,
       payload: { displayName: 'X' },
     })
     expect(res.statusCode).toBe(401)
@@ -74,7 +74,7 @@ describe('Category admin auth gate', () => {
     const token = await userToken()
     const res = await app.inject({
       method: 'PATCH',
-      url: `/v1/donation/categories/${cat.id}`,
+      url: `/cms/donation/categories/${cat.id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { displayName: 'X' },
     })
@@ -84,13 +84,13 @@ describe('Category admin auth gate', () => {
 
 // ── PATCH ──────────────────────────────────────────────────────────────────
 
-describe('PATCH /v1/donation/categories/:id (spec 020 §5.4.1)', () => {
+describe('PATCH /cms/donation/categories/:id (spec 020 §5.4.1)', () => {
   it('updates displayName / displayNameEn / displayOrder', async () => {
     const token = await adminToken()
     const cat = await seedCategory()
     const res = await app.inject({
       method: 'PATCH',
-      url: `/v1/donation/categories/${cat.id}`,
+      url: `/cms/donation/categories/${cat.id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { displayName: '新分類', displayOrder: 99 },
     })
@@ -105,7 +105,7 @@ describe('PATCH /v1/donation/categories/:id (spec 020 §5.4.1)', () => {
     const cat = await seedCategory()
     const res = await app.inject({
       method: 'PATCH',
-      url: `/v1/donation/categories/${cat.id}`,
+      url: `/cms/donation/categories/${cat.id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { key: 'tampered' },
     })
@@ -116,7 +116,7 @@ describe('PATCH /v1/donation/categories/:id (spec 020 §5.4.1)', () => {
     const token = await adminToken()
     const res = await app.inject({
       method: 'PATCH',
-      url: '/v1/donation/categories/11111111-1111-4111-8111-111111111111',
+      url: '/cms/donation/categories/11111111-1111-4111-8111-111111111111',
       headers: { authorization: `Bearer ${token}` },
       payload: { displayName: 'X' },
     })
@@ -128,7 +128,7 @@ describe('PATCH /v1/donation/categories/:id (spec 020 §5.4.1)', () => {
     const cat = await seedCategory()
     const res = await app.inject({
       method: 'PATCH',
-      url: `/v1/donation/categories/${cat.id}`,
+      url: `/cms/donation/categories/${cat.id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { displayName: 'X', archivedAt: '2030-01-01T00:00:00Z' },
     })
@@ -144,7 +144,7 @@ describe('Category lifecycle actions', () => {
     const cat = await seedCategory()
     const arch = await app.inject({
       method: 'POST',
-      url: `/v1/donation/categories/${cat.id}/archive`,
+      url: `/cms/donation/categories/${cat.id}/archive`,
       headers: { authorization: `Bearer ${token}` },
     })
     expect(arch.statusCode).toBe(204)
@@ -152,7 +152,7 @@ describe('Category lifecycle actions', () => {
     expect(row?.archivedAt).not.toBe(null)
     const unarch = await app.inject({
       method: 'POST',
-      url: `/v1/donation/categories/${cat.id}/unarchive`,
+      url: `/cms/donation/categories/${cat.id}/unarchive`,
       headers: { authorization: `Bearer ${token}` },
     })
     expect(unarch.statusCode).toBe(204)
@@ -165,14 +165,14 @@ describe('Category lifecycle actions', () => {
     const cat = await seedCategory()
     await app.inject({
       method: 'DELETE',
-      url: `/v1/donation/categories/${cat.id}`,
+      url: `/cms/donation/categories/${cat.id}`,
       headers: { authorization: `Bearer ${token}` },
     })
     let row = await app.prisma.category.findUnique({ where: { id: cat.id } })
     expect(row?.deletedAt).not.toBe(null)
     await app.inject({
       method: 'POST',
-      url: `/v1/donation/categories/${cat.id}/restore`,
+      url: `/cms/donation/categories/${cat.id}/restore`,
       headers: { authorization: `Bearer ${token}` },
     })
     row = await app.prisma.category.findUnique({ where: { id: cat.id } })
@@ -183,7 +183,7 @@ describe('Category lifecycle actions', () => {
     const token = await adminToken()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/categories/22222222-2222-4222-8222-222222222222/archive',
+      url: '/cms/donation/categories/22222222-2222-4222-8222-222222222222/archive',
       headers: { authorization: `Bearer ${token}` },
     })
     expect(res.statusCode).toBe(404)
@@ -194,13 +194,13 @@ describe('Category lifecycle actions', () => {
     const cat = await seedCategory()
     await app.inject({
       method: 'POST',
-      url: `/v1/donation/categories/${cat.id}/archive`,
+      url: `/cms/donation/categories/${cat.id}/archive`,
       headers: { authorization: `Bearer ${token}` },
     })
     const before = await app.prisma.category.findUnique({ where: { id: cat.id } })
     const second = await app.inject({
       method: 'POST',
-      url: `/v1/donation/categories/${cat.id}/archive`,
+      url: `/cms/donation/categories/${cat.id}/archive`,
       headers: { authorization: `Bearer ${token}` },
     })
     expect(second.statusCode).toBe(204)

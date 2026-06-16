@@ -4,7 +4,6 @@ import type { FastifyInstance } from 'fastify'
 import { Type, type Static } from '@sinclair/typebox'
 
 import { updateCategory } from '../../../../domain/category/write.js'
-import { requireAdmin } from '../../../../lib/auth/index.js'
 import { ErrorCode } from '../../../../lib/errors/index.js'
 import { parseAcceptLanguage } from '../../../../lib/i18n/index.js'
 import {
@@ -30,7 +29,7 @@ const CATEGORY_LIMITS = {
 }
 
 export async function registerCategoryAdminRoutes(app: FastifyInstance): Promise<void> {
-  // ── PATCH /v1/donation/categories/:id (spec 020 §5.4.1) ─────────────────
+  // ── PATCH /cms/donation/categories/:id (spec 020 §5.4.1) ─────────────────
   app.route<{ Params: IdParamsT; Body: CategoryPatchBodyT }>({
     method: 'PATCH',
     url: '/donation/categories/:id',
@@ -41,7 +40,6 @@ export async function registerCategoryAdminRoutes(app: FastifyInstance): Promise
     },
     config: { rateLimit: CATEGORY_LIMITS },
     handler: async (req, reply) => {
-      await requireAdmin(req, app.prisma, app.tokenSecrets)
       const locale = parseAcceptLanguage(req.headers['accept-language'])
       const body = await updateCategory(
         { prisma: app.prisma, redis: app.redis, logger: req.log, locale },

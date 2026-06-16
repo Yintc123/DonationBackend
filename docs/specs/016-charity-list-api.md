@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.14 |
+| 版本 | 0.15 |
 | 日期 | 2026-06-14 |
 | 適用範圍 | `backend/src/routes/v1/donation/charities/*`、`backend/src/routes/v1/donation/donation-projects/*`、`backend/src/routes/v1/donation/sale-items/*`、`backend/src/routes/v1/donation/categories/*`、`backend/src/domain/donation-item/*`、`backend/src/domain/category/*`、`backend/src/schemas/donation-item/*`、`backend/src/schemas/category/*` |
 | 相關 ADR | `../../docs/decisions/002-backend-framework.md`(專案級 — Fastify schema-driven)、`../../docs/decisions/007-orm-prisma.md`(專案級)、`../decisions/001-donation-item-relations.md`(backend 級 — `?charityId=` 過濾)、`../decisions/002-charity-category-model.md`(backend 級 — `?category=<key>` 過濾、`/v1/donation/categories` 端點、子表繼承查詢)、`../decisions/004-i18n-storage-model.md`(backend 級 — `Accept-Language` request header + fallback 語意)、`../decisions/006-lifecycle-fields-and-cascading-visibility.md`(backend 級 — **v0.11 起所有 public list query 必須走 `whereLive` + Project / SaleItem cascade parent Charity 的 `whereLive`**)|
@@ -13,6 +13,13 @@
 ---
 
 ## 1. 目的與範圍
+
+> **URL prefix(spec 023 §2 已落地)**:本 spec 列的 endpoint path **不含 surface prefix**。實際 client URL 依 surface 加前綴:
+> - Public read endpoints → `/user/v{N}/...`(spec 023 §2.2;當前 `v1`)
+> - Admin write endpoints → `/cms/...`(spec 023 §2.3,scope-level `requireAdmin` 由 `/cms` plugin attach)
+> - Auth endpoints → `/auth/...`(spec 023 §2.1,不版本化)
+>
+> Endpoint URL 完整 mapping 表見 spec 023 §2.4。
 
 ### 1.1 目的
 
@@ -730,3 +737,4 @@ Fastify route schema 已是 JSON-Schema 起點,**dev 環境**自動產出 OpenAP
 | 0.12 | 2026-06-14 | 文件對齊修正(無 contract 改動):(1) §4.2 移除 `sort` 參數 — v0.11 §4.5 已凍結排序為 `display_order ASC, created_at DESC, id DESC`(ADR 006 §4 強制),Query 參數表與 §4.5 規則對齊;(2) §5.1 / §7 `VALIDATION_ERROR` → `VALIDATION_FAILED`(spec 005 §4.2 字典為 code 命名權威,本 spec 過去版本拼成 `_ERROR` 是 drift);(3) §5.1 `INTERNAL` → `INTERNAL_ERROR`(同 spec 005);(4) 程式碼端同時把 `PAGINATION_CURSOR_INVALID` / `UNIQUE_CONSTRAINT` / `FK_CONSTRAINT` 三個原本以 string literal 拋出的 code 註冊進 `src/lib/errors/codes.ts`(spec 005 §4.4 governance) |
 | 0.13 | 2026-06-14 | 與實作對齊 + best practice 補強:**(A 類 drift)** (1) §4.4 / §6.3 改為「nullable 欄位回 `null`,key 永遠存在」(對齊 spec 009 §4.4 v0.2 與既有 `Type.Union([X, Null])` schema);(2) §4.4 Charity list-item 加 `categories`(對齊 `src/schemas/donation-item/list-item.ts` 既有實作,resolves 原 §4.4 註記);(3) §6.3 移除刪除線殘行 `~~items[].key~~`;(4) §12 `cursor.maxLength` 512 → 1024(對齊 code);(5) §12 範例 `ListQueryWithCharityFk` → `ListQueryWithCharityId`、`charityId` 用 pattern UUID v4 而非 `format: 'uuid'`(對齊 code);(6) §12 範例 `ItemBase` / `ProjectListItem` / `SaleItemListItem` schema 用 `Type.Union([Type.String(), Type.Null()])`,移除過時 `sort` 殘留與 `CategoryKeyEnum`(改用 `InflatedCategory` `{ id, key, displayName }`)。**(B 類 best practice)** (7) §4.2 `q` 加 NFC 正規化(B2),避免不同輸入法 / 平台組合字漏命中;(8) §10.1 BFF 拓墣下的 rate-limit key 規約(B1) — 信任 proxy、轉發 `X-Forwarded-For`、有 session 加 sessionId、demo 加限額;(9) §11.1 BFF cache key 維度規約(B4) — 必含 pathname + q + category + cursor + limit + charityId + Accept-Language;(10) §6.4 categories cache 加 `stale-while-revalidate=86400`(B6);(11) §12.1 新增 OpenAPI 產出規約(B5) — dev `/openapi.json` + `/docs`,prod 404。下游 spec 017 v0.6 同步 |
 | 0.14 | 2026-06-14 | `CATEGORY_UNKNOWN` 落實:(1) §5.1 註腳更新 — 不再用 TypeBox `Type.Union(literals)`(那會回 `VALIDATION_FAILED`),改在 route handler 啟動點呼叫 `src/domain/category/keys.ts::parseCategoryKey()`,把白名單檢查從 schema 層下放到 domain 層;`details` 帶 `{ category, allowed: [...16 keys] }` 方便 client 列示;(2) §13 unit test 描述同步;(3) `src/lib/errors/codes.ts` 註冊 `CATEGORY_UNKNOWN` → 400(spec 005 §4.4 governance);(4) `src/schemas/donation-item/shared.ts` `category` 從 `Type.Union(literals)` 鬆綁為 `Type.String({ minLength: 1, maxLength: 40 })`,保留長度檢查(對齊 spec 015 §3.3 VARCHAR(40));(5) 3 個 list route handler 呼叫 `parseCategoryKey(req.query.category)` 後再傳進 service。**邊界**:`?category=`(空字串)維持 `VALIDATION_FAILED`(被 schema minLength 擋掉);`?category=animals` 才是 `CATEGORY_UNKNOWN`(過 schema 但不在白名單)|
+| 0.15 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |

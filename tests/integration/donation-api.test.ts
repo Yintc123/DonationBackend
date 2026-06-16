@@ -96,7 +96,7 @@ interface JsonBody {
   pageInfo: { nextCursor: string | null; hasMore: boolean }
 }
 
-describe('GET /v1/donation/charities (spec 016 §4)', () => {
+describe('GET /user/v1/donation/charities (spec 016 §4)', () => {
   it('returns lifecycle-filtered charities with paginated envelope', async () => {
     await seedCharity({ name: 'live A' })
     await seedCharity({ name: 'live B' })
@@ -105,7 +105,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
     await seedCharity({ name: 'scheduled', publishStartAt: future(1) })
     await seedCharity({ name: 'expired', publishEndAt: past(1) })
 
-    const res = await app.inject({ method: 'GET', url: '/v1/donation/charities' })
+    const res = await app.inject({ method: 'GET', url: '/user/v1/donation/charities' })
     expect(res.statusCode).toBe(200)
     const body = res.json() as JsonBody
     const names = body.items.map((i) => i.name)
@@ -119,7 +119,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
   it('sorts by displayOrder ASC, createdAt DESC, id DESC (v0.11)', async () => {
     const pinned = await seedCharity({ name: 'pinned', displayOrder: -1 })
     const normal = await seedCharity({ name: 'normal' })
-    const res = await app.inject({ method: 'GET', url: '/v1/donation/charities' })
+    const res = await app.inject({ method: 'GET', url: '/user/v1/donation/charities' })
     const body = res.json() as JsonBody
     const ids = body.items.map((i) => i.id as string)
     expect(ids.indexOf(pinned.id)).toBeLessThan(ids.indexOf(normal.id))
@@ -130,7 +130,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
     await seedCharity({ name: '無關項目' })
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { q: '流浪動物' },
     })
     const body = res.json() as JsonBody
@@ -150,7 +150,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
     const decomposedQ = 'café' // c + a + f + e + COMBINING ACUTE ACCENT
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { q: decomposedQ },
       headers: { 'accept-language': 'en' },
     })
@@ -164,7 +164,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
     await seedCharity({ name: 'visible B' })
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { q: '   ' },
     })
     expect(res.statusCode).toBe(200)
@@ -181,7 +181,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
     })
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { q: 'stray' },
       headers: { 'accept-language': 'en' },
     })
@@ -196,7 +196,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
     await seedCharity({ name: '只有中文', nameEn: null })
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       headers: { 'accept-language': 'en' },
     })
     const body = res.json() as JsonBody
@@ -209,7 +209,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
     await seedCharity({ name: 'other charity' })
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { category: 'animal_protection' },
     })
     const body = res.json() as JsonBody
@@ -219,7 +219,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
   it('rejects unknown category with the dedicated CATEGORY_UNKNOWN code (spec 016 §5.1)', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { category: 'animals' },
     })
     expect(res.statusCode).toBe(400)
@@ -236,7 +236,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
   it('rejects an empty category (TypeBox length bound, not the whitelist) → VALIDATION_FAILED', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { category: '' },
     })
     expect(res.statusCode).toBe(400)
@@ -253,7 +253,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
 
     const page1 = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { limit: '2' },
     })
     const body1 = page1.json() as JsonBody
@@ -263,7 +263,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
 
     const page2 = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { limit: '2', cursor: body1.pageInfo.nextCursor! },
     })
     const body2 = page2.json() as JsonBody
@@ -271,7 +271,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
 
     const page3 = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { limit: '2', cursor: body2.pageInfo.nextCursor! },
     })
     const body3 = page3.json() as JsonBody
@@ -286,7 +286,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
   it('rejects a malformed cursor with 400 PAGINATION_CURSOR_INVALID', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { cursor: 'not!a!cursor' },
     })
     expect(res.statusCode).toBe(400)
@@ -300,7 +300,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
     }
     const page1 = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { limit: '2' },
     })
     const body1 = page1.json() as JsonBody
@@ -309,7 +309,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
 
     const page2 = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { limit: '5', cursor: body1.pageInfo.nextCursor! },
     })
     expect(page2.statusCode).toBe(200)
@@ -318,7 +318,7 @@ describe('GET /v1/donation/charities (spec 016 §4)', () => {
   })
 })
 
-describe('GET /v1/donation/donation-projects (spec 016 + cascading visibility)', () => {
+describe('GET /user/v1/donation/donation-projects (spec 016 + cascading visibility)', () => {
   it('hides projects whose parent Charity is expired (ADR 006 §3)', async () => {
     const liveCharity = await seedCharity({ name: 'live parent' })
     const expiredCharity = await seedCharity({
@@ -328,7 +328,7 @@ describe('GET /v1/donation/donation-projects (spec 016 + cascading visibility)',
     await seedProject({ charityId: liveCharity.id, name: 'visible project' })
     await seedProject({ charityId: expiredCharity.id, name: 'hidden by cascade' })
 
-    const res = await app.inject({ method: 'GET', url: '/v1/donation/donation-projects' })
+    const res = await app.inject({ method: 'GET', url: '/user/v1/donation/donation-projects' })
     const body = res.json() as JsonBody
     expect(body.items.map((i) => i.name)).toEqual(['visible project'])
   })
@@ -337,7 +337,7 @@ describe('GET /v1/donation/donation-projects (spec 016 + cascading visibility)',
     const c = await seedCharity({ name: 'reborn', publishEndAt: past(1) })
     await seedProject({ charityId: c.id, name: 'reborn project' })
 
-    let res = await app.inject({ method: 'GET', url: '/v1/donation/donation-projects' })
+    let res = await app.inject({ method: 'GET', url: '/user/v1/donation/donation-projects' })
     expect((res.json() as JsonBody).items.map((i) => i.name)).not.toContain('reborn project')
 
     await app.prisma.charity.update({ where: { id: c.id }, data: { publishEndAt: future(30) } })
@@ -349,7 +349,7 @@ describe('GET /v1/donation/donation-projects (spec 016 + cascading visibility)',
     await app.redis.del('cache:proj:list:v1:ALL:ALL:zh-TW')
     await app.redis.del('cache:proj:list:v1:ALL:ALL:en')
 
-    res = await app.inject({ method: 'GET', url: '/v1/donation/donation-projects' })
+    res = await app.inject({ method: 'GET', url: '/user/v1/donation/donation-projects' })
     expect((res.json() as JsonBody).items.map((i) => i.name)).toContain('reborn project')
   })
 
@@ -361,7 +361,7 @@ describe('GET /v1/donation/donation-projects (spec 016 + cascading visibility)',
 
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/donation-projects',
+      url: '/user/v1/donation/donation-projects',
       query: { charityId: targetCharity.id },
     })
     const body = res.json() as JsonBody
@@ -373,7 +373,7 @@ describe('GET /v1/donation/donation-projects (spec 016 + cascading visibility)',
     const c = await seedCharity({ name: 'parent', categoryIds: [cat.id] })
     await seedProject({ charityId: c.id, name: 'project' })
 
-    const res = await app.inject({ method: 'GET', url: '/v1/donation/donation-projects' })
+    const res = await app.inject({ method: 'GET', url: '/user/v1/donation/donation-projects' })
     const body = res.json() as JsonBody
     expect(body.items[0]?.categories).toEqual([
       expect.objectContaining({ key: 'animal_protection' }),
@@ -381,11 +381,11 @@ describe('GET /v1/donation/donation-projects (spec 016 + cascading visibility)',
   })
 })
 
-describe('GET /v1/donation/categories (spec 016 §6)', () => {
+describe('GET /user/v1/donation/categories (spec 016 §6)', () => {
   it('lists active categories in displayOrder ASC, key ASC', async () => {
     await seedCategory({ key: 'animal_protection', displayOrder: 20 })
     await seedCategory({ key: 'child_care', displayOrder: 10 })
-    const res = await app.inject({ method: 'GET', url: '/v1/donation/categories' })
+    const res = await app.inject({ method: 'GET', url: '/user/v1/donation/categories' })
     expect(res.statusCode).toBe(200)
     const body = res.json() as { items: { key: string }[] }
     expect(body.items.map((i) => i.key)).toEqual(['child_care', 'animal_protection'])
@@ -402,13 +402,13 @@ describe('GET /v1/donation/categories (spec 016 §6)', () => {
         archivedAt: past(1),
       },
     })
-    const res = await app.inject({ method: 'GET', url: '/v1/donation/categories' })
+    const res = await app.inject({ method: 'GET', url: '/user/v1/donation/categories' })
     const body = res.json() as { items: { key: string }[] }
     expect(body.items.map((i) => i.key)).toEqual(['child_care'])
   })
 
   it('sets the 5-minute public cache header with stale-while-revalidate (spec 016 §6.4 v0.13)', async () => {
-    const res = await app.inject({ method: 'GET', url: '/v1/donation/categories' })
+    const res = await app.inject({ method: 'GET', url: '/user/v1/donation/categories' })
     expect(res.headers['cache-control']).toBe(
       'public, max-age=300, must-revalidate, stale-while-revalidate=86400',
     )
@@ -418,14 +418,14 @@ describe('GET /v1/donation/categories (spec 016 §6)', () => {
     await seedCategory({ key: 'animal_protection', displayOrder: 20 })
     await seedCategory({ key: 'child_care', displayOrder: 10 })
 
-    const first = await app.inject({ method: 'GET', url: '/v1/donation/categories' })
+    const first = await app.inject({ method: 'GET', url: '/user/v1/donation/categories' })
     expect(first.statusCode).toBe(200)
     const etag = first.headers.etag as string
     expect(etag).toMatch(/^"[0-9a-f]{16}"$/)
 
     const second = await app.inject({
       method: 'GET',
-      url: '/v1/donation/categories',
+      url: '/user/v1/donation/categories',
       headers: { 'if-none-match': etag },
     })
     expect(second.statusCode).toBe(304)
@@ -437,12 +437,12 @@ describe('GET /v1/donation/categories (spec 016 §6)', () => {
     await seedCategory({ key: 'child_care', displayOrder: 10 })
     const zh = await app.inject({
       method: 'GET',
-      url: '/v1/donation/categories',
+      url: '/user/v1/donation/categories',
       headers: { 'accept-language': 'zh-TW' },
     })
     const en = await app.inject({
       method: 'GET',
-      url: '/v1/donation/categories',
+      url: '/user/v1/donation/categories',
       headers: { 'accept-language': 'en' },
     })
     expect(zh.headers.etag).not.toBe(en.headers.etag)
@@ -456,7 +456,7 @@ describe('GET /v1/donation/{resource}/:id detail (spec 017)', () => {
       name: '完整公益團體',
       categoryIds: [cat.id],
     })
-    const res = await app.inject({ method: 'GET', url: `/v1/donation/charities/${c.id}` })
+    const res = await app.inject({ method: 'GET', url: `/user/v1/donation/charities/${c.id}` })
     expect(res.statusCode).toBe(200)
     const body = res.json() as { id: string; name: string; categories: { key: string }[] }
     expect(body.id).toBe(c.id)
@@ -466,7 +466,7 @@ describe('GET /v1/donation/{resource}/:id detail (spec 017)', () => {
 
   it('returns 404 CHARITY_NOT_FOUND for an archived Charity (lifecycle leak prevention, spec 017 §2)', async () => {
     const c = await seedCharity({ archivedAt: past(1) })
-    const res = await app.inject({ method: 'GET', url: `/v1/donation/charities/${c.id}` })
+    const res = await app.inject({ method: 'GET', url: `/user/v1/donation/charities/${c.id}` })
     expect(res.statusCode).toBe(404)
     expect((res.json() as { code: string }).code).toBe('CHARITY_NOT_FOUND')
     // Spec 017 §2 v0.6 (B3): 404 from lifecycle / cascading visibility MUST
@@ -479,21 +479,21 @@ describe('GET /v1/donation/{resource}/:id detail (spec 017)', () => {
     const p = await seedProject({ charityId: c.id })
     const res = await app.inject({
       method: 'GET',
-      url: `/v1/donation/donation-projects/${p.id}`,
+      url: `/user/v1/donation/donation-projects/${p.id}`,
     })
     expect(res.statusCode).toBe(404)
     expect((res.json() as { code: string }).code).toBe('DONATION_PROJECT_NOT_FOUND')
   })
 
   it('rejects non-uuid :id with 400 VALIDATION_FAILED', async () => {
-    const res = await app.inject({ method: 'GET', url: '/v1/donation/charities/not-a-uuid' })
+    const res = await app.inject({ method: 'GET', url: '/user/v1/donation/charities/not-a-uuid' })
     expect(res.statusCode).toBe(400)
   })
 
   it('returns 404 for a non-existent uuid', async () => {
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities/00000000-0000-4000-8000-000000000000',
+      url: '/user/v1/donation/charities/00000000-0000-4000-8000-000000000000',
     })
     expect(res.statusCode).toBe(404)
   })
@@ -503,7 +503,7 @@ describe('GET /v1/donation/{resource}/:id detail (spec 017)', () => {
     const p = await seedProject({ charityId: c.id })
     const res = await app.inject({
       method: 'GET',
-      url: `/v1/donation/donation-projects/${p.id}`,
+      url: `/user/v1/donation/donation-projects/${p.id}`,
     })
     expect(res.statusCode).toBe(200)
     const body = res.json() as { charity: { id: string; name: string } }
@@ -515,7 +515,7 @@ describe('GET /v1/donation/{resource}/:id detail (spec 017)', () => {
 
   it('Charity detail emits a strong ETag wrapped in double quotes', async () => {
     const c = await seedCharity({ name: 'etag charity' })
-    const res = await app.inject({ method: 'GET', url: `/v1/donation/charities/${c.id}` })
+    const res = await app.inject({ method: 'GET', url: `/user/v1/donation/charities/${c.id}` })
     expect(res.statusCode).toBe(200)
     const etag = res.headers.etag
     expect(typeof etag).toBe('string')
@@ -526,13 +526,13 @@ describe('GET /v1/donation/{resource}/:id detail (spec 017)', () => {
     const c = await seedCharity({ name: 'etag charity 2' })
     const first = await app.inject({
       method: 'GET',
-      url: `/v1/donation/charities/${c.id}`,
+      url: `/user/v1/donation/charities/${c.id}`,
     })
     const etag = first.headers.etag as string
 
     const second = await app.inject({
       method: 'GET',
-      url: `/v1/donation/charities/${c.id}`,
+      url: `/user/v1/donation/charities/${c.id}`,
       headers: { 'if-none-match': etag },
     })
     expect(second.statusCode).toBe(304)
@@ -544,7 +544,7 @@ describe('GET /v1/donation/{resource}/:id detail (spec 017)', () => {
     const c = await seedCharity({ name: 'etag charity 3' })
     const res = await app.inject({
       method: 'GET',
-      url: `/v1/donation/charities/${c.id}`,
+      url: `/user/v1/donation/charities/${c.id}`,
       headers: { 'if-none-match': '"deadbeef00000000"' },
     })
     expect(res.statusCode).toBe(200)
@@ -560,12 +560,12 @@ describe('GET /v1/donation/{resource}/:id detail (spec 017)', () => {
     })
     const zh = await app.inject({
       method: 'GET',
-      url: `/v1/donation/charities/${c.id}`,
+      url: `/user/v1/donation/charities/${c.id}`,
       headers: { 'accept-language': 'zh-TW' },
     })
     const en = await app.inject({
       method: 'GET',
-      url: `/v1/donation/charities/${c.id}`,
+      url: `/user/v1/donation/charities/${c.id}`,
       headers: { 'accept-language': 'en' },
     })
     expect(zh.headers.etag).not.toBe(en.headers.etag)
@@ -576,7 +576,7 @@ describe('GET /v1/donation/{resource}/:id detail (spec 017)', () => {
     const p = await seedProject({ charityId: c.id })
     const first = await app.inject({
       method: 'GET',
-      url: `/v1/donation/donation-projects/${p.id}`,
+      url: `/user/v1/donation/donation-projects/${p.id}`,
     })
     const etag1 = first.headers.etag as string
 
@@ -593,7 +593,7 @@ describe('GET /v1/donation/{resource}/:id detail (spec 017)', () => {
 
     const second = await app.inject({
       method: 'GET',
-      url: `/v1/donation/donation-projects/${p.id}`,
+      url: `/user/v1/donation/donation-projects/${p.id}`,
     })
     expect(second.headers.etag).not.toBe(etag1)
   })
@@ -609,7 +609,7 @@ describe('Cursor decoding via the public cursor helper round-trip', () => {
     })
     const res = await app.inject({
       method: 'GET',
-      url: '/v1/donation/charities',
+      url: '/user/v1/donation/charities',
       query: { cursor },
     })
     expect(res.statusCode).toBe(200)

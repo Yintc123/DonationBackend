@@ -23,7 +23,6 @@ import {
 } from '../../../domain/donation-item/lifecycle-actions.js'
 import type { DonationEntity } from '../../../lib/cache/index.js'
 import { NotFoundError } from '../../../lib/errors/index.js'
-import { requireAdmin } from '../../../lib/auth/index.js'
 
 const UUID_V4_PATTERN =
   '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
@@ -59,11 +58,14 @@ export interface LifecycleRouteDeps<S extends Record<string, true>> {
 /**
  * Register the four lifecycle routes (archive / unarchive / delete /
  * restore) under `basePath`. Each handler:
- *   1. Calls `requireAdmin` (401 / 403 fail-safe).
- *   2. Reads parent charity id when applicable (project / sale).
- *   3. Verifies the row exists (404 with entity-specific code).
- *   4. Applies the lifecycle stamp via the shared factory (idempotent
+ *   1. Reads parent charity id when applicable (project / sale).
+ *   2. Verifies the row exists (404 with entity-specific code).
+ *   3. Applies the lifecycle stamp via the shared factory (idempotent
  *      via WHERE clause; emits audit only on actual transition).
+ *
+ * `requireAdmin` is NOT called here — it lives on the /cms surface as a
+ * scope-level preHandler hook in app.ts (spec 023 §4.4), so every CMS
+ * route is gated before this handler runs.
  */
 export function registerLifecycleRoutes<S extends Record<string, true>>(
   deps: LifecycleRouteDeps<S>,
@@ -92,7 +94,6 @@ export function registerLifecycleRoutes<S extends Record<string, true>>(
       schema: { params: IdParams },
       config: { rateLimit },
       handler: async (req, reply) => {
-        await requireAdmin(req, app.prisma, app.tokenSecrets)
         const id = req.params.id
         const { parentCharityId } = await resolveExistsAndParent(id)
         await handler(

@@ -60,13 +60,13 @@ interface SaleResp {
 
 // ── DonationProject ────────────────────────────────────────────────────────
 
-describe('POST /v1/donation/donation-projects (spec 020 §5.2)', () => {
+describe('POST /cms/donation/donation-projects (spec 020 §5.2)', () => {
   it('creates with required parent charityId; returns 201 + nested charity', async () => {
     const token = await adminToken()
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/donation-projects',
+      url: '/cms/donation/donation-projects',
       headers: { authorization: `Bearer ${token}` },
       payload: {
         charityId: charity.id,
@@ -84,7 +84,7 @@ describe('POST /v1/donation/donation-projects (spec 020 §5.2)', () => {
     const token = await adminToken()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/donation-projects',
+      url: '/cms/donation/donation-projects',
       headers: { authorization: `Bearer ${token}` },
       payload: {
         charityId: '11111111-1111-4111-8111-111111111111',
@@ -102,7 +102,7 @@ describe('POST /v1/donation/donation-projects (spec 020 §5.2)', () => {
     const charity = await seedCharity({ archivedAt: new Date() })
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/donation-projects',
+      url: '/cms/donation/donation-projects',
       headers: { authorization: `Bearer ${token}` },
       payload: {
         charityId: charity.id,
@@ -119,7 +119,7 @@ describe('POST /v1/donation/donation-projects (spec 020 §5.2)', () => {
     const charityA = await seedCharity()
     const create = await app.inject({
       method: 'POST',
-      url: '/v1/donation/donation-projects',
+      url: '/cms/donation/donation-projects',
       headers: { authorization: `Bearer ${token}` },
       payload: {
         charityId: charityA.id,
@@ -132,7 +132,7 @@ describe('POST /v1/donation/donation-projects (spec 020 §5.2)', () => {
     const charityB = await seedCharity()
     const patch = await app.inject({
       method: 'PATCH',
-      url: `/v1/donation/donation-projects/${id}`,
+      url: `/cms/donation/donation-projects/${id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { charityId: charityB.id },
     })
@@ -144,7 +144,7 @@ describe('POST /v1/donation/donation-projects (spec 020 §5.2)', () => {
     const charity = await seedCharity()
     const create = await app.inject({
       method: 'POST',
-      url: '/v1/donation/donation-projects',
+      url: '/cms/donation/donation-projects',
       headers: { authorization: `Bearer ${token}` },
       payload: {
         charityId: charity.id,
@@ -156,12 +156,12 @@ describe('POST /v1/donation/donation-projects (spec 020 §5.2)', () => {
     const id = (create.json() as ProjResp).id
     await app.inject({
       method: 'POST',
-      url: `/v1/donation/donation-projects/${id}/archive`,
+      url: `/cms/donation/donation-projects/${id}/archive`,
       headers: { authorization: `Bearer ${token}` },
     })
     const list = await app.inject({
       method: 'GET',
-      url: '/v1/donation/donation-projects',
+      url: '/user/v1/donation/donation-projects',
     })
     const ids = (list.json() as { items: { id: string }[] }).items.map((i) => i.id)
     expect(ids).not.toContain(id)
@@ -170,13 +170,13 @@ describe('POST /v1/donation/donation-projects (spec 020 §5.2)', () => {
 
 // ── SaleItem ───────────────────────────────────────────────────────────────
 
-describe('POST /v1/donation/sale-items (spec 020 §5.3)', () => {
+describe('POST /cms/donation/sale-items (spec 020 §5.3)', () => {
   it('creates with required priceTwd; returns nested charity', async () => {
     const token = await adminToken()
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/sale-items',
+      url: '/cms/donation/sale-items',
       headers: { authorization: `Bearer ${token}` },
       payload: {
         charityId: charity.id,
@@ -197,7 +197,7 @@ describe('POST /v1/donation/sale-items (spec 020 §5.3)', () => {
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/sale-items',
+      url: '/cms/donation/sale-items',
       headers: { authorization: `Bearer ${token}` },
       payload: {
         charityId: charity.id,
@@ -214,7 +214,7 @@ describe('POST /v1/donation/sale-items (spec 020 §5.3)', () => {
     const charity = await seedCharity()
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/donation/sale-items',
+      url: '/cms/donation/sale-items',
       headers: { authorization: `Bearer ${token}` },
       payload: {
         charityId: charity.id,
@@ -232,7 +232,7 @@ describe('POST /v1/donation/sale-items (spec 020 §5.3)', () => {
     const charity = await seedCharity()
     const create = await app.inject({
       method: 'POST',
-      url: '/v1/donation/sale-items',
+      url: '/cms/donation/sale-items',
       headers: { authorization: `Bearer ${token}` },
       payload: {
         charityId: charity.id,
@@ -245,7 +245,7 @@ describe('POST /v1/donation/sale-items (spec 020 §5.3)', () => {
     const id = (create.json() as SaleResp).id
     const patch = await app.inject({
       method: 'PATCH',
-      url: `/v1/donation/sale-items/${id}`,
+      url: `/cms/donation/sale-items/${id}`,
       headers: { authorization: `Bearer ${token}` },
       payload: { priceTwd: 250 },
     })
@@ -258,7 +258,7 @@ describe('POST /v1/donation/sale-items (spec 020 §5.3)', () => {
     const charity = await seedCharity()
     const create = await app.inject({
       method: 'POST',
-      url: '/v1/donation/sale-items',
+      url: '/cms/donation/sale-items',
       headers: { authorization: `Bearer ${token}` },
       payload: {
         charityId: charity.id,
@@ -271,14 +271,14 @@ describe('POST /v1/donation/sale-items (spec 020 §5.3)', () => {
     const id = (create.json() as SaleResp).id
     await app.inject({
       method: 'DELETE',
-      url: `/v1/donation/sale-items/${id}`,
+      url: `/cms/donation/sale-items/${id}`,
       headers: { authorization: `Bearer ${token}` },
     })
     let row = await app.prisma.saleItem.findUnique({ where: { id } })
     expect(row?.deletedAt).not.toBe(null)
     await app.inject({
       method: 'POST',
-      url: `/v1/donation/sale-items/${id}/restore`,
+      url: `/cms/donation/sale-items/${id}/restore`,
       headers: { authorization: `Bearer ${token}` },
     })
     row = await app.prisma.saleItem.findUnique({ where: { id } })
