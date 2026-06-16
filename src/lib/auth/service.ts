@@ -32,7 +32,7 @@ import {
 } from './login-lock.js'
 import { hash as hashPassword, needsRehash, verify as verifyPassword } from './password.js'
 import type { PasswordHashOpts } from './password.js'
-import { loadAccountRole } from './role.js'
+import { loadAccountRole, Role } from './role.js'
 import {
   createRefreshStore,
   signAccessToken,
@@ -155,10 +155,15 @@ export function createAuthService(deps: AuthServiceDeps): AuthService {
         // Spec 007 §10.8 / spec 008 §5.4 — register IS an interactive auth
         // event (we issue a token bundle immediately on success), so seed the
         // audit columns at create time. Avoids a redundant UPDATE round-trip.
+        // Demo project policy: every self-registered account lands as
+        // ADMIN so the operator who just signed up can immediately reach
+        // /cms. Production deployments should default to USER and gate
+        // admin promotion behind an explicit flow.
         const account = await deps.prisma.account.create({
           data: {
             username,
             email,
+            role: Role.ADMIN,
             lastLoginAt: new Date(),
             lastLoginType: 'PASSWORD',
             passwordCredential: {

@@ -15,6 +15,7 @@ import {
   UnauthorizedError,
 } from '../errors/index.js'
 import {
+  Role,
   createRefreshStore,
   loadAccountRole,
   signAccessToken,
@@ -337,9 +338,13 @@ export function createGoogleAuthService(deps: GoogleAuthDeps): GoogleAuthService
           // Spec §10.4 — Account + GoogleCredential in one transaction.
           // Seed lastLogin at create time — register-via-Google IS an
           // interactive auth event (we issue a bundle below).
+          // Demo project policy: self-registered accounts default to
+          // ADMIN (mirror spec 011 §3.4 password register flow). Real
+          // deployments should default USER + gate admin promotion.
           const created = await deps.prisma.account.create({
             data: {
               email: resolution.email,
+              role: Role.ADMIN,
               lastLoginAt: new Date(),
               lastLoginType: 'GOOGLE',
               googleCredential: {
