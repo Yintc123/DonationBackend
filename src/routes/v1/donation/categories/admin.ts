@@ -33,7 +33,7 @@ export async function registerCategoryAdminRoutes(app: FastifyInstance): Promise
   // ── PATCH /v1/donation/categories/:id (spec 020 §5.4.1) ─────────────────
   app.route<{ Params: IdParamsT; Body: CategoryPatchBodyT }>({
     method: 'PATCH',
-    url: '/v1/donation/categories/:id',
+    url: '/donation/categories/:id',
     schema: {
       params: IdParams,
       body: CategoryPatchBody,
@@ -54,7 +54,7 @@ export async function registerCategoryAdminRoutes(app: FastifyInstance): Promise
 
   registerLifecycleRoutes({
     app,
-    basePath: '/v1/donation/categories',
+    basePath: '/donation/categories',
     delegate: app.prisma.category,
     entity: 'category',
     notFoundResource: 'category',

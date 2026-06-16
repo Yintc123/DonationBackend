@@ -14,3 +14,4 @@ export {
   type PaginatedEnvelope,
   type PaginatedInput,
 } from './pagination.js'
+export { USER_API_VERSIONS, type UserApiVersion } from './api-version.js'

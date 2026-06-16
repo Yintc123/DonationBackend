@@ -47,7 +47,7 @@ export async function registerMeRoutes(
   // ── GET /auth/me ───────────────────────────────────────────────────────
   app.route({
     method: 'GET',
-    url: '/auth/me',
+    url: '/me',
     config: { rateLimit: { perUser: ME_READ_USER } },
     handler: async (req, reply) => {
       const accountId = await requireLiveAccountId(req, app.prisma, tokenSecrets)
@@ -87,7 +87,7 @@ export async function registerMeRoutes(
   // ── PATCH /auth/me ─────────────────────────────────────────────────────
   app.route<{ Body: PatchMeBody }>({
     method: 'PATCH',
-    url: '/auth/me',
+    url: '/me',
     schema: {
       body: Type.Object({
         username: Type.Optional(
@@ -187,7 +187,7 @@ export async function registerMeRoutes(
   // unarchive because login is blocked once archived).
   app.route({
     method: 'POST',
-    url: '/auth/me/archive',
+    url: '/me/archive',
     config: { rateLimit: { perUser: ME_ARCHIVE_USER } },
     handler: async (req, reply) => {
       const accountId = await requireLiveAccountId(req, app.prisma, tokenSecrets)
@@ -207,7 +207,7 @@ export async function registerMeRoutes(
   // ── DELETE /auth/me ────────────────────────────────────────────────────
   app.route({
     method: 'DELETE',
-    url: '/auth/me',
+    url: '/me',
     config: { rateLimit: { perUser: ME_DELETE_USER } },
     handler: async (req, reply) => {
       const accountId = await requireLiveAccountId(req, app.prisma, tokenSecrets)

@@ -33,7 +33,7 @@ const LIFECYCLE_LIMITS = { perUser: { limit: 60, windowMs: HOUR }, perIp: { limi
 export async function registerProjectAdminRoutes(app: FastifyInstance): Promise<void> {
   app.route<{ Body: ProjectCreateBodyT }>({
     method: 'POST',
-    url: '/v1/donation/donation-projects',
+    url: '/donation/donation-projects',
     schema: { body: ProjectCreateBody, response: { 201: ProjectDetail } },
     config: { rateLimit: CREATE_LIMITS },
     handler: async (req, reply) => {
@@ -49,7 +49,7 @@ export async function registerProjectAdminRoutes(app: FastifyInstance): Promise<
 
   app.route<{ Params: IdParamsT; Body: ProjectPatchBodyT }>({
     method: 'PATCH',
-    url: '/v1/donation/donation-projects/:id',
+    url: '/donation/donation-projects/:id',
     schema: { params: IdParams, body: ProjectPatchBody, response: { 200: ProjectDetail } },
     config: { rateLimit: UPDATE_LIMITS },
     handler: async (req, reply) => {
@@ -66,7 +66,7 @@ export async function registerProjectAdminRoutes(app: FastifyInstance): Promise<
 
   registerLifecycleRoutes({
     app,
-    basePath: '/v1/donation/donation-projects',
+    basePath: '/donation/donation-projects',
     delegate: app.prisma.donationProject,
     entity: 'project',
     notFoundResource: 'donation-project',

@@ -56,7 +56,7 @@ export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<vo
   // ── GET /v1/admin/orders (spec 022 §4.7) ────────────────────────────────
   app.route<{ Querystring: AdminListQueryT }>({
     method: 'GET',
-    url: '/v1/admin/orders',
+    url: '/admin/orders',
     schema: {
       querystring: AdminListQuery,
       response: { 200: paginatedSchema(OrderResponse) },
@@ -92,7 +92,7 @@ export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<vo
   // ── GET /v1/admin/orders/:id (spec 022 §4.8) ────────────────────────────
   app.route<{ Params: OrderIdParamsT }>({
     method: 'GET',
-    url: '/v1/admin/orders/:id',
+    url: '/admin/orders/:id',
     schema: {
       params: OrderIdParams,
       response: { 200: OrderResponse },
@@ -108,7 +108,7 @@ export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<vo
   // ── PATCH /v1/admin/orders/:id (spec 022 §4.9) ──────────────────────────
   app.route<{ Params: OrderIdParamsT; Body: AdminPatchBodyT }>({
     method: 'PATCH',
-    url: '/v1/admin/orders/:id',
+    url: '/admin/orders/:id',
     schema: {
       params: OrderIdParams,
       body: AdminPatchBody,
@@ -145,7 +145,7 @@ export async function registerAdminOrderRoutes(app: FastifyInstance): Promise<vo
   // ── DELETE /v1/admin/orders/:id (spec 022 §4.10) ────────────────────────
   app.route<{ Params: OrderIdParamsT }>({
     method: 'DELETE',
-    url: '/v1/admin/orders/:id',
+    url: '/admin/orders/:id',
     schema: {
       params: OrderIdParams,
     },

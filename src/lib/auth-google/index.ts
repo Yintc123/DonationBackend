@@ -84,7 +84,13 @@ export const googleAuthPlugin = fp(
       // Spec 007 §13.8 — only redirect back to origins we already CORS-allow.
       allowedReturnOrigins: parseAllowedReturnOrigins(cfg.CORS_ORIGIN),
     })
-    await registerGoogleAuthRoutes(app, { service, tokenSecrets })
+    // Spec 023 §4.1 — `/auth` surface; route file URLs are relative.
+    await app.register(
+      async (auth) => {
+        await registerGoogleAuthRoutes(auth, { service, tokenSecrets })
+      },
+      { prefix: '/auth' },
+    )
   },
   {
     name: 'auth-google',

@@ -64,7 +64,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
   // ── POST /v1/donation/orders/charity-donation (spec 022 §4.1) ───────────
   app.route<{ Body: CharityDonationBodyT }>({
     method: 'POST',
-    url: '/v1/donation/orders/charity-donation',
+    url: '/donation/orders/charity-donation',
     schema: {
       body: CharityDonationBody,
       response: { 201: OrderResponse },
@@ -82,7 +82,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
   // ── POST /v1/donation/orders/project-donation (spec 022 §4.2) ───────────
   app.route<{ Body: ProjectDonationBodyT }>({
     method: 'POST',
-    url: '/v1/donation/orders/project-donation',
+    url: '/donation/orders/project-donation',
     schema: {
       body: ProjectDonationBody,
       response: { 201: OrderResponse },
@@ -100,7 +100,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
   // ── POST /v1/donation/orders/sale-item-purchase (spec 022 §4.3) ─────────
   app.route<{ Body: SaleItemPurchaseBodyT }>({
     method: 'POST',
-    url: '/v1/donation/orders/sale-item-purchase',
+    url: '/donation/orders/sale-item-purchase',
     schema: {
       body: SaleItemPurchaseBody,
       response: { 201: OrderResponse },
@@ -118,7 +118,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
   // ── GET /v1/donation/orders/:id (spec 022 §4.6) ─────────────────────────
   app.route<{ Params: OrderIdParamsT }>({
     method: 'GET',
-    url: '/v1/donation/orders/:id',
+    url: '/donation/orders/:id',
     schema: {
       params: OrderIdParams,
       response: { 200: OrderResponse },
@@ -133,7 +133,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
   // ── POST /v1/donation/orders/:id/confirm-payment (spec 022 §4.4) ────────
   app.route<{ Params: OrderIdParamsT }>({
     method: 'POST',
-    url: '/v1/donation/orders/:id/confirm-payment',
+    url: '/donation/orders/:id/confirm-payment',
     schema: {
       params: OrderIdParams,
       response: { 200: OrderResponse },
@@ -151,7 +151,7 @@ export async function registerOrderRoutes(app: FastifyInstance): Promise<void> {
   // ── POST /v1/donation/orders/:id/cancel (spec 022 §4.5) ─────────────────
   app.route<{ Params: OrderIdParamsT }>({
     method: 'POST',
-    url: '/v1/donation/orders/:id/cancel',
+    url: '/donation/orders/:id/cancel',
     schema: {
       params: OrderIdParams,
       response: { 200: OrderResponse },

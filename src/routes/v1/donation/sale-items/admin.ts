@@ -31,7 +31,7 @@ const LIFECYCLE_LIMITS = { perUser: { limit: 60, windowMs: HOUR }, perIp: { limi
 export async function registerSaleItemAdminRoutes(app: FastifyInstance): Promise<void> {
   app.route<{ Body: SaleItemCreateBodyT }>({
     method: 'POST',
-    url: '/v1/donation/sale-items',
+    url: '/donation/sale-items',
     schema: { body: SaleItemCreateBody, response: { 201: SaleItemDetail } },
     config: { rateLimit: CREATE_LIMITS },
     handler: async (req, reply) => {
@@ -47,7 +47,7 @@ export async function registerSaleItemAdminRoutes(app: FastifyInstance): Promise
 
   app.route<{ Params: IdParamsT; Body: SaleItemPatchBodyT }>({
     method: 'PATCH',
-    url: '/v1/donation/sale-items/:id',
+    url: '/donation/sale-items/:id',
     schema: { params: IdParams, body: SaleItemPatchBody, response: { 200: SaleItemDetail } },
     config: { rateLimit: UPDATE_LIMITS },
     handler: async (req, reply) => {
@@ -64,7 +64,7 @@ export async function registerSaleItemAdminRoutes(app: FastifyInstance): Promise
 
   registerLifecycleRoutes({
     app,
-    basePath: '/v1/donation/sale-items',
+    basePath: '/donation/sale-items',
     delegate: app.prisma.saleItem,
     entity: 'sale',
     notFoundResource: 'sale-item',

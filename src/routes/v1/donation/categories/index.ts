@@ -19,7 +19,7 @@ import { sendCategories } from '../headers.js'
 export async function registerCategoryRoutes(app: FastifyInstance): Promise<void> {
   app.route({
     method: 'GET',
-    url: '/v1/donation/categories',
+    url: '/donation/categories',
     schema: {
       response: { 200: CategoryListResponse },
     },

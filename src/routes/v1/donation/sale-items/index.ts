@@ -30,7 +30,7 @@ type IdParamsT = Static<typeof IdParams>
 export async function registerSaleItemRoutes(app: FastifyInstance): Promise<void> {
   app.route<{ Querystring: ListQueryWithCharity }>({
     method: 'GET',
-    url: '/v1/donation/sale-items',
+    url: '/donation/sale-items',
     schema: {
       querystring: ListQueryWithCharityId,
       response: { 200: SaleItemListResponse },
@@ -55,7 +55,7 @@ export async function registerSaleItemRoutes(app: FastifyInstance): Promise<void
 
   app.route<{ Params: IdParamsT }>({
     method: 'GET',
-    url: '/v1/donation/sale-items/:id',
+    url: '/donation/sale-items/:id',
     schema: {
       params: IdParams,
       response: { 200: SaleItemDetail },

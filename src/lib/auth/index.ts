@@ -102,8 +102,17 @@ export const authPlugin = fp(
     // module rebuilding the secret bundle.
     app.decorate('tokenSecrets', tokenSecrets)
 
-    await registerAuthRoutes(app, { service })
-    await registerMeRoutes(app, { tokenSecrets })
+    // Spec 023 §4.1 — `/auth` is one of the three URL surfaces; we mount
+    // the spec 008 password routes + spec 008 self-service /me routes
+    // under that prefix in a single child plugin so the route file URLs
+    // can stay relative (`/register`, `/me`, ...).
+    await app.register(
+      async (auth) => {
+        await registerAuthRoutes(auth, { service })
+        await registerMeRoutes(auth, { tokenSecrets })
+      },
+      { prefix: '/auth' },
+    )
   },
   {
     name: 'auth-password',

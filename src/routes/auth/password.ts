@@ -63,7 +63,7 @@ export async function registerAuthRoutes(
   // ── POST /auth/register (spec §4 / §8.1) ────────────────────────────────
   app.route<{ Body: RegisterBody }>({
     method: 'POST',
-    url: '/auth/register',
+    url: '/register',
     schema: {
       body: Type.Object({
         // Spec 008 §4 v0.3 — at least one of (username, email) required.
@@ -120,7 +120,7 @@ export async function registerAuthRoutes(
   // ── POST /auth/login (spec §5 / §8.2) ───────────────────────────────────
   app.route<{ Body: LoginBody }>({
     method: 'POST',
-    url: '/auth/login',
+    url: '/login',
     schema: {
       body: Type.Object({
         // Spec 008 §5 v0.3 — single identifier field; service-layer sniffing
@@ -148,7 +148,7 @@ export async function registerAuthRoutes(
   // ── POST /auth/password/change (spec §6.1 / §8.3) ───────────────────────
   app.route<{ Body: ChangePasswordBody }>({
     method: 'POST',
-    url: '/auth/password/change',
+    url: '/password/change',
     schema: {
       body: Type.Object({
         currentPassword: Type.String({ minLength: 1, maxLength: 256 }),
@@ -182,7 +182,7 @@ export async function registerAuthRoutes(
   // ── POST /auth/password/set (spec §6.2 / §8.4) ──────────────────────────
   app.route<{ Body: SetPasswordBody }>({
     method: 'POST',
-    url: '/auth/password/set',
+    url: '/password/set',
     schema: {
       body: Type.Object({
         newPassword: Type.String({

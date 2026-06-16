@@ -112,21 +112,31 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
   // by detecting the s3HealthProbe decorator (spec 018 §10 / spec 011 §3).
   await app.register(s3Plugin)
   await app.register(healthPlugin)
-  await app.register(registerPresignUploadRoute)
-  // Donation public read endpoints (spec 016 / spec 017).
-  await app.register(registerCategoryRoutes)
-  await app.register(registerCharityRoutes)
-  await app.register(registerDonationProjectRoutes)
-  await app.register(registerSaleItemRoutes)
-  // Donation order create endpoints (spec 022 Phase 2).
-  await app.register(registerOrderRoutes)
-  // Admin order endpoints (spec 022 Phase 4, role=0 gated).
-  await app.register(registerAdminOrderRoutes)
-  // Donation entity admin write endpoints (spec 020 §5, role=0 gated).
-  await app.register(registerCharityAdminRoutes)
-  await app.register(registerProjectAdminRoutes)
-  await app.register(registerSaleItemAdminRoutes)
-  await app.register(registerCategoryAdminRoutes)
+  // Spec 023 §4.1 — `/v1` URL surface(階段 1:public read + admin write
+  // 暫共用同一 prefix,URL 對 client 不變;階段 2 再拆 /user/v1 + /cms)。
+  // Route files inside this scope hold relative paths(去掉 `/v1` 前綴),
+  // Fastify 在 mount 時把 prefix + relative URL 拼回 `/v1/...`。
+  await app.register(
+    async (v1) => {
+      // Donation public read endpoints(spec 016 / spec 017)。
+      await v1.register(registerCategoryRoutes)
+      await v1.register(registerCharityRoutes)
+      await v1.register(registerDonationProjectRoutes)
+      await v1.register(registerSaleItemRoutes)
+      // Donation order create + lifecycle + GET detail(spec 022 Phase 2-3)。
+      await v1.register(registerOrderRoutes)
+      // Admin order endpoints(spec 022 Phase 4, role=0 gated)。
+      await v1.register(registerAdminOrderRoutes)
+      // Donation entity admin write endpoints(spec 020 §5, role=0 gated)。
+      await v1.register(registerCharityAdminRoutes)
+      await v1.register(registerProjectAdminRoutes)
+      await v1.register(registerSaleItemAdminRoutes)
+      await v1.register(registerCategoryAdminRoutes)
+      // Presign(spec 018,role=0 gated;階段 2 將移至 /cms)。
+      await v1.register(registerPresignUploadRoute)
+    },
+    { prefix: '/v1' },
+  )
 
   return app
 }

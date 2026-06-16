@@ -41,7 +41,7 @@ const PRESIGN_PURPOSE = {
 export async function registerPresignUploadRoute(app: FastifyInstance): Promise<void> {
   app.route<{ Querystring: PresignQuery; Reply: PresignResponse }>({
     method: 'GET',
-    url: '/v1/donation/uploads/presign',
+    url: '/donation/uploads/presign',
     schema: {
       querystring: PresignQuerySchema,
       response: {

@@ -61,7 +61,7 @@ export async function registerGoogleAuthRoutes(
   // ── POST /auth/google/authorize-init (spec §7.1) ────────────────────────
   app.route<{ Body: AuthorizeInitBody; Querystring: { intent?: 'login' | 'link' } }>({
     method: 'POST',
-    url: '/auth/google/authorize-init',
+    url: '/google/authorize-init',
     schema: {
       querystring: Type.Object({
         intent: Type.Optional(
@@ -99,7 +99,7 @@ export async function registerGoogleAuthRoutes(
   // ── POST /auth/google/exchange (spec §7.2) ──────────────────────────────
   app.route<{ Body: ExchangeBody }>({
     method: 'POST',
-    url: '/auth/google/exchange',
+    url: '/google/exchange',
     schema: {
       body: Type.Object({
         sid: Type.String({ minLength: 8, maxLength: 64 }),
@@ -148,7 +148,7 @@ export async function registerGoogleAuthRoutes(
   // ── POST /auth/refresh (spec §7.3) ──────────────────────────────────────
   app.route({
     method: 'POST',
-    url: '/auth/refresh',
+    url: '/refresh',
     config: { rateLimit: { perIp: REFRESH_IP } },
     handler: async (req, reply) => {
       const refreshJwt = extractBearer(req)
@@ -216,7 +216,7 @@ export async function registerGoogleAuthRoutes(
   // ── POST /auth/logout (spec §7.4) ───────────────────────────────────────
   app.route<{ Body: LogoutBody }>({
     method: 'POST',
-    url: '/auth/logout',
+    url: '/logout',
     schema: {
       body: Type.Optional(
         Type.Object({
@@ -245,7 +245,7 @@ export async function registerGoogleAuthRoutes(
   // ── POST /auth/logout-all (spec §7.5) ───────────────────────────────────
   app.route({
     method: 'POST',
-    url: '/auth/logout-all',
+    url: '/logout-all',
     handler: async (req, reply) => {
       const accountId = await requireAccessAccountId(req, tokenSecrets)
       await refreshStore.revokeAll(accountId)

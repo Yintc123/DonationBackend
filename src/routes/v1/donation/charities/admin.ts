@@ -37,7 +37,7 @@ export async function registerCharityAdminRoutes(app: FastifyInstance): Promise<
   // ── POST /v1/donation/charities (spec 020 §5.1.1) ───────────────────────
   app.route<{ Body: CharityCreateBodyT }>({
     method: 'POST',
-    url: '/v1/donation/charities',
+    url: '/donation/charities',
     schema: { body: CharityCreateBody, response: { 201: CharityDetail } },
     config: { rateLimit: CREATE_LIMITS },
     handler: async (req, reply) => {
@@ -60,7 +60,7 @@ export async function registerCharityAdminRoutes(app: FastifyInstance): Promise<
   // ── PATCH /v1/donation/charities/:id (spec 020 §5.1.2) ──────────────────
   app.route<{ Params: IdParamsT; Body: CharityPatchBodyT }>({
     method: 'PATCH',
-    url: '/v1/donation/charities/:id',
+    url: '/donation/charities/:id',
     schema: { params: IdParams, body: CharityPatchBody, response: { 200: CharityDetail } },
     config: { rateLimit: UPDATE_LIMITS },
     handler: async (req, reply) => {
@@ -84,7 +84,7 @@ export async function registerCharityAdminRoutes(app: FastifyInstance): Promise<
   // ── 4 lifecycle endpoints (spec 020 §5.1.3-§5.1.6) ──────────────────────
   registerLifecycleRoutes({
     app,
-    basePath: '/v1/donation/charities',
+    basePath: '/donation/charities',
     delegate: app.prisma.charity,
     entity: 'charity',
     notFoundResource: 'charity',
