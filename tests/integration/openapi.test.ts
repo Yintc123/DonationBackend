@@ -51,6 +51,20 @@ describe('OpenAPI surface — development', () => {
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toMatch(/text\/html/)
   })
+
+  it('GET /docs/ CSP does not force HTTPS — demo runs on plain HTTP at an IP', async () => {
+    const res = await app!.inject({ method: 'GET', url: '/docs/' })
+    const csp = String(res.headers['content-security-policy'] ?? '')
+    // Both directives would force browsers to upgrade swagger-ui-bundle.js
+    // / swagger-ui.css to https://, which fails with ERR_SSL_PROTOCOL_ERROR
+    // on the HTTP-only demo server.
+    expect(csp).not.toMatch(/upgrade-insecure-requests/)
+    expect(csp).not.toMatch(/block-all-mixed-content/)
+    // The replacement CSP must still let swagger-ui's own script bundle and
+    // inline initializer execute, otherwise the page is blank.
+    expect(csp).toMatch(/script-src[^;]*'self'/)
+    expect(csp).toMatch(/script-src[^;]*'unsafe-inline'/)
+  })
 })
 
 describe.each(['staging', 'production'] as const)(
