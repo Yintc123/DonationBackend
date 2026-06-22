@@ -231,6 +231,50 @@ describe('errorHandlerPlugin (spec 005 §5)', () => {
       expect(res.headers['x-request-id']).toBe(inbound)
       expect(res.json().requestId).toBe(inbound)
     })
+
+    it('should propagate a BFF-format inbound id into the error body (spec 012 §6.5.4)', async () => {
+      // Error path was previously more permissive than success path (no
+      // validation at all). After spec 012 v0.3 both paths share the same
+      // §6.5.2 safety check; a valid BFF-format id must reach the body's
+      // `requestId` so BFF → backend → BFF logs stay correlated on failures.
+      app.get('/throw', async () => {
+        throw new BadRequestError({ message: 'x' })
+      })
+
+      const bffId = 'req_2026-06-17_AbCd1234'
+      const res = await app.inject({
+        method: 'GET',
+        url: '/throw',
+        headers: { 'x-request-id': bffId },
+      })
+
+      expect(res.headers['x-request-id']).toBe(bffId)
+      expect(res.json().requestId).toBe(bffId)
+    })
+
+    it('should reject an unsafe inbound id and fall back to Fastify request.id on the error path', async () => {
+      // Before spec 012 v0.3 the error-path resolver accepted ANY non-empty
+      // string, leaving the body's `requestId` field open to log injection.
+      // This pins the post-v0.3 contract that errors share the same safety
+      // check as success responses.
+      app.get('/throw', async () => {
+        throw new BadRequestError({ message: 'x' })
+      })
+
+      const injection = 'inject\nfake=admin'
+      const res = await app.inject({
+        method: 'GET',
+        url: '/throw',
+        headers: { 'x-request-id': injection },
+      })
+
+      expect(res.headers['x-request-id']).not.toContain('\n')
+      expect(res.headers['x-request-id']).not.toBe(injection)
+      expect(res.json().requestId).not.toBe(injection)
+      expect(res.json().requestId).not.toContain('\n')
+      // Header and body must agree (spec 005 §6 — `requestId` mirrors header).
+      expect(res.json().requestId).toBe(res.headers['x-request-id'])
+    })
   })
 
   describe('setNotFoundHandler (spec §5.3)', () => {

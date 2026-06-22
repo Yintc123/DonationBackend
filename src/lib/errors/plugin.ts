@@ -17,12 +17,14 @@
 //
 // X-Request-Id: the spec-009 http-response plugin already stamps the header
 // on the response via its onSend hook. We must produce the SAME value in the
-// body's `requestId` field. We follow the spec-009 algorithm: prefer an
-// inbound `x-request-id` header, else fall back to `request.id`.
+// body's `requestId` field. We share its source of truth (`../http/request-id`)
+// so the §6.5.2 safety check (charset + length) applies uniformly across
+// success and error responses.
 
 import type { FastifyError, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify'
 import fp from 'fastify-plugin'
 
+import { REQUEST_ID_HEADER, isValidRequestId } from '../http/request-id.js'
 import { AppError, InternalError, NotFoundError, ValidationError } from './AppError.js'
 import { mapPrismaError } from './prisma.js'
 import { toProblem } from './problem.js'
@@ -31,8 +33,6 @@ export interface ErrorHandlerOptions {
   /** RFC 7807 `type` URI base; if unset, falls back to `about:blank`. */
   docsBaseUrl?: string
 }
-
-const REQUEST_ID_HEADER = 'x-request-id'
 
 interface FastifyValidationItem {
   instancePath?: string
@@ -69,8 +69,7 @@ function mapFastifyValidationError(
 
 function resolveRequestId(request: FastifyRequest): string {
   const inbound = request.headers[REQUEST_ID_HEADER]
-  if (typeof inbound === 'string' && inbound.length > 0) return inbound
-  return request.id
+  return isValidRequestId(inbound) ? inbound : request.id
 }
 
 function resolveAppError(err: unknown): AppError {

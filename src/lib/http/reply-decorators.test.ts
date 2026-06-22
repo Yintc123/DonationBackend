@@ -143,12 +143,14 @@ describe('http response plugin', () => {
       expect(res.headers['x-request-id']).toBeDefined()
     })
 
-    it('should DROP a non-UUIDv4 inbound id and substitute Fastify request.id (spec 004 §6.3)', async () => {
+    it('should DROP an inbound id that fails the §6.5.2 safety check and substitute Fastify request.id', async () => {
       app.get('/r', async (_req, reply) => reply.ok({ id: 'abc' }))
 
       const res = await app.inject({
         method: 'GET',
         url: '/r',
+        // Too short (10 chars) — fails the 16-char lower bound that defends
+        // against low-entropy "magic id" tagging (spec 012 §6.5.2).
         headers: { 'x-request-id': 'not-a-uuid' },
       })
 
@@ -157,9 +159,27 @@ describe('http response plugin', () => {
       expect((res.headers['x-request-id'] as string).length).toBeGreaterThan(0)
     })
 
-    it('should reject a UUID v1 to prevent caller forging trace prefixes', async () => {
+    it('should ECHO a BFF-format inbound id (req_YYYY-MM-DD_<suffix>) — spec 012 §6.5.4', async () => {
+      // The motivating case for spec 012 v0.3: our BFF uses human-readable
+      // `req_YYYY-MM-DD_<8 char base64url>` for debuggability. Backend must
+      // sustain BFF → backend correlation by accepting (not dropping) it.
       app.get('/r', async (_req, reply) => reply.ok({ id: 'abc' }))
-      // v1 UUID: 3rd block starts with `1`, not `4`.
+      const bffId = 'req_2026-06-17_AbCd1234'
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/r',
+        headers: { 'x-request-id': bffId },
+      })
+
+      expect(res.headers['x-request-id']).toBe(bffId)
+    })
+
+    it('should ECHO a UUID v1 — version nibble is no longer policed (spec 012 §6.5.3)', async () => {
+      app.get('/r', async (_req, reply) => reply.ok({ id: 'abc' }))
+      // v1 UUID: 3rd block starts with `1`, not `4`. v0.2 rejected this;
+      // v0.3 accepts because charset + length already cover the original
+      // anti-forgery concern.
       const v1 = 'c4b7a5e0-8d9a-1f1f-9b3a-0e2a1b9d7f23'
 
       const res = await app.inject({
@@ -168,10 +188,10 @@ describe('http response plugin', () => {
         headers: { 'x-request-id': v1 },
       })
 
-      expect(res.headers['x-request-id']).not.toBe(v1)
+      expect(res.headers['x-request-id']).toBe(v1)
     })
 
-    it('should reject a log-injection payload smuggled in the header', async () => {
+    it('should reject a log-injection payload smuggled in the header (spec 012 §6.5.2 charset)', async () => {
       app.get('/r', async (_req, reply) => reply.ok({ id: 'abc' }))
       const injection = 'real-id\nfake=admin user=root'
 

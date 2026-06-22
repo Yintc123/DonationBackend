@@ -16,6 +16,7 @@ import {
   requestHasBody,
 } from './content-negotiation.js'
 import { type PaginatedEnvelope, type PaginatedInput, paginatedEnvelope } from './pagination.js'
+import { REQUEST_ID_HEADER, isValidRequestId } from './request-id.js'
 import { HttpStatus } from './status.js'
 
 declare module 'fastify' {
@@ -31,18 +32,6 @@ declare module 'fastify' {
     /** Spec 009 §5.3 — 200 OK + cursor pagination envelope. */
     paginated<T>(input: PaginatedInput<T>): FastifyReply
   }
-}
-
-const REQUEST_ID_HEADER = 'x-request-id'
-
-// Spec 004 §6.3 / spec 012 §6.5 — only accept inbound IDs that match the
-// canonical UUID v4 shape (8-4-4-4-12, version nibble = 4, variant 8/9/a/b).
-// Anything else is silently dropped and replaced with Fastify's generated id
-// so attackers can't log-inject through this header.
-const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
-export function isValidRequestId(value: unknown): value is string {
-  return typeof value === 'string' && UUID_V4_RE.test(value)
 }
 
 const httpResponsePlugin: FastifyPluginAsync = async (fastify) => {
@@ -105,13 +94,9 @@ const httpResponsePlugin: FastifyPluginAsync = async (fastify) => {
   })
 
   // Spec 009 §6.1 — X-Request-Id on every response, aligned with spec 004 §6.3
-  // (`reqId` in logs). We prefer the inbound `X-Request-Id` header when the
-  // client supplied a valid UUID v4 so a BFF / tracing layer can stitch the
-  // call chain; otherwise we fall back to Fastify's generated request.id.
-  //
-  // Per spec 012 §6.5 we MUST validate the inbound header to prevent log
-  // injection through the request-id field (e.g. injected newlines could
-  // forge log entries).
+  // (`reqId` in logs). Prefer the inbound header when it passes spec 012
+  // §6.5.2 safety check (charset + length); otherwise fall back to Fastify's
+  // generated request.id. See `./request-id.ts` for the rationale.
   fastify.addHook('onSend', async (request, reply) => {
     if (reply.getHeader(REQUEST_ID_HEADER)) return
     const inbound = request.headers[REQUEST_ID_HEADER]
