@@ -94,7 +94,7 @@ const httpResponsePlugin: FastifyPluginAsync = async (fastify) => {
   })
 
   // Spec 009 §6.1 — X-Request-Id on every response, aligned with spec 004 §6.3
-  // (`reqId` in logs). Prefer the inbound header when it passes spec 012
+  // (`requestId` in logs). Prefer the inbound header when it passes spec 012
   // §6.5.2 safety check (charset + length); otherwise fall back to Fastify's
   // generated request.id. See `./request-id.ts` for the rationale.
   fastify.addHook('onSend', async (request, reply) => {

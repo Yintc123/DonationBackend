@@ -23,6 +23,7 @@ import { type Clock, systemClock } from './lib/clock.js'
 import { errorHandlerPlugin } from './lib/errors/index.js'
 import { healthPlugin } from './lib/health/index.js'
 import { httpResponsePlugin, idempotencyPlugin, USER_API_VERSIONS } from './lib/http/index.js'
+import { genRequestId } from './lib/http/request-id.js'
 import { createLogger, loggerPolicyPlugin } from './lib/logger/index.js'
 import { openapiPlugin } from './lib/openapi/index.js'
 import { prismaPlugin } from './lib/prisma/index.js'
@@ -72,6 +73,18 @@ export async function buildApp(config: Config): Promise<FastifyInstance> {
     logger: createLogger(config),
     trustProxy,
     disableRequestLogging: true,
+    // Spec 004 §6.3 v0.4 / spec 012 §6.5 — make Fastify's `request.id` the
+    // single source of truth for the per-request id, so it ends up on BOTH
+    // the response header (spec 009 §6.1 onSend hook) AND the pino binding.
+    //   - `genReqId`: validate inbound x-request-id; reuse if it passes the
+    //     §6.5.2 safety check, else fresh UUID v4.
+    //   - `requestIdLogLabel`: rename pino's binding from default `reqId` to
+    //     `requestId` so backend logs join with the frontend's `requestId`
+    //     field for the same request.
+    // We deliberately leave `requestIdHeader` at its default (false) — letting
+    // Fastify trust the inbound header directly would bypass the safety check.
+    genReqId: (req) => genRequestId(req.headers['x-request-id']),
+    requestIdLogLabel: 'requestId',
     // Spec 022 §4.0 / §5.1 — body schemas set `additionalProperties: false`
     // and rely on Ajv rejecting unknown properties. Fastify 5's default
     // `removeAdditional: 'all'` would silently strip them and quietly let

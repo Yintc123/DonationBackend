@@ -297,11 +297,13 @@ describe('createLogger', () => {
       expect(lines()[0]).toMatchObject({ module: 'db', msg: 'connected' })
     })
 
-    it('propagates reqId bindings on every line (spec 004 §6.3)', () => {
+    it('propagates requestId bindings on every line (spec 004 §6.3)', () => {
+      // Field name `requestId` per spec 004 v0.4 (aligns with frontend log
+      // convention; Fastify's `requestIdLogLabel` is wired in src/app.ts).
       const { logger, lines } = captureLogs(createLogger(baseConfig))
-      const reqLogger = logger.child({ reqId: 'a1b2c3d4-0000-4000-8000-000000000000' })
+      const reqLogger = logger.child({ requestId: 'a1b2c3d4-0000-4000-8000-000000000000' })
       reqLogger.info('hi')
-      expect(lines()[0]).toMatchObject({ reqId: 'a1b2c3d4-0000-4000-8000-000000000000' })
+      expect(lines()[0]).toMatchObject({ requestId: 'a1b2c3d4-0000-4000-8000-000000000000' })
     })
   })
 

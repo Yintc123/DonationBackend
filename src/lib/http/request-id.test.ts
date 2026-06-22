@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { REQUEST_ID_HEADER, isValidRequestId } from './request-id.js'
+import { REQUEST_ID_HEADER, genRequestId, isValidRequestId } from './request-id.js'
 
 describe('REQUEST_ID_HEADER', () => {
   it('should be the lower-case canonical header name', () => {
@@ -95,5 +95,41 @@ describe('isValidRequestId (spec 012 §6.5.2)', () => {
       // Should not reach here for a valid input; assert to fail loudly.
       expect.fail('expected predicate to narrow valid UUID')
     }
+  })
+})
+
+describe('genRequestId (spec 004 §6.3 / spec 012 §6.5.2 wiring)', () => {
+  // Used as Fastify's `genReqId` so `request.id` is set ONCE, up-front, from
+  // a validated inbound header — making the pino log binding and the response
+  // header echo the same value end-to-end (the BFF↔backend correlation goal).
+
+  it('returns the inbound id verbatim when it passes the safety check', () => {
+    const bffId = 'req_2026-06-22_AbCd1234'
+    expect(genRequestId(bffId)).toBe(bffId)
+  })
+
+  it('returns a freshly generated id when inbound is missing', () => {
+    const id = genRequestId(undefined)
+    expect(isValidRequestId(id)).toBe(true)
+  })
+
+  it.each<[string, unknown]>([
+    ['too short', 'short'],
+    ['contains newline', 'abcdef0123456789\n'],
+    ['null', null],
+    // Node header values can be string[] when the same header arrives twice;
+    // we treat ambiguous duplicates as "no usable inbound" and regenerate.
+    ['array', ['c4b7a5e0-8d9a-4f1f-9b3a-0e2a1b9d7f23']],
+    ['number', 12345],
+  ])('returns a freshly generated id when inbound is %s', (_label, value) => {
+    const id = genRequestId(value)
+    expect(isValidRequestId(id)).toBe(true)
+    expect(id).not.toBe(value)
+  })
+
+  it('produces unique ids across calls', () => {
+    const a = genRequestId(undefined)
+    const b = genRequestId(undefined)
+    expect(a).not.toBe(b)
   })
 })

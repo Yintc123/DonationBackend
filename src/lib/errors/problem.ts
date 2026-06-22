@@ -11,7 +11,7 @@ import type { AppError } from './AppError.js'
 export interface ProblemContext {
   /** Request path WITHOUT query string (spec §6.2 — query strings may carry PII). */
   instance: string
-  /** Aligned with `X-Request-Id` header / pino `reqId` (spec 009 §6.1, spec 004 §6.3). */
+  /** Aligned with `X-Request-Id` header / pino `requestId` (spec 009 §6.1, spec 004 §6.3). */
   requestId: string
   /**
    * Optional doc base URL. With `docsBaseUrl=https://api.example.com`,
