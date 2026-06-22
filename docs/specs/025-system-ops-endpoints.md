@@ -102,7 +102,7 @@ Rate-limit 故意設低,避免手抖 / script bug 連按。Ops 真要在 1 hour 
   "accountId": "<admin uuid>",
   "flushedKeyCount": 123,
   "durationMs": 45,
-  "reqId": "<uuid>",
+  "requestId": "<uuid>",
   "audit": true }
 ```
 

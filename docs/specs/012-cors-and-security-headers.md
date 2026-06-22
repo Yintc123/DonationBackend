@@ -261,9 +261,9 @@ X-Forwarded-For: 127.0.0.1
 | Log injection(換行偽造) | 否 | charset whitelist |
 | Header smuggling | 否 | charset whitelist |
 | Client 用「magic id」(如 `bypass-rate-limit`)標記繞過 log/metric 規約 | 否 | 長度下限 + charset(magic string 過短 / 含 `:` 等) |
-| ID 衝撞 | 否 | 16+ chars 隨機足夠;且 reqId 是 per-request observability tag,非身份識別 |
+| ID 衝撞 | 否 | 16+ chars 隨機足夠;且 request id 是 per-request observability tag,非身份識別 |
 
-#### 6.5.4 BFF 端 reqId 格式建議
+#### 6.5.4 BFF 端 request id 格式建議
 
 BFF 自產 id 時建議至少 16 字元、僅用 `[A-Za-z0-9_-]`;範例:`req_YYYY-MM-DD_<8 char base64url>`(23 char)、UUID v4(36 char)、ULID(26 char)皆通過。
 

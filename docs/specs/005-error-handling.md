@@ -18,7 +18,7 @@
 定義 backend 服務的錯誤模型與處理流程,使:
 
 - **client 收到的回應一致且機器可解析**(同一 schema、有可比對的 error code)
-- **內部 log 含完整脈絡**(stack、cause chain、reqId)但**對外不洩漏**(SQL、stack、PII、檔案路徑)
+- **內部 log 含完整脈絡**(stack、cause chain、requestId)但**對外不洩漏**(SQL、stack、PII、檔案路徑)
 - **single source of truth**:錯誤分類與 HTTP 對應**只在一處定義**,route handler 不重複判斷
 - 區分**可預期錯誤(operational)**與**bug(programmer)**,後者讓 process 重啟而非靜默吞掉
 
@@ -302,7 +302,7 @@ export default fp(async (fastify) => {
 - K8s probe 機制不解析 `application/problem+json`,只看 HTTP status code
 - health endpoint 的主資料是「component status」,error 為附屬
 
-由 errorHandler 在格式化前判斷 `request.routerPath?.startsWith('/health/')`,命中時改走 health response writer。其他原則(status code、不洩漏細節、reqId 追蹤)仍適用。
+由 errorHandler 在格式化前判斷 `request.routerPath?.startsWith('/health/')`,命中時改走 health response writer。其他原則(status code、不洩漏細節、requestId 追蹤)仍適用。
 
 ### 6.1 格式
 
@@ -497,7 +497,7 @@ process.on('uncaughtException', (err) => {
 - **不要**在交易內 `try/catch` 然後 `commit`:那就是吞掉錯誤
 - 交易**外**的補償操作(如發送通知)若失敗,獨立 `try/catch` 並 log,不影響主交易結果
 
-### 10.3 與 Observability(reqId、cause chain)
+### 10.3 與 Observability(requestId、cause chain)
 
 - 每個錯誤回應都帶 `requestId`,可從 log 反查
 - log 中 `err.cause` 由 pino `stdSerializers.err` 自動遞迴展開
@@ -518,7 +518,7 @@ process.on('uncaughtException', (err) => {
 ### 11.2 Programmer error 處置
 
 - 一律 `code: INTERNAL_ERROR`,response 不含 message
-- log 必含 stack + reqId + 原始 error
+- log 必含 stack + requestId + 原始 error
 - 若 process state 疑似 corrupted(死鎖、無效 invariant)→ 升級為 `fatal` + 觸發 process exit
 
 ### 11.3 Timing attack 與 enumeration

@@ -7,7 +7,7 @@
 | 日期 | 2026-06-14 |
 | 適用範圍 | 所有 backend 對外 API endpoint |
 | 相關 ADR | `docs/decisions/002-backend-framework.md` |
-| 相關 spec | `005-error-handling.md`(錯誤回應)、`004-logger-module.md`(`X-Request-Id` 對應 `reqId`)、`006-redis-module.md`(idempotency cache) |
+| 相關 spec | `005-error-handling.md`(錯誤回應)、`004-logger-module.md`(`X-Request-Id` 對應 `requestId`)、`006-redis-module.md`(idempotency cache) |
 
 ---
 
@@ -210,7 +210,7 @@ Content-Type: application/json; charset=utf-8
 | Header | 來源 | 說明 |
 |---|---|---|
 | `Content-Type` | route schema | 成功一律 `application/json; charset=utf-8`;錯誤 `application/problem+json; charset=utf-8`(spec 005) |
-| `X-Request-Id` | Fastify request hook | 與 log 中 `reqId` 一致(spec 004 §6.3) |
+| `X-Request-Id` | Fastify request hook | 與 log 中 `requestId` 一致(spec 004 §6.3) |
 
 ### 6.2 條件
 

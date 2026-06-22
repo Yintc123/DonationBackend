@@ -834,30 +834,30 @@ Body {
 ```jsonc
 // order_created — 三個 create endpoint 共用
 { "event": "order_created", "orderId": "<uuid>", "subjectType": "CHARITY" | "DONATION_PROJECT" | "SALE_ITEM",
-  "lineCount": 1, "reqId": "<uuid>", "audit": true }
+  "lineCount": 1, "requestId": "<uuid>", "audit": true }
 
 // order_payment_confirmed — confirm-payment 「實際改 PAID」(idempotent no-op 不發)
-{ "event": "order_payment_confirmed", "orderId": "<uuid>", "reqId": "<uuid>", "audit": true }
+{ "event": "order_payment_confirmed", "orderId": "<uuid>", "requestId": "<uuid>", "audit": true }
 
 // order_cancelled — cancel 「實際改 CANCELLED」(idempotent no-op 不發)
-{ "event": "order_cancelled", "orderId": "<uuid>", "reqId": "<uuid>", "audit": true }
+{ "event": "order_cancelled", "orderId": "<uuid>", "requestId": "<uuid>", "audit": true }
 
 // order_user_patched (v0.12) — user 在 PENDING/PAID 改自己訂單;
 //   無 accountId(public endpoint,trust = 持有 orderId);
 //   只有 fieldsChanged.length > 0 才發(empty patch / 值未變動 不發)。
 { "event": "order_user_patched", "orderId": "<uuid>",
   "fieldsChanged": ["donorName", "isAnonymous"],
-  "reqId": "<uuid>", "audit": true }
+  "requestId": "<uuid>", "audit": true }
 
 // order_admin_patched — 含 statusBefore / statusAfter(若 status 有改)
 { "event": "order_admin_patched", "orderId": "<uuid>", "accountId": "<admin uuid>",
   "statusBefore": "PENDING", "statusAfter": "PAID",
   "fieldsChanged": ["status", "paidAt"],
-  "reqId": "<uuid>", "audit": true }
+  "requestId": "<uuid>", "audit": true }
 
 // order_admin_deleted — warn 級
 { "event": "order_admin_deleted", "orderId": "<uuid>", "accountId": "<admin uuid>",
-  "reqId": "<uuid>", "audit": true }
+  "requestId": "<uuid>", "audit": true }
 ```
 
 ### 9.2 禁含欄位

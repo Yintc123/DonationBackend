@@ -421,7 +421,7 @@ Shape 詳見 spec 017。重點差異(對 list item 而言):
 | Header | 在本端點 | 備註 |
 |---|---|---|
 | `Content-Type` | 成功 `application/json; charset=utf-8`;錯誤 `application/problem+json` | |
-| `X-Request-Id` | 必有 | 對齊 log `reqId`(spec 004 §6.3)|
+| `X-Request-Id` | 必有 | 對齊 log `requestId`(spec 004 §6.3)|
 | `Cache-Control` | 列表 / 單筆都用 `private, max-age=0, must-revalidate` | |
 | `ETag` | 列表:**不**回(cursor 多變);單筆:回 | |
 | `Content-Language` | 必有 | `zh-TW` 或 `en`,告知 client 實際選用的 locale(可能不同於 `Accept-Language` 請求,例如未支援 fallback 為 zh-TW)|

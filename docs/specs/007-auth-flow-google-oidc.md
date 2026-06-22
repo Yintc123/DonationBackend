@@ -496,7 +496,7 @@ else:
 - 任何來源建立 Account 都必須:
   - 由 DB unique constraint 保護 `Account.email` 唯一
   - 在同一 transaction 內建立 Account + 對應 Credential(防止「Account 建好但 Credential 寫失敗」的孤兒)
-  - 寫 audit log `auth_account_created`(內含 `accountId`、`provider`、`reqId`)
+  - 寫 audit log `auth_account_created`(內含 `accountId`、`provider`、`requestId`)
 - 並發控制:兩個 request 同時對同一 email / 同一 Google sub 註冊 → 由 DB unique constraint 防止;失敗側可選擇 retry 走 §10.3 found 分支
 
 ### 10.5 Account Linking 政策(嚴格手動連結)
