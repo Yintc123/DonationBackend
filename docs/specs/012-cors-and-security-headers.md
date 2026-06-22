@@ -3,8 +3,8 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.2 |
-| 日期 | 2026-06-13 |
+| 版本 | 0.3 |
+| 日期 | 2026-06-17 |
 | 適用範圍 | `backend/src/plugins/cors.ts`、`backend/src/plugins/helmet.ts`、`backend/src/plugins/trust-proxy.ts` |
 | 相關 ADR | `docs/decisions/002-backend-framework.md` |
 | 相關 spec | `001-environment-config.md`(`CORS_ORIGIN`)、`009-api-response-and-http-status.md`(`X-Request-Id` / `X-RateLimit-*` 必須被 exposed)、`010-rate-limit-module.md`(§15.1 trustProxy)、`011-health-check.md`(§8 health 端點豁免) |
@@ -49,7 +49,7 @@
 | **跨站讀取**(攻擊網站讀 backend 回應) | 惡意 JS | CORS allowlist + `Cross-Origin-Resource-Policy: same-site` |
 | **點擊劫持 / iframe 嵌入** | 任意 iframe | `X-Frame-Options: DENY` + `Content-Security-Policy: frame-ancestors 'none'` |
 | **降級為 HTTP**(SSL strip) | 中間人 / WiFi 劫持 | HSTS + 部署層強制 HTTPS |
-| **真實 IP 偽造**(影響 rate-limit / log) | 攻擊者偽造 `X-Forwarded-For` | `trustProxy` 設定 + 不可由 client 設定 `X-Request-Id` 信任值 |
+| **真實 IP 偽造**(影響 rate-limit / log) | 攻擊者偽造 `X-Forwarded-For` | `trustProxy` 設定 + `X-Request-Id` 經 §6.5.2 校驗(charset + 長度)後沿用,否則 fallback 自產 |
 | **MIME sniffing 攻擊** | 上傳 / 內容混淆 | `X-Content-Type-Options: nosniff` |
 | **Referrer 洩漏** | 跨站連結 | `Referrer-Policy: no-referrer` |
 | **Browser 指紋 / 第三方權限濫用** | 第三方 script | `Permissions-Policy` 全關 |
@@ -233,9 +233,39 @@ X-Forwarded-For: 127.0.0.1
 
 ### 6.5 `X-Request-Id` 信任邊界
 
-- spec 004 §6.3 接受 client 帶入的 `X-Request-Id`(BFF 可傳給 backend 做關聯)
-- **但**:client 帶入值若格式不符(非 UUID v4)或長度異常,**捨棄**並重新產生
-- 防止 client 用「特定 reqId」作為標記繞過某些 log/metric 規約
+#### 6.5.1 動機與業界做法
+
+業界慣例(Heroku Router、AWS ALB、Cloudflare、GCP LB、W3C Trace Context)是「**edge generates, downstream propagates**」——最靠近 user 的可信節點負責產生 id,下游服務只在缺失時 fallback 自產。本服務的「edge」即 BFF;backend 是下游消費者,應**盡量沿用** BFF 帶來的 id,讓兩端 log 可以串接。
+
+#### 6.5.2 校驗規則
+
+接受 client / BFF 帶入的 `X-Request-Id`,但**先做安全校驗**:
+
+| 規則 | 值 | 理由 |
+|---|---|---|
+| Charset | `^[A-Za-z0-9_-]+$` | 排除 `\r\n` / 控制字元(防 log injection)、排除 `:` `;` 空白(防 header smuggling) |
+| 長度 | `16 ≤ len ≤ 128` | 下限確保不可猜測(16 char base64url ≈ 96 bits entropy);上限防 oversized header DoS / log 膨脹 |
+
+合併後正則:`^[A-Za-z0-9_-]{16,128}$`
+
+通過 → 沿用該值;不通過 → **捨棄並由 Fastify 產生新 id(UUID v4)**。
+
+#### 6.5.3 為何不再要求 UUID v4
+
+舊版(v0.2 以前)要求 UUID v4,但與「BFF 可傳給 backend 做關聯」的目標衝突:任何採用非 UUID 格式的 BFF(本專案 BFF 採 `req_YYYY-MM-DD_<random>` 以利人類除錯)都會被 backend 丟棄,correlation 失效。
+
+逐項檢視原本擔憂:
+
+| 原擔憂 | UUID v4 是否必要 | 由本節新規則涵蓋 |
+|---|---|---|
+| Log injection(換行偽造) | 否 | charset whitelist |
+| Header smuggling | 否 | charset whitelist |
+| Client 用「magic id」(如 `bypass-rate-limit`)標記繞過 log/metric 規約 | 否 | 長度下限 + charset(magic string 過短 / 含 `:` 等) |
+| ID 衝撞 | 否 | 16+ chars 隨機足夠;且 reqId 是 per-request observability tag,非身份識別 |
+
+#### 6.5.4 BFF 端 reqId 格式建議
+
+BFF 自產 id 時建議至少 16 字元、僅用 `[A-Za-z0-9_-]`;範例:`req_YYYY-MM-DD_<8 char base64url>`(23 char)、UUID v4(36 char)、ULID(26 char)皆通過。
 
 ---
 
@@ -364,7 +394,7 @@ X-Forwarded-For: 127.0.0.1
 
 - CORS_ORIGIN parser(逗號分隔、trim、去重、拒 `*`)
 - trustProxy CIDR parser(`10.0.0.0/8` 解析)
-- X-Request-Id 格式驗證(非 UUID v4 → reject)
+- X-Request-Id 格式驗證(§6.5.2 規則:`^[A-Za-z0-9_-]{16,128}$`,不符 → reject 並重新產生)
 
 ### 12.2 Integration
 
@@ -420,3 +450,4 @@ X-Forwarded-For: 127.0.0.1
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
 | 0.2 | 2026-06-16 | §3.1 / §3.2 wildcard 政策修訂:`CORS_ORIGIN=*` 不再啟動 fail,parser 切換 cors plugin 為 **wildcard 模式**(`origin: '*'`、`credentials: false`)。前提:本服務 auth 走 Bearer(無 cookie),credentials 關閉不影響業務認證。啟動時 log warn `cors_wildcard_mode`。混合 `*` 與具體 origin → wildcard 直接 win。對應 backend `parse-origin.ts` / `cors.ts` 重構,新增 5 個 wildcard 模式單測;§13.1 第 1 條同步修文 |
+| 0.3 | 2026-06-17 | §6.5 `X-Request-Id` 信任邊界**放寬**:不再要求 UUID v4,改為 charset `[A-Za-z0-9_-]` + 長度 16–128 的安全校驗(規則 §6.5.2)。動機:舊規與「BFF correlation」目標衝突——BFF 採用人類可讀格式(如 `req_YYYY-MM-DD_<suffix>`)時 id 會被 backend 丟棄,導致前後端 log 無法串接(§6.5.3 已逐項論證 UUID v4 並非原擔憂的必要條件,charset+長度即可涵蓋)。新增 §6.5.1(業界做法)、§6.5.4(BFF 端格式建議)。§12.1 測試案例敘述、§13.1 第 2 條同步修文 |
