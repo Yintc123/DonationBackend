@@ -2,9 +2,9 @@
 
 | 欄位 | 內容 |
 |---|---|
-| 狀態 | Draft(v0.1) |
+| 狀態 | Draft(v0.2) |
 | 建立日期 | 2026-06-16 |
-| 路徑(規劃) | `src/routes/cms/donation/charities.ts`(已存,加 GET handler)<br>`src/routes/cms/donation/donation-projects.ts`(已存,加 GET handler)<br>`src/routes/cms/donation/sale-items.ts`(已存,加 GET handler)<br>`src/domain/donation-item/admin-read-services.ts`(新,whereForAdmin 查 + admin shape mapping)<br>`src/schemas/donation-item/admin-detail.ts`(新)<br>`src/schemas/donation-item/admin-list-item.ts`(新)<br>`src/domain/lifecycle/where-for-admin.ts`(新,實作 spec 015 §3.3 v0.9 已 spec 但未實作的 helper) |
+| 路徑(規劃) | `src/routes/cms/donation/charities.ts`(已存,加 GET handler)<br>`src/routes/cms/donation/donation-projects.ts`(已存,加 GET handler)<br>`src/routes/cms/donation/sale-items.ts`(已存,加 GET handler)<br>`src/domain/donation-item/admin-read-services.ts`(新,whereForAdmin 查 + admin shape mapping)<br>`src/schemas/donation-item/admin-detail.ts`(新)<br>`src/schemas/donation-item/admin-list-item.ts`(新)<br>`src/domain/lifecycle/where.ts`(v0.2 — 同步實作:`whereForAdmin` helper 實際落在既有 lifecycle `where.ts`,**非**原規劃的新檔 `where-for-admin.ts`;與 `whereLive` 同檔) |
 | 相關 spec | `015-charity-data-model.md`(lifecycle 欄位、`whereForAdmin` 設計約定)、`016-charity-list-api.md`(user-side list)、`017-detail-apis.md`(user-side detail)、`019-cache-policy.md`(admin endpoint 不快取的根據)、`020-donation-write-api.md`(同 `/cms` 路徑、共享 auth gate 與 rate limit pattern)、`023-api-routing-versioning.md`(`/cms/*` 不版本化的決策)、`024-cud-surface-invariant.md`(`/cms` 為唯一 admin 介面;讀也算 admin operation) |
 
 ---
@@ -68,7 +68,7 @@
 [015 §3.3 v0.9](./015-charity-data-model.md#33-約束共同) 已約定:public 路徑強制 `whereLive`,admin 路徑「必須繞過預設 `whereLive` 走 `whereForAdmin`」。本 spec 為 `whereForAdmin` 的**唯一消費者**(write 端點走 byId,不涉及 list filter)。設計:
 
 ```ts
-// src/domain/lifecycle/where-for-admin.ts(新)
+// src/domain/lifecycle/where.ts(v0.2 — 同步實作:與 whereLive 同檔,非新檔 where-for-admin.ts)
 import type { Prisma } from '@prisma/client'
 
 export type AdminLifecycleFilter = {
@@ -115,7 +115,7 @@ export function whereForAdmin(opts: AdminLifecycleFilter): Prisma.CharityWhereIn
 
 雖然 admin 量小、offset pagination(`?page=2`)在 admin UI 慣例上常見,**仍用 cursor**:
 
-- 對齊 [016 §3.2](./016-charity-list-api.md) 既有 list 套路(`listCharities` 服務、cursor schema、cursor signature `id_DESC_createdAt_DESC`)
+- 對齊 [016 §3.2](./016-charity-list-api.md) 既有 list 套路(`listCharities` 服務、cursor schema、cursor)。**v0.2 — 同步實作**:cursor 為**三段式** payload `{ lastDisplayOrder, lastCreatedAt, lastId }`(`src/lib/cursor/cursor.ts:14-18`),排序主鍵為 `displayOrder`,signature 實為 `displayOrder_ASC_createdAt_DESC_id_DESC`(admin service `orderBy: [{ displayOrder: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }]`,`admin-read-services.ts:136`)—— 非原稿寫的 `{ createdAt, id }` / `id_DESC_createdAt_DESC`
 - admin UI v0.1 設計上一頁顯示全部(limit=100),不分頁 — cursor 規格保留是給未來大量資料時的擴充
 - 統一 list helper(`listCharities` / `listDonationProjects` / `listSaleItems`)只差在 `where` 條件(`whereLive` vs `whereForAdmin`),其他**全相同**,minimal diff
 
@@ -188,7 +188,7 @@ i18n 在 spec 015 §7 / spec 016 設計就強制全 endpoint 一致行為。Admi
 | 欄位 | 型別 | 預設 | 備註 |
 |---|---|---|---|
 | `limit` | `Type.Integer({ minimum: 1, maximum: 100 })` | 20 | 對齊 [016 §3.2.1](./016-charity-list-api.md);v0.1 admin UI 傳 100 一次撈完 |
-| `cursor` | `Type.Optional(Type.String())` | — | base64-encoded `{ createdAt, id }`(對齊 016)|
+| `cursor` | `Type.Optional(Type.String())` | — | base64url-encoded `{ lastDisplayOrder, lastCreatedAt, lastId }`(v0.2 — 同步實作:三段式,排序主鍵 `displayOrder`;`cursor.ts:14-18`)|
 | `q` | `Type.Optional(Type.String({ maxLength: 80 }))` | — | name + description 全文模糊搜尋(對齊 016) |
 | `category` | `Type.Optional(Type.String())` | — | category.key(對齊 016) |
 | `includeArchived` | `Type.Optional(Type.Boolean())` | false | true → archived row 也出 |
@@ -459,4 +459,5 @@ const READ_LIMITS = {
 
 | 版本 | 日期 | 變更 |
 |---|---|---|
+| 0.2 | 2026-07-07 | 與實作同步(不改 code):(1) cursor payload / 排序描述更新 —— 實際為三段式 `{ lastDisplayOrder, lastCreatedAt, lastId }`(`src/lib/cursor/cursor.ts:14-18`),排序主鍵 `displayOrder`(`admin-read-services.ts:136` `orderBy: [displayOrder asc, createdAt desc, id desc]`),signature 實為 `displayOrder_ASC_createdAt_DESC_id_DESC`,取代原稿 `{ createdAt, id }` / `id_DESC_createdAt_DESC`(§2.5 / §5.1.1);(2) `whereForAdmin` 檔名引用更正:實際在既有 `src/domain/lifecycle/where.ts:83`(與 `whereLive` 同檔),非原規劃新檔 `where-for-admin.ts`(header 路徑欄 + §2.3 code comment)|
 | 0.1 | 2026-06-16 | 初版:補 6 個 admin GET endpoint(charity / project / item 各 list + detail)解 [FE spec 011 §5.4](../../../frontend/docs/specs/011-cms-resource-admin.md#54-be-硬依賴backendcharitydetail-缺欄位) hard prerequisite。新增 `whereForAdmin` helper(對應 spec 015 §3.3 v0.9 已 spec 但未實作)+ `AdminCharityDetail` / `AdminProjectDetail` / `AdminSaleItemDetail` TypeBox schema(Intersect public schema + admin metadata 5 欄)+ list item schema 三件 + paginatedEnvelope wrapper。Auth 沿用 [020 §2.3](./020-donation-write-api.md) `/cms` scope `requireAdmin`,rate limit 走 `READ_LIMITS`(per-user 600/h / per-IP 3000/h,比 write 寬 10×)。Cache:admin endpoint **不** 走 Redis,response `Cache-Control: no-store, private`,不發 ETag。Project / SaleItem detail 額外帶 `parentCharityArchivedAt/DeletedAt` 兩欄,提示 admin parent 已 archive / delete(配合 spec 015 v0.9 cascading visibility)。Test plan:auth 4 case / list 6 case / detail 7 case / rate limit 2 case / locale 3 case / cache 3 case = 25 case 涵蓋 §9 |

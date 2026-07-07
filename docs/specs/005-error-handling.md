@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.2 |
+| 版本 | 0.4 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/src/lib/errors`、Fastify 全域 errorHandler、process-level handlers |
 | 相關 ADR | `docs/decisions/002-backend-framework.md` |
@@ -175,6 +175,7 @@ export class NotFoundError extends AppError {
 | `SERVICE_UNAVAILABLE` | 503 | 啟動中 / 暫停服務 |
 | `UPSTREAM_FAILURE` | 502 | 下游 5xx |
 | `UPSTREAM_TIMEOUT` | 504 | 下游 timeout |
+| `GATEWAY_TIMEOUT` | 504 | *(v0.4 — 同步實作)* `GatewayTimeoutError` 預設 code(§3.2);與 `UPSTREAM_TIMEOUT` 並存於 `codes.ts` |
 
 #### 4.2.2 Auth — Google + Identity(spec 007 擁有)
 
@@ -215,6 +216,17 @@ export class NotFoundError extends AppError {
 | code | HTTP | 語意 |
 |---|---|---|
 | `RATE_LIMIT_UNAVAILABLE` | 503 | Redis 不可用,rate-limit 失敗關閉 |
+
+#### 4.2.6 Persistence — Prisma(spec 003 擁有)
+
+*(v0.4 — 同步實作:由 `src/lib/errors/prisma.ts` `mapPrismaError` emit,登錄於 `codes.ts`)*
+
+| code | HTTP | 語意 |
+|---|---|---|
+| `UNIQUE_CONSTRAINT` | 409 | Prisma `P2002` unique 違反;`details.fields` 帶違反欄位(`prisma.ts:30`) |
+| `FK_CONSTRAINT` | 400 | Prisma `P2003` foreign key 違反(`prisma.ts:40`) |
+
+> `P2025`(record not found)映射為通用 `NOT_FOUND`、`P2024`(pool timeout)映射為通用 `SERVICE_UNAVAILABLE`,不另立專屬 code。
 
 ### 4.3 業務層字典
 
@@ -278,6 +290,12 @@ export default fp(async (fastify) => {
 })
 ```
 
+> **v0.4 — 同步實作**:上方為草案,實際實作在 `src/lib/errors/plugin.ts:75-83`(`resolveAppError`)略有出入:
+> - schema validation 映射是**內聯**於 plugin 的 `mapFastifyValidationError`(`plugin.ts:55-68`),**無** `../lib/errors/fastify-schema` 檔
+> - Prisma 映射從 `./prisma.js`(`mapPrismaError`)引入,**非** `../lib/db/errors`
+> - **無** `mapKnownExternalError` 遞迴分派:`resolveAppError` 直接依序試 `AppError` → validation → `mapPrismaError` → fallback `InternalError`,不做 §5.1 草案的「map 成 AppError 後遞迴呼叫 errorHandler」
+> - 額外行為:error response 一律加 `Cache-Control: no-store`(`plugin.ts:127`),`X-Request-Id` header 與 body `requestId` 同源(`request-id`)
+
 ### 5.2 規則
 
 - **errorHandler 是唯一寫 response 的錯誤路徑**;route 內 `throw` 即可,無需自行寫 status / body
@@ -302,7 +320,7 @@ export default fp(async (fastify) => {
 - K8s probe 機制不解析 `application/problem+json`,只看 HTTP status code
 - health endpoint 的主資料是「component status」,error 為附屬
 
-由 errorHandler 在格式化前判斷 `request.routerPath?.startsWith('/health/')`,命中時改走 health response writer。其他原則(status code、不洩漏細節、requestId 追蹤)仍適用。
+*(v0.4 — 同步實作)* 實際的全域 `errorHandler`(`src/lib/errors/plugin.ts:85-130`)**不含** health 分支——它一律輸出 `application/problem+json`。health 端點自理其 JSON shape:spec 011 的 health plugin 直接以 `reply.code().send()` 回傳成功 / 失敗 body,**不 throw 進全域 handler**,因此不會落到 RFC 7807 路徑。其他原則(status code、不洩漏細節、requestId 追蹤)仍適用。
 
 ### 6.1 格式
 
@@ -381,10 +399,10 @@ Content-Type: application/problem+json
 
 ### 7.2 Prisma 映射
 
-呼應 spec 003 §8,集中於 `src/lib/db/errors.ts`:
+呼應 spec 003 §8,*(v0.4 — 同步實作)* 集中於 `src/lib/errors/prisma.ts`(非 `src/lib/db/errors.ts`;實作與下方草案一致,P-code → code 對應如 §4.2.6):
 
 ```ts
-// src/lib/db/errors.ts(草案)
+// src/lib/errors/prisma.ts
 import { Prisma } from '@prisma/client'
 import { ConflictError, NotFoundError, BadRequestError, ServiceUnavailableError, AppError } from '../errors'
 
@@ -404,9 +422,11 @@ export function mapPrismaError(err: unknown): AppError | undefined {
 
 ### 7.3 Redis / 第三方 HTTP
 
-- Redis 連線錯誤 → `ServiceUnavailableError`(`code: 'CACHE_UNAVAILABLE'`)
-- fetch 5xx → `UPSTREAM_FAILURE` / 4xx → 視語意決定是否曝給 client(多數不曝)
-- fetch timeout → `UPSTREAM_TIMEOUT`
+> **v0.4 — 尚未實作 / 規劃中**:下列 Redis / fetch 錯誤映射目前**未落地**——`codes.ts` 無 `CACHE_UNAVAILABLE` / `CACHE_TIMEOUT`,亦無 `src/lib/cache/errors.ts` / `mapRedisError`。現況:cache 層採**降級**而非拋錯(`src/lib/cache/with-cache.ts` 讀寫失敗只 warn log、退回 source-of-truth,不產生 5xx)。以下為目標設計,待對應整合點實作後回填字典(§4.2)。
+
+- Redis 連線錯誤 → `ServiceUnavailableError`(`code: 'CACHE_UNAVAILABLE'`)*(規劃中)*
+- fetch 5xx → `UPSTREAM_FAILURE` / 4xx → 視語意決定是否曝給 client(多數不曝)*(規劃中)*
+- fetch timeout → `UPSTREAM_TIMEOUT` *(規劃中)*
 
 每個整合點在對應 plugin / service 內提供 `mapXxxError`,errorHandler **不**為每個第三方寫 if-else。
 
@@ -577,3 +597,4 @@ process.on('uncaughtException', (err) => {
 | 0.1 | 2026-06-13 | 初版 |
 | 0.2 | 2026-06-13 | §4.2 error code 字典聚合為單一事實來源,涵蓋 spec 007/008/009/010 散落的 20+ 個 code,分 5 個子表(通用 / Auth-Google / Auth-Password / Idempotency / Rate-Limit);新增 §4.4 字典治理(新增 / 棄用、HTTP status 一旦發布不可變);§6.0 新增 health probe 端點的 RFC 7807 例外(對齊 spec 011 §5.2)— K8s probe 不解析 problem+json,health 端點改回 spec 011 §4/§5 JSON shape |
 | 0.3 | 2026-06-16 | §5.3 / §9 落地:`setNotFoundHandler` 統一拋 `NotFoundError`(`details.resource = req.url`),Fastify 預設 404 改走 RFC 7807;§9.1 / §9.2 process-level handler 落入 `src/lib/errors/process-handlers.ts`(`unhandledRejection` → log fatal + graceful drain;`uncaughtException` → log fatal + exit(1)),`src/server.ts` 啟動時 `registerProcessHandlers({ process, logger: app.log, shutdown })` 接上;§9.4 測試環境不註冊 — 用 injectable `ProcessLike` stub 單測;§4.2.4 dictionary 將 `IDEMPOTENCY_KEY_INVALID` / `IDEMPOTENCY_KEY_CONFLICT` 與 spec 021 `INVARIANT_VIOLATED` / spec 022 `INVALID_RECEIPT_OPTION_FOR_SUBJECT` 正式註冊到 `codes.ts` |
+| 0.4 | 2026-06-16 | **同步實作**(並修正表頭版本 0.2 → 0.4 的落差):§6.0 更正——實際 `errorHandler`(`src/lib/errors/plugin.ts:85-130`)**無** health 分支,health 端點由 spec 011 plugin 自理 JSON、不 throw 進全域 handler;§4.2.1 補 `GATEWAY_TIMEOUT`(504),新增 §4.2.6 Persistence 子表登錄 `UNIQUE_CONSTRAINT`(409)/ `FK_CONSTRAINT`(400)(由 `mapPrismaError` emit);§5.1 標註草案與實作差異(validation 映射內聯、Prisma 映射由 `./prisma.js`、無 `mapKnownExternalError` 遞迴、error response 加 `no-store`);§7.2 路徑由 `src/lib/db/errors.ts` 更正為 `src/lib/errors/prisma.ts`;§7.3 Redis / fetch 錯誤映射標註**尚未實作 / 規劃中**(現況 cache 走降級不拋錯) |

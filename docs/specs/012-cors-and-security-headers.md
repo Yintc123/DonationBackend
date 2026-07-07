@@ -3,9 +3,9 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.3 |
+| 版本 | 0.4 |
 | 日期 | 2026-06-17 |
-| 適用範圍 | `backend/src/plugins/cors.ts`、`backend/src/plugins/helmet.ts`、`backend/src/plugins/trust-proxy.ts` |
+| 適用範圍 | `backend/src/lib/security/cors.ts`、`backend/src/lib/security/helmet.ts`;trust-proxy 無獨立檔,設於 `backend/src/app.ts:61-99`(parser 在 `backend/src/lib/rate-limit/trusted-proxies.ts`)(v0.4 — 同步實作:無 `src/plugins/*`) |
 | 相關 ADR | `docs/decisions/002-backend-framework.md` |
 | 相關 spec | `001-environment-config.md`(`CORS_ORIGIN`)、`009-api-response-and-http-status.md`(`X-Request-Id` / `X-RateLimit-*` 必須被 exposed)、`010-rate-limit-module.md`(§15.1 trustProxy)、`011-health-check.md`(§8 health 端點豁免) |
 
@@ -188,13 +188,13 @@ Content-Security-Policy:
 
 ### 6.1 設定
 
-Fastify 啟動時:
+Fastify 啟動時(v0.4 — 同步實作:讀 **`config`** 而非 `process.env`,且空清單 → `false`;`src/app.ts:65-66`):
 
 ```ts
-const app = Fastify({
-  trustProxy: parseTrustedProxies(process.env.RATE_LIMIT_TRUSTED_PROXIES),
-  // ...其他
-})
+// src/app.ts:65-66
+const trustedProxies = parseTrustedProxies(config.RATE_LIMIT_TRUSTED_PROXIES)
+const trustProxy = trustedProxies.length > 0 ? trustedProxies : false
+const app = Fastify({ trustProxy, /* ...其他 */ })
 ```
 
 - 接受 CIDR 清單(例 `10.0.0.0/8,192.168.0.0/16`)
@@ -228,7 +228,7 @@ X-Forwarded-For: 127.0.0.1
 
 ### 6.4 與 rate-limit 的協作
 
-- spec 010 §15.1 已要求必設 `trustProxy`,本 spec 提供唯一實作位置(`src/plugins/trust-proxy.ts`)
+- spec 010 §15.1 已要求必設 `trustProxy`,本 spec 提供唯一實作位置(v0.4 — 同步實作:設於 `src/app.ts:61-99` 的 `Fastify({ trustProxy })`,CIDR parser 為 `src/lib/rate-limit/trusted-proxies.ts` 的 `parseTrustedProxies`;**無** `src/plugins/trust-proxy.ts` 這個檔)
 - 若部署環境改變,**只在環境變數調整**,不改程式碼
 
 ### 6.5 `X-Request-Id` 信任邊界
@@ -360,7 +360,7 @@ BFF 自產 id 時建議至少 16 字元、僅用 `[A-Za-z0-9_-]`;範例:`req_YYY
 
 | Key | 必填 | dev 預設 | stage / prod | 說明 |
 |---|---|---|---|---|
-| `CORS_ORIGIN` | ✅(已於 spec 001 §3.6) | `http://localhost:3000` | 對應環境 BFF URL,逗號分隔多筆;**禁** `*` | |
+| `CORS_ORIGIN` | ✅(已於 spec 001 §3.6) | `http://localhost:3000` | 對應環境 BFF URL,逗號分隔多筆;(v0.4 — 同步實作:`*` **不再禁**,依 §3.2 v0.2 切 wildcard 模式;`src/lib/security/parse-origin.ts:41-51` 回 `{mode:'wildcard'}` 不丟錯)| |
 | `CORS_PREFLIGHT_MAX_AGE_SEC` | | `600` | `600` | preflight cache |
 | `HSTS_MAX_AGE_SEC` | | `31536000` | `31536000` | HSTS max-age |
 | `HSTS_INCLUDE_SUBDOMAINS` | | `true` | `true` | HSTS includeSubDomains |
@@ -373,13 +373,16 @@ BFF 自產 id 時建議至少 16 字元、僅用 `[A-Za-z0-9_-]`;範例:`req_YYY
 
 ### 11.1 Events(擴充 spec 004 §9.3)
 
-| event | 觸發 | level | audit |
-|---|---|---|---|
-| `cors_origin_rejected` | 收到 `Origin` 不在 allowlist | debug | — |
-| `cors_origin_allowed` | 命中 allowlist | (不 log,量大) | — |
-| `trusted_proxy_misconfigured` | 啟動偵測到 `RATE_LIMIT_TRUSTED_PROXIES` 在 prod 為空 | fatal | — |
+> **v0.4 — 同步實作**:下表 `cors_origin_rejected` / `cors_origin_allowed` / `trusted_proxy_misconfigured` 皆**未實作 / 規劃中**。目前 `src/lib/security/cors.ts` 只在 wildcard 模式啟動時 emit **`cors_wildcard_mode`**(warn,`cors.ts:73-76`);allowlist 拒絕由 `@fastify/cors` 內部處理、不 emit 事件。trust-proxy 空值在 prod 的 fatal 檢查亦尚未落地(parser 只拒 `*` / `true`)。
 
-- `cors_origin_rejected` 用 debug level(高頻、可能來自 scanner / 心跳),避免 log 淹沒
+| event | 觸發 | level | audit | 狀態 |
+|---|---|---|---|---|
+| `cors_wildcard_mode` | 啟動時 `CORS_ORIGIN=*`(§3.2) | warn | — | ✅ 已實作 |
+| `cors_origin_rejected` | 收到 `Origin` 不在 allowlist | debug | — | 未實作 |
+| `cors_origin_allowed` | 命中 allowlist | (不 log,量大) | — | 未實作 |
+| `trusted_proxy_misconfigured` | 啟動偵測到 `RATE_LIMIT_TRUSTED_PROXIES` 在 prod 為空 | fatal | — | 未實作 |
+
+- `cors_origin_rejected`(規劃中)用 debug level(高頻、可能來自 scanner / 心跳),避免 log 淹沒
 
 ### 11.2 Metrics(預留)
 
@@ -392,7 +395,7 @@ BFF 自產 id 時建議至少 16 字元、僅用 `[A-Za-z0-9_-]`;範例:`req_YYY
 
 ### 12.1 Unit
 
-- CORS_ORIGIN parser(逗號分隔、trim、去重、拒 `*`)
+- CORS_ORIGIN parser(逗號分隔、trim、去重;v0.4 — 同步實作:`*` **不**拒,切 wildcard 模式不丟錯,對齊 §3.2;純 allowlist 空清單才 throw,`parse-origin.ts:53-57`)
 - trustProxy CIDR parser(`10.0.0.0/8` 解析)
 - X-Request-Id 格式驗證(§6.5.2 規則:`^[A-Za-z0-9_-]{16,128}$`,不符 → reject 並重新產生)
 
@@ -450,4 +453,5 @@ BFF 自產 id 時建議至少 16 字元、僅用 `[A-Za-z0-9_-]`;範例:`req_YYY
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
 | 0.2 | 2026-06-16 | §3.1 / §3.2 wildcard 政策修訂:`CORS_ORIGIN=*` 不再啟動 fail,parser 切換 cors plugin 為 **wildcard 模式**(`origin: '*'`、`credentials: false`)。前提:本服務 auth 走 Bearer(無 cookie),credentials 關閉不影響業務認證。啟動時 log warn `cors_wildcard_mode`。混合 `*` 與具體 origin → wildcard 直接 win。對應 backend `parse-origin.ts` / `cors.ts` 重構,新增 5 個 wildcard 模式單測;§13.1 第 1 條同步修文 |
+| 0.4 | 2026-07-07 | **同步實作**:修正檔案路徑(`src/lib/security/{cors,helmet}.ts`,trust-proxy 無獨立檔、設於 `src/app.ts:61-99`);§6.1 trustProxy 讀 `config` 非 `process.env`、空清單 → `false`(`app.ts:65-66`);§6.4 唯一實作位置改為 `app.ts` + `src/lib/rate-limit/trusted-proxies.ts`;§10 / §12.1 移除「禁 / 拒 `*`」矛盾——`parse-origin.ts:41-51` 遇 `*` 回 wildcard 模式不丟錯(對齊 §3.2 v0.2);§11.1 觀測事件 `cors_origin_rejected` / `cors_origin_allowed` / `trusted_proxy_misconfigured` 標未實作,實際只有 `cors_wildcard_mode` |
 | 0.3 | 2026-06-17 | §6.5 `X-Request-Id` 信任邊界**放寬**:不再要求 UUID v4,改為 charset `[A-Za-z0-9_-]` + 長度 16–128 的安全校驗(規則 §6.5.2)。動機:舊規與「BFF correlation」目標衝突——BFF 採用人類可讀格式(如 `req_YYYY-MM-DD_<suffix>`)時 id 會被 backend 丟棄,導致前後端 log 無法串接(§6.5.3 已逐項論證 UUID v4 並非原擔憂的必要條件,charset+長度即可涵蓋)。新增 §6.5.1(業界做法)、§6.5.4(BFF 端格式建議)。§12.1 測試案例敘述、§13.1 第 2 條同步修文 |

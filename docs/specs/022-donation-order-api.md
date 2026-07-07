@@ -3,8 +3,8 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.12 |
-| 日期 | 2026-06-16 |
+| 版本 | 0.14 |
+| 日期 | 2026-07-07 |
 | 適用範圍 | `backend/src/routes/user/donation/orders.ts`(新)、`backend/src/routes/cms/orders.ts`(新)、`backend/src/domain/order/*`(spec 021 共享)、`backend/src/lib/clock.ts`(spec 021 §7.7 共享) |
 | 相關 ADR | 待補 |
 | 相關 spec | `021-donation-order-data-model.md` v0.2(**OrderLine pattern** schema 基礎)、`020-donation-write-api.md`(admin role=0 gate)、`015-charity-data-model.md`、`005-error-handling.md`、`019-cache-policy.md`、`004-logger-module.md` |
@@ -713,6 +713,8 @@ Body {
 → 200 + 完整 order body
 ```
 
+**`status` 為 admin override,不套狀態機轉換檢查(v0.14 — 同步)**:admin PATCH 的 `status` 接受**任一** `OrderStatus` 值,是 admin **override**,**不**套用 spec 021 §5 state machine 的合法轉換規則(那是 confirm-payment / cancel / user PATCH §4.5a 這些**公開端點**才驗的起始 status 前置條件)。因此 admin 可直接把 status 設成任何值(如 PENDING → REFUNDED、CANCELLED → PENDING),**不會**觸發 `ORDER_STATUS_INVALID`。對齊 code `src/domain/order/admin-services.ts` `patchOrderAsAdmin`(直接 `order.update({ data: { status } })`,無轉換 guard)。
+
 ### 4.10 `DELETE /v1/admin/orders/:id`(admin)
 
 ```
@@ -783,7 +785,7 @@ Body {
 |---|---|---|
 | `INVALID_BILLING_DAY` | 400 | RECURRING 沒選 billingDay,或 ONE_TIME 給了 |
 | `ORDER_NOT_FOUND` | 404 | orderId 不存在 |
-| `ORDER_STATUS_INVALID` | 409 | confirm / cancel / **user PATCH(v0.12)** 起始 status 錯,或 admin PATCH 違反 |
+| `ORDER_STATUS_INVALID` | 409 | confirm / cancel / **user PATCH(v0.12)** 起始 status 前置條件不符(admin PATCH 為 override,**不**觸發此碼 — 見 §4.9;v0.14 — 同步) |
 | `INVALID_RECEIPT_OPTION_FOR_SUBJECT`(v0.12 新)| 409 | user PATCH 對 SALE_ITEM 訂單給非 null `receiptOption`(對齊 spec 021 §7.5)|
 
 > **v0.8 spec drift 修正**:`ORDER_LINES_REQUIRED` / `ORDER_TOO_MANY_LINES`(v0.2 引入)實際上**從未需要落地** — TypeBox `items.length min=max=1`(spec §4.3 / §5.1)在 route 層直接 reject 成 `VALIDATION_FAILED`。為避免規格 / code 漂移,從表格與規約移除這兩個 code 編號。
@@ -878,8 +880,8 @@ Body {
 | Create ONE_TIME 帶 billingDay | 400 `INVALID_BILLING_DAY` |
 | Create PROJECT_DONATION cascading dead parent | parent expired → 404 |
 | Create SALE_ITEM_PURCHASE 1 item | 201 + line.subtotalTwd = qty × snapshot + Order.amountTwd = line.subtotal |
-| Create SALE_ITEM_PURCHASE empty items | 400 `ORDER_LINES_REQUIRED` |
-| Create SALE_ITEM_PURCHASE 2 items | 400 `ORDER_TOO_MANY_LINES` |
+| Create SALE_ITEM_PURCHASE empty items | 400 `VALIDATION_FAILED`(TypeBox `minItems: 1`;v0.14 — 同步,原誤寫 `ORDER_LINES_REQUIRED`)|
+| Create SALE_ITEM_PURCHASE 2 items | 400 `VALIDATION_FAILED`(TypeBox `maxItems: 1`;v0.14 — 同步,原誤寫 `ORDER_TOO_MANY_LINES`)|
 | Create SaleItem 不存在 | 404 |
 | Confirm PENDING | → PAID + paidAt 設定 |
 | Confirm PAID(idempotent) | → 200 no-op |
@@ -977,4 +979,5 @@ Body {
 | 0.10 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |
 | 0.11 | 2026-06-16 | §1 適用範圍欄位更新:public orders `routes/v1/donation/orders/*` → `routes/user/donation/orders.ts`;admin orders `routes/v1/admin/orders/*` → `routes/cms/orders.ts`(spec 023 v0.2 §6.2 one-file-per-resource,git mv 完成) |
 | 0.12 | 2026-06-16 | **加 user-side PATCH endpoint(§4.5a)** — `PATCH /v1/donation/orders/:id`,允許 user 在 status ∈ {PENDING, PAID} 改 `donorName` / `isAnonymous` / `note` / `receiptOption`。落 `/user/v{N}` surface(對齊 spec 024 §5.1 規約);trust model 為「持有 orderId = 擁有者」(同 §2.1 / §4.5 cancel,**非** admin)。CANCELLED / FAILED / REFUNDED 訂單帳務 frozen,user 不可改 → 409 `ORDER_STATUS_INVALID`。SALE_ITEM 訂單給非 null receiptOption → 409 `INVALID_RECEIPT_OPTION_FOR_SUBJECT`(對齊 spec 021 §7.5)。Empty patch / 值未變動 → 200 no-op,不發 audit。新 audit event `order_user_patched`(僅 fieldsChanged 非空才發,**不**含 accountId — 因 endpoint 無 auth)。Rate-limit 走既有 `order_lifecycle` bucket(60/h)。新 error code `INVALID_RECEIPT_OPTION_FOR_SUBJECT`。§3 端點 10 → 11;§10 +~11 integration test。§11 OQ #2 釐清「user-side update 已落地;list 仍為 future」。spec 024 §5.1「未來規劃」於 spec 024 v0.3 收束為「方案 A 落地」|
+| 0.14 | 2026-07-07 | 文件內部一致性 + code 同步(純文件):(1) §4.9 admin PATCH 澄清 `status` 為 **override** — 接受任一 `OrderStatus`,**不**套 spec 021 §5 state machine 轉換檢查(對齊 code `admin-services.ts` `patchOrderAsAdmin` 對 status 無 transition guard);連帶 §7 `ORDER_STATUS_INVALID` 觸發場景移除「admin PATCH 違反」(admin PATCH 不觸發此碼)。**注意**:此為 status 轉換的描述澄清,**未動** admin PATCH receiptOption↔subjectType invariant 段落。(2) §10.1 測試矩陣移除已作廢的 `ORDER_LINES_REQUIRED` / `ORDER_TOO_MANY_LINES`(v0.8 已從 §7 移除、`src/lib/errors/codes.ts` 從未定義)— empty / 2 items 實由 TypeBox `minItems`/`maxItems` 回 `VALIDATION_FAILED`。(3) 表頭版本 0.12 → 0.14 + 日期同步(先前 0.13 changelog 已存在但表頭未跟上)。對應 spec 021 v0.9 |
 | 0.13 | 2026-06-16 | §4.5a 文字釐清:**empty patch 早於 status 前置條件**,連 CANCELLED / FAILED / REFUNDED 訂單也回 200 no-op(對齊 §10.1 v0.12 測試矩陣)。語意:沒送變更 = 沒動到 frozen 欄位,frozen guard 不觸發。原 v0.12 文字字面上似乎 CANCELLED + `{}` → 409,與測試矩陣矛盾;v0.13 收束為 200。實作 `user-update-service.ts:61-68` 自始如此,屬純文件釐清 |

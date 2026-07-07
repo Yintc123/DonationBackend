@@ -3,9 +3,9 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.1 |
+| 版本 | 0.3 |
 | 日期 | 2026-06-13 |
-| 適用範圍 | `backend/src/routes/health/*`、`backend/src/lib/health/*`、`backend/src/plugins/lifecycle.ts` |
+| 適用範圍 | `backend/src/lib/health/*`(gate + probes + plugin);graceful drain 觸發於 `backend/src/server.ts`(v0.3 — 同步實作:無 `src/routes/health/*`、無 `src/plugins/lifecycle.ts`) |
 | 相關 ADR | `docs/decisions/002-backend-framework.md` |
 | 相關 spec | `003-orm-module.md`(§13 DB 健康)、`006-redis-module.md`(§13.4 cache 健康)、`004-logger-module.md`(§6.1 排除 log)、`010-rate-limit-module.md`(§9.1 不套用) |
 
@@ -67,6 +67,7 @@
 | `GET /health` | 人讀的整體診斷,JSON 詳細 | 運維 / 開發者 | < 500ms |
 | `GET /health/db` | DB 單獨診斷 | 運維 / 開發者 | < 200ms |
 | `GET /health/cache` | Redis 單獨診斷 | 運維 / 開發者 | < 100ms |
+| `GET /health/storage` | S3 單獨診斷(v0.3 — 同步實作,spec 018 §10;僅在 `s3Plugin` 註冊 `s3HealthProbe` 時掛載,`src/lib/health/plugin.ts:186-205`)| 運維 / 開發者 | < 200ms |
 
 ### 3.1 路徑慣例
 
@@ -80,8 +81,10 @@
 ### 4.1 `GET /health/live`
 
 ```
-return 200 OK, body { "status": "alive" }
+return 200 OK, body { "status": "alive", "build": { "gitSha", "timestamp", "version" } }
 ```
+
+> **v0.3 — 同步實作**:實際 body **多帶一個 `build` 區塊**(來自 `BUILD_*` env,`src/lib/health/probes.ts:42-45,55-71`),讓 liveness 兼作「這台 pod 跑哪個 commit」的 introspection。此與 §14.1「維持極簡」/ §14.2「只揭露 short SHA」有張力:`build.gitSha` 目前是**完整 SHA**、且含 `timestamp` / `version` metadata。若對外暴露 `/health/live`,需評估是否縮短 / 移除該區塊。
 
 - **不查任何外部依賴**
 - **不查 process 內部 state**(避免 false negative 引發重啟風暴)
@@ -95,12 +98,13 @@ return 200 OK, body { "status": "alive" }
 checks (並行):
   - DB:   prisma.$queryRaw`SELECT 1`,timeout 500ms
   - Cache: redis.ping(),                timeout 200ms
-  - 啟動完成旗標(§9):必須為 true
 
-all ok       → 200 + { "status": "ready" }
+all ok       → 200 + { "status": "ready", "components": { db, cache } }
 any not ok   → 503 + { "status": "not_ready", "components": { db: "ok|fail", cache: "ok|fail" } }
-shutting down → 503 + { "status": "draining" }  (§9)
+shutting down → 503 + { "status": "draining", "uptimeSec": N }  (§9)
 ```
+
+> **v0.3 — 同步實作**:readiness **未**檢查「啟動完成旗標」。`aggregateReadiness`(`src/lib/health/probes.ts:103-128`)只判斷 `shuttingDown` + DB/Cache 兩個 component;`src/lib/health/plugin.ts:114-140` 傳入的 input 不含 `started`。原設計的「啟動旗標必須為 true」為**未實作 / 規劃中**——實務上啟動旗標由 startup probe(§4.3)覆蓋,readiness 只看 draining + 依賴可達。
 
 - 並行檢查,**total timeout 1.5s**(K8s 預設 probe timeout 2s,留 buffer)
 - 任一依賴 fail → 503;單 pod 暫時移出流量,**不**重啟
@@ -110,13 +114,13 @@ shutting down → 503 + { "status": "draining" }  (§9)
 
 ```
 checks:
-  - 啟動旗標(§9):必須為 true
-  - 至少一次 DB 連線成功:用 plugin-level 一次性 flag
-  - 至少一次 Cache 連線成功:同上
+  - 啟動旗標(§9):必須為 true(Fastify onReady 觸發 gate.markStarted())
 
 all ok → 200 + { "status": "started" }
-not ok → 503 + { "status": "starting", "elapsed_ms": N }
+not ok → 503 + { "status": "starting", "elapsedMs": N }
 ```
+
+> **v0.3 — 同步實作**:startup probe **只讀 in-process 啟動旗標** `gate.isStarted()`(`src/lib/health/plugin.ts:143-149`、`buildStartupBody` `probes.ts:154-162`),該旗標於 Fastify `onReady`(所有 plugin 註冊完成)翻 true。原設計的「至少一次 DB / Cache **首次連線**成功」為**未實作 / 規劃中**——目前 startup 不做任何依賴 PING,「外部依賴遲遲不通」不會讓 startup 卡住(該職責落到 readiness §4.2)。另 body 欄位實際是 **`elapsedMs`**(非 spec 舊寫的 `elapsed_ms`,`probes.ts:160`)。
 
 - 用於「migration 跑很久」「外部依賴遲遲不通」的場景,讓 K8s 知道「還在 boot 中」
 - 通過後**不再**走實際依賴 PING(已由 readiness 覆蓋);只看 in-process 旗標
@@ -129,7 +133,7 @@ not ok → 503 + { "status": "starting", "elapsed_ms": N }
 ```json
 {
   "status": "ok",                    // "ok" | "degraded" | "down"
-  "version": "<git-sha-short>",      // 由 build 時注入
+  "version": "<git-sha>",            // 由 build 時注入(v0.3 — 同步實作:實際是 BUILD_GIT_SHA 完整 SHA,非 7 字元 short SHA;probes.ts:217)
   "uptimeSec": 1234,
   "components": {
     "db":    { "status": "ok",  "latencyMs": 3 },
@@ -265,25 +269,28 @@ not ok → 503 + { "status": "starting", "elapsed_ms": N }
 ```
 收到 SIGTERM / SIGINT
   ↓
-plugin: lifecycle.ts
-  setShuttingDown(true)
+src/server.ts:29-60 shutdown handler
+  app.readinessGate.shutDown()   (gate 在 src/lib/health/gate.ts)
   → /health/ready 立即開始回 503 (status: "draining")
   ↓
-sleep gracePeriod(預設 10s)
+sleep gracePeriod(v0.3 — 同步實作:實際 2s,非 10s;server.ts:19 SHUTDOWN_DRAIN_GRACE_MS,由 spec 014 §5.3 取代原 10s 設計)
   → K8s 在此期間更新 endpoints,流量逐漸切走
   ↓
 app.close()
-  → Fastify drain in-flight requests(timeout 30s)
+  → Fastify drain in-flight requests
   → onClose hooks(Prisma $disconnect、Redis quit)
+  → 守備:force-exit 28s(server.ts:20 FORCE_EXIT_MS)
   ↓
 process.exit(0)
 ```
 
 ### 9.2 旗標規則
 
-- 由 `src/plugins/lifecycle.ts` 集中管理 `isShuttingDown` / `isStartupCompleted`
-- 暴露 helper:`isShuttingDown()` / `markStarted()`
-- 所有 plugin 在 register 完成後呼叫 `markStarted()`;若任一 plugin register 失敗 → process 早 exit(spec 005 §11.2)
+(v0.3 — 同步實作)
+
+- 由 `src/lib/health/gate.ts`(`createReadinessGate()`)集中管理 `started` / `shuttingDown` 兩個一次性旗標;透過 `app.decorate('readinessGate', gate)` 掛在 instance 上(`src/lib/health/plugin.ts:79-80`)
+- 暴露 helper:`isShuttingDown()` / `isStarted()` / `markStarted()` / `shutDown()` / `uptimeSec()`
+- `markStarted()` 由 Fastify `onReady` hook 呼叫(所有 plugin 註冊完成後,`plugin.ts:102-104`);`shutDown()` 由 `src/server.ts` 的 SIGTERM/SIGINT handler 呼叫;若任一 plugin register 失敗 → process 早 exit(spec 005 §11.2)
 
 ### 9.3 readiness 在 shutdown 期間的回應
 
@@ -375,8 +382,10 @@ startupProbe:
 
 ### 11.6 與 Lifecycle(本 spec 第一次引入)
 
-- `src/plugins/lifecycle.ts` 集中管理 `isShuttingDown` / `isStartupCompleted` 旗標
-- 註冊 SIGTERM / SIGINT handler、執行 §9.1 drain 流程
+(v0.3 — 同步實作:旗標與 SIGTERM handler **分屬兩處**,無單一 `lifecycle.ts`)
+
+- `src/lib/health/gate.ts` 集中管理 `started` / `shuttingDown` 旗標(狀態機)
+- SIGTERM / SIGINT handler 與 §9.1 drain 流程實作在 `src/server.ts:29-60`(呼叫 `app.readinessGate.shutDown()`)
 - 與 spec 005 §9 process-level handler 不衝突:spec 005 處理 `unhandledRejection` / `uncaughtException`(異常路徑);本 spec 處理正常 shutdown
 
 ---
@@ -443,7 +452,7 @@ startupProbe:
   - env vars(任何)
   - secret 任何形式
   - 完整錯誤訊息 / stack(503 body 只放 component 名稱與狀態)
-- `version` 可揭露**short SHA**(7 字元),不揭露完整 build metadata
+- `version` 可揭露 SHA;不揭露完整 build metadata(v0.3 — 同步實作:實際 `/health` 的 `version` 是**完整 SHA**、且 `/health/live` 額外帶 `build.{gitSha,timestamp,version}`,見 §4.1 / §4.4 備註;原「short SHA 7 字元」為目標,尚未截斷)
 
 ### 14.3 Probe 偽造
 
@@ -454,7 +463,7 @@ startupProbe:
 
 ## 15. 開放問題
 
-- **Build metadata 注入**:`version` 來自 `BUILD_GIT_SHA` env;由 Dockerfile / CI 注入(部署 spec 處理)。若 dev 模式無此 env,fallback `"dev"`
+- **Build metadata 注入**:`version` 來自 `BUILD_GIT_SHA` env;由 Dockerfile / CI 注入(部署 spec 014 §4.2 處理)。若 dev 模式無此 env,fallback(v0.3 — 同步實作:code 實際 fallback 為 **`"unknown"`**,非 spec 舊寫的 `"dev"`;`src/lib/health/probes.ts:55-60`)
 - **多 instance shutdown 順序**:同時收到 SIGTERM 時各自 drain;若需要 leader-followed shutdown,需 coordination(本期無)
 - **依賴恢復後的「冷啟動」防護**:DB 剛恢復、connection pool 還沒 warm 時,readiness 一通過就湧入流量可能再次打掛;可加 warm-up step 或漸進開放(slow start)
 - **Async dependency**(例:訊息佇列、message bus)是否列入 readiness:目前無此依賴;若有,須區分「critical」與「optional」
@@ -469,4 +478,5 @@ startupProbe:
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
+| 0.3 | 2026-07-07 | **同步實作**:修正檔案路徑(gate=`src/lib/health/gate.ts`、drain=`src/server.ts:29-60`、routes=`src/lib/health/plugin.ts`;無 `src/routes/health/*` / `src/plugins/lifecycle.ts`);§4.1 記錄 `/health/live` 多帶未文件化 `build` 區塊(與 §14 極簡 / short SHA 有張力);§4.2 readiness **未**檢查啟動旗標、§4.3 startup **未**做 DB/Cache 首次連線檢查(皆標未實作 / 規劃中);§4.3 body 欄位 `elapsed_ms`→`elapsedMs`;§4.4 / §14.2 `version` 為完整 SHA 非 7 字元;§15 env fallback `"dev"`→`"unknown"`;§3 補 `/health/storage`;§9.1 drain grace 10s→2s(被 spec 014 §5.3 取代) |
 | 0.2 | 2026-06-16 | §4.4 `/health` 與 §4.5 `/health/db` / `/health/cache` 三個診斷端點落地(`src/lib/health/plugin.ts`);純 builder `buildOverallBody` / `buildComponentBody` 留在 `probes.ts` 並單測覆蓋;§14.2 原始錯誤訊息經 `categorizeProbeError` 抽成 `connection_timeout` / `connection_refused` / `dns_failure` / `auth_failed` / `unknown` 五種 bucket,絕不外洩 raw err / SQL / Redis key / connection string;`/health` 用同一 memoized 1s probe(共享 K8s readiness 緩存),`/health/db` `/health/cache` 故意 bypass cache(ops debug 要即時) |

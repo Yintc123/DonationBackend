@@ -1,11 +1,11 @@
-# Spec 021:Donation Order Data Model(Order header + OrderLine 線項 + 4 enum)
+# Spec 021:Donation Order Data Model(Order header + OrderLine 線項 + 5 enum)
 
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.8 |
-| 日期 | 2026-06-15 |
-| 適用範圍 | `backend/prisma/schema.prisma`(Order / OrderLine / 4 enum 新增)、`backend/prisma/migrations/<ts>_add_donation_orders/`(新)、`backend/src/domain/order/*`(新 directory)、`backend/src/lib/clock.ts`(新,§7.7 Clock 注入)|
+| 版本 | 0.9 |
+| 日期 | 2026-07-07 |
+| 適用範圍 | `backend/prisma/schema.prisma`(Order / OrderLine / 5 enum 新增)、`backend/prisma/migrations/<ts>_add_donation_orders/`(新)、`backend/src/domain/order/*`(新 directory)、`backend/src/lib/clock.ts`(新,§7.7 Clock 注入)|
 | 相關 ADR | 待補(預計 `docs/decisions/013-donation-order-model.md`)|
 | 相關 spec | `015-charity-data-model.md` v0.10、`022-donation-order-api.md`(本 spec 對應 API)、`005-error-handling.md`、ADR 006 lifecycle / cascading visibility |
 | 設計來源 | Figma 截圖補件 IMG_4885 / 4886 / 4887,2026-06-15 |
@@ -32,7 +32,7 @@
 
 ### 1.3 In scope
 
-- `Order`(header)+ `OrderLine`(線項)兩張表 + 4 個 enum
+- `Order`(header)+ `OrderLine`(線項)兩張表 + 5 個 enum
 - OrderLine 上的 polymorphic FK 設計(charityId / donationProjectId / saleItemId,nullable + subjectType discriminator)
 - 訂單狀態 state machine
 - Domain-level invariant
@@ -332,7 +332,7 @@ Prisma 反向 relation **純 client 端概念**,不產生 SQL 改動:
 
 ### 4.1 內容
 
-1. `CREATE TYPE OrderStatus / OrderSubjectType / DonationFrequency / BillingDay`(4 個)
+1. `CREATE TYPE OrderStatus / OrderSubjectType / DonationFrequency / BillingDay / ReceiptOption`(5 個,v0.9 — 同步:ReceiptOption 於 v0.5 加入,§3 已列)
 2. `CREATE TABLE orders` + FK + index
 3. `CREATE TABLE order_lines` + 4 FK + 5 index
 4. **Re-assert trgm GIN indexes**(spec 015 §4.2)— 沿用 spec 008 v0.4 / spec 020 patten 手寫 `CREATE INDEX IF NOT EXISTS`
@@ -350,7 +350,7 @@ Prisma 反向 relation **純 client 端概念**,不產生 SQL 改動:
    - 拿掉所有 DROP INDEX 的 trgm 行
    - 在尾段加 CREATE INDEX IF NOT EXISTS 的 trgm 12 行
 4. npx prisma migrate reset --skip-seed --force
-5. 驗證 psql 看 4 enum + 2 表 + 6 index + trgm 全 12 個都在
+5. 驗證 psql 看 5 enum + 2 表 + 7 index + trgm 全 12 個都在(v0.9 — 同步:enum 5 個、named index 7 個 = orders 2 + order_lines 5)
 ```
 
 ---
@@ -390,6 +390,7 @@ Prisma 反向 relation **純 client 端概念**,不產生 SQL 改動:
 | Index | 用途 |
 |---|---|
 | `Order.@@index([status, createdAt(sort: Desc), id(sort: Desc)])` | admin list `?status=X` 走 (createdAt DESC, id DESC) keyset cursor(spec 022 §4.7) |
+| `Order.@@index([nextChargeAt])` | 未來 cron「找出今日該扣款的 order」走此 index(本期 cron 不存在);v0.9 — 同步(§3 schema 正文早已有) |
 | `OrderLine.@@index([orderId])` | 反向取某 order 的所有 line |
 | `OrderLine.@@index([charityId])` | 「這間 charity 收到多少訂單」 |
 | `OrderLine.@@index([donationProjectId])` | 同上 project |
@@ -566,7 +567,7 @@ export async function createCharityDonation(
 
 `nextChargeAt` 在 `Order` 表上是**準 immutable**(僅 cron 服務有寫入權限,本期 cron 不存在故等同 immutable)。
 
-### 7.5 Lifecycle FK 對應 live
+### 7.8 Lifecycle FK 對應 live(v0.9 — 同步:原誤標 §7.5,與上方 receiptOption invariant 撞號;receiptOption 仍為 §7.5,對齊 code `validators.ts`)
 
 create 時驗對應 entity 通過 `whereLive` / `whereLiveWithParent`:
 
@@ -633,4 +634,5 @@ create 時驗對應 entity 通過 `whereLive` / `whereLiveWithParent`:
 | 0.5 | 2026-06-15 | 根據 IMG_4888/4889/4890「確認捐款資訊」頁補 3 個欄位 + 1 enum:(1) `isAnonymous Boolean @default(false)` — 三類訂單共用(IMG_4890「我要匿名捐款」checkbox);(2) `receiptOption ReceiptOption?` — CHARITY/PROJECT_DONATION 必填,SALE_ITEM 必為 null(§7.5 invariant);(3) `nextChargeAt DateTime?` — RECURRING 必有,backend 算 + 存(§7.7 計算邏輯)、加 `@@index([nextChargeAt])` 未來 cron 用;(4) `ReceiptOption` enum 5 值。§10 OQ +2(收據收件資訊、cart 混合單 receiptOption)。對應 spec 022 v0.5 同步 |
 | 0.6 | 2026-06-15 | §7.7 補 `nextChargeAt` 重算規約 — **只在 create 時算一次,任何 PATCH 都不重算**(confirm / cancel / admin PATCH 都不動;未來 cron 上線後由 cron 推進)。對應 spec 022 v0.6 同步補 response TypeBox 樣板 + inflated subject 欄位範圍 + 公開 GET anonymous 行為 |
 | 0.7 | 2026-06-15 | §7.7 補 **Clock 注入** — `computeNextChargeAt` 為純函式,service 層不可直接 `new Date()`,production 透過 Fastify decorator `app.clock()`,test 透過 `vi.useFakeTimers` / fixed `Date`,呼應 backend CLAUDE.md。對應 spec 022 v0.7 補:(1) request body TypeBox 一律 `additionalProperties: false`;(2) admin list inflate(與 detail 一致,Prisma 一次 `include` 避 N+1);(3) `isAnonymous` 缺值 service 層 fallback `false`(不靠 Ajv `useDefaults`);(4) SALE_ITEM 帶 `receiptOption` 由 schema 層擋 → `VALIDATION_FAILED`,**移除** `RECEIPT_OPTION_NOT_APPLICABLE` error code;(5) cancel endpoint 風險納入 §2.1 風險表 |
+| 0.9 | 2026-07-07 | 文件內部一致性 + code 同步(純文件,無 schema 改動):(1) enum 計數由「4」更正為「5」— ReceiptOption 於 v0.5 加入(§3 已列、`schema.prisma` 有 5 enum、§9.1 早已寫 5),連帶 title / §1.3 / 適用範圍 / §4.1 `CREATE TYPE` / §4.3 驗證步驟一併更正;§4.3 named index 計數 6 → 7(orders 的 `nextChargeAt` index);(2) §6 index 策略表補列 `Order.@@index([nextChargeAt])`(§3 schema 正文 + `schema.prisma:383` 早已有);(3) §7 章節編號修重複 — 原兩處都標 §7.5,後者「Lifecycle FK 對應 live」改為 §7.8(receiptOption invariant 仍為 §7.5,對齊 code `validators.ts` / `admin-services.ts` / `create-services.ts`)。對應 spec 022 v0.14 |
 | 0.8 | 2026-06-15 | §3 `isAnonymous` 註解釐清 — **Charity 捐款 (IMG_4888) / DonationProject 捐款 (IMG_4889) / SaleItem 購買 (IMG_4890) 三類訂單都掛「我要匿名捐款」checkbox**(原 v0.5 文字偏重 IMG_4890 易誤解為僅 SaleItem 可匿名)。code 自 v0.5 起 schema + Charity/Project/SaleItem body / service / admin list filter / admin PATCH 已全面支援(零 code 改動),本版純文件對齊。對應 spec 022 v0.9 |

@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.2 |
+| 版本 | 0.3 |
 | 日期 | 2026-06-15 |
 | 適用範圍 | `backend/vitest.workspace.ts`、`backend/tests/**`、`backend/src/**/*.test.ts` |
 | 相關 ADR | (無新 ADR;承 `backend/CLAUDE.md` 的 TDD 鐵則) |
@@ -61,23 +61,25 @@
 ```
 backend/
 ├── vitest.workspace.ts          # 多 project 設定(unit / integration / e2e)
-├── vitest.config.ts             # base config(被 workspace 各 project 繼承)
+│                                #   v0.3 — 同步實作:各 project 為 inline 定義,
+│                                #   無獨立 vitest.config.ts base config
 ├── tests/
 │   ├── helpers/
-│   │   ├── container.ts         # PostgreSQL / Redis testcontainers 啟動
+│   │   ├── container.ts         # PostgreSQL / Redis / LocalStack(S3)testcontainers 啟動
 │   │   ├── app.ts               # buildApp() 工廠,共用 plugin 註冊
-│   │   ├── db.ts                # truncate / migrate helper
-│   │   ├── factories/           # make<Entity>(overrides) 工廠
-│   │   └── msw.ts               # MSW server / handlers
+│   │   ├── db.ts                # v0.3 — 同步實作:目前為 reject stub;
+│   │   │                        #   真正 truncate 在 per-test-setup.ts
+│   │   └── msw.ts               # createGoogleMsw() 工廠(per-test,非全域 server)
 │   ├── integration/             # route + Prisma + Redis 真容器
 │   ├── e2e/                     # 多 route 串接、OAuth callback 用 MSW
-│   ├── setup/
-│   │   ├── global-setup.ts      # 整 suite 啟動 container、migrate
-│   │   └── per-test-setup.ts    # MSW reset、fake timer reset、truncate
-│   └── tsconfig.json            # 測試專用 tsconfig(放寬 noUnused* 等)
+│   └── setup/
+│       ├── global-setup.ts      # 整 suite 啟動 container、migrate(無 MSW server)
+│       └── per-test-setup.ts    # fake timer reset、FLUSHDB、truncate(寫死表清單)
 └── src/
     └── **/*.test.ts             # unit:與 source 同檔名 / 同目錄
 ```
+
+> **v0.3 — 同步實作**:上表原列而**目前不存在**的項目——`vitest.config.ts`(workspace 各 project inline 定義,不繼承 base)、`tests/helpers/factories/`(§7 工廠模式整體未實作)、`tests/tsconfig.json`(僅 root 有 `tsconfig.json` + `tsconfig.build.json`)。已補上實際存在的 LocalStack 容器(§5.1)。
 
 理由:
 
@@ -160,19 +162,20 @@ export default [
 vitest run --project=integration
         │
         ▼
-tests/setup/global-setup.ts
-  ├── new PostgreSqlContainer('postgres:16').start()       # ~2-5s
-  ├── new GenericContainer('redis:7-alpine')
-  │     .withExposedPorts(6379).start()                    # ~1-2s
-  ├── 注入 process.env:DB_HOST / DB_PORT / ... / REDIS_URL
-  ├── 由 §6 helper 組 DATABASE_URL → process.env.DATABASE_URL
-  ├── execSync('npx prisma migrate deploy')                # ~1-2s
+tests/setup/global-setup.ts  (v0.3 — 同步實作:透過 project.provide() 傳連線資訊,
+                              worker 端用 inject();非 process.env)
+  ├── startContainers()  → Postgres 16 + Redis 7 + LocalStack(S3)   # ~3-7s
+  ├── project.provide('TEST_DATABASE_URL' / 'TEST_REDIS_HOST' / ...
+  │                    'TEST_S3_ENDPOINT' / 'TEST_S3_BUCKET')
+  ├── execSync('npx prisma migrate deploy',
+  │            { env: { ...process.env, DATABASE_URL: postgres.connectionUri } })  # 顯式覆寫
   └── return teardown 函式
         │
         ▼ teardown(整 suite 結束)
-        ├── pgContainer.stop()
-        └── redisContainer.stop()
+        └── containers.stop()   (Postgres + Redis + LocalStack)
 ```
+
+> **v0.3 — 同步實作**:除 Postgres / Redis 外,`tests/helpers/container.ts` 亦啟動 **LocalStack**(S3,spec 018),`global-setup.ts:19,30-31` provide `TEST_S3_ENDPOINT` / `TEST_S3_BUCKET`。原本 spec 未記載此容器。
 
 ### 5.2 為什麼共用 container 而非 per-file
 
@@ -198,31 +201,29 @@ tests/setup/global-setup.ts
 
 ### 6.1 策略:Truncate(呼應 spec 003 §10.3)
 
-每個 test `beforeEach`:
+每個 test `beforeEach`(v0.3 — 同步實作:實作在 `tests/setup/per-test-setup.ts:43-67`,**用寫死表清單**而非動態查 `pg_tables`;`tests/helpers/db.ts` 目前是 reject stub,尚未接線):
 
 ```ts
-// tests/helpers/db.ts(草案)
-export async function truncateAll(prisma: PrismaClient) {
-  const tables = await prisma.$queryRaw<{ tablename: string }[]>`
-    SELECT tablename FROM pg_tables
-    WHERE schemaname = 'public' AND tablename != '_prisma_migrations'
-  `
-  if (tables.length === 0) return
-  const list = tables.map(t => `"${t.tablename}"`).join(', ')
-  await prisma.$executeRawUnsafe(
-    `TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`
-  )
-}
+// tests/setup/per-test-setup.ts(實際)— 寫死 FK-safe 順序,CASCADE 兜底
+const TRUNCATE_TABLES = [
+  'google_credentials', 'password_credentials', 'accounts',
+  'order_lines', 'orders',
+  'sale_items', 'donation_projects', 'charity_categories', 'charities', 'categories',
+]
+const list = TRUNCATE_TABLES.map((t) => `"${t}"`).join(', ')
+await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`)
 ```
 
-Redis:
+> **v0.3 — 同步實作**:原 §6.1 草案的 `tests/helpers/db.ts` 動態 `truncateAll(prisma)`(查 `pg_tables`)**未落地**——該檔目前 `Promise.reject('not implemented')`。真正 truncate 內嵌於 `per-test-setup.ts` 的 `beforeEach`,表清單寫死(新增 model 需手動補)。
+
+Redis(v0.3 — 同步實作:**單一 `flushdb()`**,非逐 tier `select` + `flushdb`;`per-test-setup.ts:47-58`):
 
 ```ts
-// 對應 spec 006 的 tier db 編號,逐一 FLUSHDB
-for (const db of REDIS_DB_NUMBERS) {
-  await redis.select(db)
-  await redis.flushdb()
-}
+// tests/setup/per-test-setup.ts(實際)
+const client = new Redis({ host, port, lazyConnect: true })
+await client.connect()
+await client.flushdb()   // 清當前 DB;測試容器單一 DB,不需逐 tier select
+await client.quit()
 ```
 
 ### 6.2 規則
@@ -329,17 +330,20 @@ export function makeFoo(
 
 ### 8.3 MSW 啟動
 
-```ts
-// tests/setup/global-setup.ts(草案,片段)
-import { setupServer } from 'msw/node'
-import { googleHandlers } from '../helpers/msw'
+> **v0.3 — 同步實作**:MSW **不**在 `global-setup.ts` 起全域 server(該檔只起容器 + migrate,無 `setupServer`)。改為**per-test 工廠** `createGoogleMsw()`(`tests/helpers/msw.ts:66`):每個需要 OAuth 的 integration test 自行 allocate 一組 RSA key + JWKS + handlers,並在 test 內 `setupServer(...setup.handlers).listen()`。`googleHandlers` 已 **deprecated 為空陣列**(`msw.ts:124`),保留只為舊 import 不炸。
 
-const mswServer = setupServer(...googleHandlers)
-mswServer.listen({ onUnhandledRequest: 'error' })  // unhandled = test bug
+```ts
+// 實際用法(tests/integration/*.test.ts 內)
+import { createGoogleMsw } from '../helpers/msw'
+
+const google = createGoogleMsw()
+const server = setupServer(...google.handlers)
+server.listen({ onUnhandledRequest: 'error' })  // unhandled = test bug
+google.enqueueTokenResponse(google.signIdToken({ sub, email, nonce, aud }))
 ```
 
 - `onUnhandledRequest: 'error'` 強制每個外呼都要有 handler,避免不小心打到真 Google API
-- `per-test-setup` 內 `mswServer.resetHandlers()` 清掉測試內 override
+- 各 test 自行 `server.resetHandlers()` / `close()`,per-test 隔離不共用全域 handler
 
 ---
 
@@ -432,4 +436,5 @@ CI 與 `tests/setup/global-setup.ts` 都需注入 spec 001 §4.3 必填項。`ci
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
+| 0.3 | 2026-07-07 | **同步實作**:§3 檔案結構移除不存在項(`vitest.config.ts`、`tests/helpers/factories/`、`tests/tsconfig.json`),補 LocalStack(S3)容器;§5.1 生命週期改為 `project.provide()` + inject()、啟動 Postgres/Redis/LocalStack;§6.1 truncate 實作在 `per-test-setup.ts` 用**寫死表清單**(`db.ts` 仍為 reject stub),Redis 為**單一 flushdb** 非逐 tier;§8.3 MSW 改 per-test `createGoogleMsw()` 工廠(非 global-setup 全域 server),`googleHandlers` 已 deprecated 空陣列 |
 | 0.2 | 2026-06-15 | §6.4 新增「Dev DB pointer 不可在 test 進程內留活路」規約 — `tests/helpers/app.ts` step 1 額外 `delete process.env.DATABASE_URL / DIRECT_URL`。理由:`src/config/schema.ts` 刻意把 `DATABASE_URL` 留在 schema 外(production 從 DB_* 組),於是 §5.1 的 SCRUB 漏掉它,vite `loadEnv` 自動載 `.env` 後 `process.env.DATABASE_URL` 殘留指向 dev DB。本版加 belt-and-suspenders 防漏,目前 code 已對齊(audit 表)|

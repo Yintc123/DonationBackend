@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.8 |
+| 版本 | 0.9 |
 | 日期 | 2026-06-14 |
 | 適用範圍 | `backend/src/routes/user/donation/charities.ts`、`backend/src/routes/user/donation/donation-projects.ts`、`backend/src/routes/user/donation/sale-items.ts`、`backend/src/schemas/donation-item/detail.ts` |
 | 相關 ADR | 同 spec 016(專案級 002 Fastify schema-driven、007 Prisma;backend 002 charity-category-model、**backend 004 i18n-storage-model**)+ **backend 006 lifecycle-fields-and-cascading-visibility**(v0.5 — detail endpoint 必須通過 `whereLive` 才回 200,否則 404 不洩漏 archived / deleted)|
@@ -52,7 +52,7 @@
 | ETag(2xx)| `"<sha256(id + updatedAt + charity.updatedAt for nested + locale)前 16 字元>"`;`If-None-Match` 命中回 304(**v0.3 加入 locale** 避免 zh/en 互蓋)。**v0.6 — 404 response 不簽發 ETag**(避免 archived row 重新發布後舊 304 卡掉新內容,§7 已有測試)|
 | **Accept-Language**(v0.3)| `zh-TW` / `en`;規則同 spec 016 §4.1.1;response 各 `name` / `description` / `content` 走 fallback `XxxEn ?? Xxx`;`Content-Language` 必有;`Vary: Accept-Language` 必有 |
 | **圖片 URL**(v0.4)| DB 存 `logoKey` / `coverImageKey`(S3 key,spec 015 v0.8);response 仍回 `logoUrl` / `coverImageUrl`(完整 URL),由 spec 018 `objectUrl(key)` 拼接。換 CDN / bucket → 改 env(`S3_PUBLIC_URL_BASE`)即可 |
-| **空欄位處理**(v0.6)| 可選欄位無值 → 回 `null`,**key 永遠存在**(對齊 spec 009 §4.4 v0.2、spec 016 v0.13)。`contactPhone` / `contactEmail` / `officialWebsite` / `approvalNo` / `logoUrl` / `coverImageUrl` / `raisingApprovalNo` / `reliefApprovalNo` 全採此規約 |
+| **空欄位處理**(v0.6;v0.9 措辭校準)| 可選欄位無值 → 回 `null`,**key 恆在、值可為 `null`**(對齊 spec 009 §4.4 v0.2、spec 016 v0.13)。`contactPhone` / `contactEmail` / `officialWebsite` / `approvalNo` / `logoUrl` / `coverImageUrl` / `raisingApprovalNo` / `reliefApprovalNo` 全採此規約。**v0.9 — 同步實作精確措辭**:`src/schemas/donation-item/detail.ts:28-31` 這些欄位在 schema 層為 `Type.Optional(Type.Union([String, Null]))` —— `Optional` 僅代表 schema **容許**欄位缺席,並非「key 可省略」;service(`detail-services.ts` mapping)**永遠賦值**(有值給 string、無值給 `null`),故對 client 而言 key 恆在,只是值可能為 `null`。「key 永遠存在」的觀察由 service 的賦值行為保證,而非 schema 的 `Optional` |
 | Rate-limit | 與 list endpoint **共用 bucket**(同 IP,所有 read endpoint);BFF 拓墣下的 key 規約見 spec 016 §10.1 v0.13 |
 | CORS | public(同 spec 016 §9)|
 
@@ -361,3 +361,4 @@ API 回傳 `name: string`,client 無法分辨「拿到的是 en 還是 fallback 
 | 0.6 | 2026-06-14 | 與實作對齊 + best practice 補強(對齊 spec 009 v0.2 / spec 016 v0.13):**(A 類 drift)** (1) §2 / §7 `VALIDATION_ERROR` → `VALIDATION_FAILED`(spec 005 §4.2 字典為命名權威,過去版本拼成 `_ERROR` 是 drift);(2) §2 / §3.2 / §4.2 / §5.2 / §7 可選欄位無值改為「回 `null`,key 永遠存在」 — 對齊 `src/schemas/donation-item/detail.ts` 既有 `Type.Union([String, Null])` schema 與 spec 009 v0.2;(3) §3.3 / §4.3 / §5.3 import 路徑 `@/domain/donation-item/where.js` → `@/domain/lifecycle/index.js`(對齊 code);(4) §4.3 / §5.3 改用 `whereLiveWithParent(now)` 單一 helper(語意等價於 `whereLive + charity: { is: whereLive(now) }`,可讀性與正確性都優於分開拼);(5) §3.3 `NotFoundError` 範例補上 `{ resource, id, code }` payload(對齊實作)。**(B 類 best practice)** (6) §2 新增 `Cache-Control(404): no-store`(B3) — cascading visibility 與 lifecycle window 會讓 404 ↔ 200 反覆切換,client / CDN 不可 cache 404;§7 補 1 條對應測試 |
 | 0.7 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |
 | 0.8 | 2026-06-16 | §1 適用範圍欄位更新:detail handler 從 `routes/v1/donation/{resource}/get-by-id.ts` 併入 list handler 同檔 `routes/user/donation/{resource}.ts`(spec 023 v0.2 §6.2 one-file-per-resource — list + detail 共用一個 resource file) |
+| 0.9 | 2026-07-07 | §2「空欄位處理」措辭校準(同步實作):可選欄位在 `src/schemas/donation-item/detail.ts:28-31` 為 `Type.Optional(Type.Union([String, Null]))`,`Optional` 僅代表 schema 容許欄位缺席;service(`detail-services.ts`)永遠賦值(有值 string / 無值 `null`),故 key 恆在、值可為 `null`。措辭從「key 永遠存在」精確化為「key 恆在、值可為 null,由 service 賦值行為保證而非 schema Optional」|
