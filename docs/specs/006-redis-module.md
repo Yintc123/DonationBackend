@@ -3,11 +3,11 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.1 |
+| 版本 | 0.2 |
 | 日期 | 2026-06-13 |
-| 適用範圍 | `backend/src/lib/cache`、`backend/src/plugins/redis.ts` |
+| 適用範圍 | `backend/src/lib/redis`(連線 / plugin / key 前綴)、`backend/src/lib/cache`(cache-aside helper,spec 019) |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`、`docs/decisions/004-auth-token-strategy.md`(refresh token 存 Redis + AOF) |
-| 相關 spec | `001-environment-config.md`(`REDIS_URL`)、`004-logger-module.md`、`005-error-handling.md` |
+| 相關 spec | `001-environment-config.md`(`REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`)、`004-logger-module.md`、`005-error-handling.md` |
 
 ---
 
@@ -64,10 +64,12 @@
 
 ## 3. 連線生命週期與 Plugin
 
-### 3.1 結構草案
+### 3.1 結構
+
+*(v0.2 — 同步實作:模組位於 `src/lib/redis/plugin.ts`,非 `src/plugins/redis.ts`;連線用離散 `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`,**無 `REDIS_URL`**——options 由 `buildRedisPluginOptions(config)` 產生,見 `src/lib/redis/options.ts`)*
 
 ```ts
-// src/plugins/redis.ts(草案)
+// src/lib/redis/plugin.ts
 import fp from 'fastify-plugin'
 import fastifyRedis from '@fastify/redis'
 
@@ -78,24 +80,22 @@ declare module 'fastify' {
   }
 }
 
-export default fp(async (fastify) => {
-  await fastify.register(fastifyRedis, {
-    url: fastify.config.REDIS_URL,
-    // 連線與重試設定見 §12
-    maxRetriesPerRequest: 3,
-    enableReadyCheck: true,
-    lazyConnect: false,
-    // TLS:由 URL scheme rediss:// 自動啟用,或在此明示
-  })
+export const redisPlugin = fp(async (app) => {
+  // buildRedisPluginOptions → { host, port, [password], maxRetriesPerRequest:3,
+  //   enableReadyCheck:true, lazyConnect:false, keyPrefix: 'jkod:' }
+  // password 只在非空時帶入(空字串會讓 ioredis 送 AUTH 空密碼被拒)。
+  await app.register(fastifyRedis, buildRedisPluginOptions(app.config))
 
   // 連線事件 → logger(module: 'cache')
-  const log = fastify.log.child({ module: 'cache' })
-  fastify.redis.on('ready',        () => log.info({ event: 'cache_connected' }, 'redis ready'))
-  fastify.redis.on('error',  (err) => log.error({ event: 'cache_error', err }, 'redis error'))
-  fastify.redis.on('close',        () => log.warn({ event: 'cache_disconnected' }, 'redis closed'))
-  fastify.redis.on('reconnecting', () => log.warn({ event: 'cache_reconnecting' }, 'redis reconnecting'))
+  const log = app.log.child({ module: 'cache' })
+  app.redis.on('ready',        () => log.info({ event: 'cache_connected' }, 'redis ready'))
+  app.redis.on('error',  (err) => log.error({ event: 'cache_error', err }, 'redis error'))
+  app.redis.on('close',        () => log.warn({ event: 'cache_disconnected' }, 'redis closed'))
+  app.redis.on('reconnecting', () => log.warn({ event: 'cache_reconnecting' }, 'redis reconnecting'))
 })
 ```
+
+> **離散參數 vs URL**:選離散 `{ host, port, password }` 而非 `REDIS_URL`,因為含 `@` / `:` / `/` 的密碼不需 percent-encoding,也不必維護一份合成的中間值(對比 Prisma CLI 需要的 `DATABASE_URL`)。`keyPrefix` 預設 `jkod:`(§4 `<app>` 前綴),test fixture 可覆寫(§14.3)。
 
 ### 3.2 規則
 
@@ -227,6 +227,8 @@ await fastify.redis.set(
 
 ## 8. 原子操作
 
+> **v0.2 — 部分實作 / 規劃中**:§8.3 所述的通用 Lua 目錄 `src/lib/cache/scripts/` **尚未建立**。目前唯一的 Lua 使用者是 rate-limit,script 放在 `src/lib/rate-limit/script.ts`(spec 010),非本節規約的集中位置。其餘 tier(lock / 通用 cache 原子組合)的 Lua 屬規劃中。
+
 ### 8.1 三種工具,使用優先序
 
 1. **Single command**:能用一個命令解決就用一個(`SET NX EX`、`INCR EX`、`HSETNX`)
@@ -255,7 +257,7 @@ await fastify.redis.set(
 
 ## 9. Cache 模式
 
-### 9.1 預設模式:Cache-aside(Lazy load)
+> **v0.2 — 同步實作**:cache-aside 已由 **spec 019** 落地為 `withCache()` / `invalidate()`(`src/lib/cache/with-cache.ts`),語義符合本節(讀 miss → loader → `SET EX`;寫入 `DEL` 不更新 key)。差異:實作採 **read-through helper**(非 §16 的 `remember`),且 cache 失敗一律**降級**(warn log + 退回 source-of-truth,不拋 5xx)。§9.3 stampede 防護仍**規劃中**(未主動啟用)。
 
 ```
 read:
@@ -335,6 +337,8 @@ ioredis 預設 `retryStrategy: (times) => Math.min(times * 200, 2000)`(指數退
 
 ### 11.2 錯誤映射(呼應 spec 005)
 
+> **v0.2 — 尚未實作 / 規劃中**:`src/lib/cache/errors.ts` / `mapRedisError` 與 `CACHE_UNAVAILABLE` / `CACHE_TIMEOUT` codes **均未落地**(對齊 spec 005 §7.3)。現況 cache 層走降級(§11.3),auth / rate / lock tier 的失敗處置由各自 spec(007/008/010)實作。下表為目標設計。
+
 | Redis 失敗 | 對應 AppError | HTTP |
 |---|---|---|
 | 連線失敗 / `MaxRetriesPerRequestError` | `ServiceUnavailableError` (`code: 'CACHE_UNAVAILABLE'`) | 503 |
@@ -344,6 +348,8 @@ ioredis 預設 `retryStrategy: (times) => Math.min(times * 200, 2000)`(指數退
 集中於 `src/lib/cache/errors.ts:mapRedisError`,errorHandler 不為 Redis 寫 if-else。
 
 ### 11.3 降級政策
+
+> **v0.2 — 部分實作**:只有 **Cache tier** 的降級已落地(`withCache` 讀寫失敗 → warn log + 直接打 SoT,route 仍正常回應)。`cache_degraded` / `cache_recovered` 的顯式降級狀態機(§11.4)**尚未實作**——目前每次失敗各自 warn(`cache_get_failed` / `cache_set_failed` / `cache_del_failed`),無集中降級旗標。Auth / Rate-limit / Lock / Job 的失敗關閉行為由各自 spec(007/008/010)實作。
 
 | Tier | Redis 不可用時的行為 |
 |---|---|
@@ -371,7 +377,9 @@ ioredis 預設 `retryStrategy: (times) => Math.min(times * 200, 2000)`(指數退
 
 ### 12.2 TLS
 
-- **prod / stage 必走 TLS**(`rediss://` scheme 或 ioredis `tls` 選項)
+> **v0.2 — 尚未實作 / 規劃中**:`buildRedisPluginOptions`(`src/lib/redis/options.ts`)目前**不帶 `tls` 選項**,且無 `rediss://`(已改離散參數,見 §3.1)。prod / stage 的 TLS 需在 options mapper 補 `tls: { ca, ... }` 後才生效。
+
+- **prod / stage 必走 TLS**(ioredis `tls` 選項;因採離散參數,不用 `rediss://` scheme)
 - dev 可不開,但本機若連雲端 Redis 則須開
 - 自簽憑證需在 `tls.ca` 指定;不允許 `rejectUnauthorized: false`
 
@@ -461,6 +469,8 @@ ioredis 預設 `retryStrategy: (times) => Math.min(times * 200, 2000)`(指數退
 
 ## 16. 公開 API(草案)
 
+> **v0.2 — 尚未實作 / 規劃中**:下方 `CacheTierApi` / `LockApi` / `RateLimitApi` **均未落地**。現況:`src/lib/redis/index.ts` 只 export `redisPlugin` + key helpers(`buildKey` 等);`src/lib/cache/index.ts`(spec 019)export `withCache` / `invalidate` / `buildCacheKey`(read-through,非 `remember`);rate-limit 由 spec 010 的 `src/lib/rate-limit/` 自行實作(非 `RateLimitApi`);lock 尚無實作。下方為目標介面。
+
 `src/lib/cache/index.ts` 對外只 export 受規約包裝的 helper,業務不直接拿 raw client:
 
 ```ts
@@ -504,3 +514,4 @@ export interface RateLimitApi {
 | 版本 | 日期 | 變更 |
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
+| 0.2 | 2026-06-13 | **同步實作**:全 spec 模組路徑更正——連線 / plugin 在 `src/lib/redis/`(`plugin.ts` / `options.ts` / `key-prefix.ts`),非 `src/plugins/redis.ts`;cache-aside helper 在 `src/lib/cache/`(spec 019)。env 由 `REDIS_URL` 更正為離散 `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`(§3.1 code 改用 `buildRedisPluginOptions`)。標註尚未實作 / 規劃中:§16 公開 API(`CacheTierApi` / `LockApi` / `RateLimitApi`)、§8.3 通用 Lua 目錄(rate-limit 的 Lua 另在 `src/lib/rate-limit/script.ts`)、§11.2 `mapRedisError` + `CACHE_*` codes、§11.3 顯式降級狀態機(僅 cache tier 降級落地)、§12.2 TLS。§9 cache-aside 標註已由 spec 019 `withCache` 落地(read-through + 降級) |

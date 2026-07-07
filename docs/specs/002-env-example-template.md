@@ -3,8 +3,8 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.4 |
-| 日期 | 2026-06-16 |
+| 版本 | 0.5 |
+| 日期 | 2026-07-07 |
 | 適用範圍 | `backend/.env.example` |
 | 相關 spec | `001-environment-config.md`(v0.4) |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`、`docs/decisions/003-database-postgresql.md`、`docs/decisions/004-auth-token-strategy.md` |
@@ -196,14 +196,15 @@ HSTS_MAX_AGE_SEC=31536000
 HSTS_INCLUDE_SUBDOMAINS=true
 HSTS_PRELOAD=false
 
-# === S3 Storage (spec 018, v0.4) ===
+# === S3 Storage (spec 018, v0.5) ===
 #
-# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY must be BOTH empty
-# (dev uses local AWS profile / LocalStack) or BOTH non-empty
-# (staging/prod inject via secret manager). post-validate.ts
-# fails fast if exactly one is set.
+# S3_BUCKET / S3_REGION are required; the backend fails fast on boot
+# if either is empty. In prod (ECS Fargate, ADR 008) auth is handled
+# by the task role — do NOT set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+# there (post-validate.ts throws if either is non-empty in non-dev).
+# Dev may use LocalStack test keys; set both together or leave both empty.
 
-S3_BUCKET=jkodonation-dev
+S3_BUCKET="local-dev-assets"
 S3_REGION=ap-northeast-1
 # Empty = real AWS. Use http://localhost:4566 for LocalStack,
 # or the R2/MinIO endpoint URL for those backends.
@@ -215,8 +216,9 @@ S3_PUBLIC_URL_BASE=
 S3_PRESIGN_TTL_SECONDS=300
 S3_MAX_UPLOAD_BYTES=5242880
 
-AWS_ACCESS_KEY_ID=
-AWS_SECRET_ACCESS_KEY=
+# In prod LEAVE THESE EMPTY (the ECS task role provides credentials).
+AWS_ACCESS_KEY_ID=""
+AWS_SECRET_ACCESS_KEY=""
 ```
 
 > 此草案經 review 通過後,作為實作目標。
@@ -259,14 +261,14 @@ PR review 時,reviewer 須確認:
 ### 5.1 目前(人工)
 
 - code review 時人工比對 `.env.example` 與 spec 001
-- 啟動服務時 `@fastify/env` schema 驗證會抓出 `.env` 缺漏,但**不會**檢查 `.env.example` 本身是否完整
+- 啟動服務時自寫 loader(`src/config/load.ts` 的 Ajv + TypeBox schema)驗證會抓出 `.env` 缺漏,但**不會**檢查 `.env.example` 本身是否完整(v0.5 — 同步實作)
 
 ### 5.2 未來(可選自動化)
 
 - **`dotenv-linter`**:靜態檢查 key 命名、重複、空值
-- **unit test**:讀 `.env.example`,parse 出 keys,比對 `@fastify/env` schema 的 `required` 與 `properties`,缺漏即 fail
+- **unit test**:讀 `.env.example`,parse 出 keys,比對 loader 的 TypeBox schema(`ConfigSchema`)欄位,缺漏即 fail(v0.5 — 同步實作)
   - 屬於本專案 TDD 精神的「設定面測試」
-  - 待 spec 001 §4 的 schema 落地後再寫
+  - spec 001 §4 的 schema 已落地(`src/config/schema.ts`),可著手
 
 兩者皆屬 nice-to-have,不阻擋本 spec 通過。
 
@@ -298,3 +300,4 @@ PR review 時,reviewer 須確認:
 | 0.2 | 2026-06-13 | 同步 spec 001 v0.2:Database 區塊改為 `DB_*` 9 個拆分參數 + dotenv-expand 衍生 `DATABASE_URL`;備註特殊字元 percent-encoding 規則 |
 | 0.3 | 2026-06-13 | 同步 spec 001 v0.3:JWT 拆 access + refresh(ADR 004);新增 OIDC discovery;新增 Password / Login lock 區塊(Argon2);新增 Rate Limit 區塊(`RATE_LIMIT_TRUSTED_PROXIES` 提醒 prod 必填);CORS 擴充 HSTS;§3.1 反映當前實際 `.env.example` 狀態(commit `caa7b3d`);§3.2 改為「差距對照」表;§3.3 草案完整重寫 |
 | 0.4 | 2026-06-16 | 同步 spec 001 v0.4:Redis 拆 `REDIS_URL` → `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`;Rate Limit 新增 `RATE_LIMIT_DISABLED` kill switch;新增 S3 Storage 區塊(`S3_BUCKET` / `S3_REGION` / `S3_ENDPOINT` / `S3_FORCE_PATH_STYLE` / `S3_PUBLIC_URL_BASE` / `S3_PRESIGN_TTL_SECONDS` / `S3_MAX_UPLOAD_BYTES` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`);`DATABASE_URL` 維持 dotenv-expand 衍生供 Prisma CLI(app 不再讀,見 spec 001 v0.4 §3.2.2) |
+| 0.5 | 2026-07-07 | 同步實作 `.env.example`:§3.3 草案 S3 區塊 AWS 註解由「prod BOTH non-empty via secret manager」更正為「prod **LEAVE EMPTY**,ECS task role 提供憑證」(對齊 `.env.example` 與 `post-validate.ts`);`S3_BUCKET` 預設 `jkodonation-dev` → `local-dev-assets`;AWS keys 以 `""` 呈現;§5 驗證策略的 `@fastify/env` 更正為自寫 loader(Ajv + TypeBox `ConfigSchema`)|

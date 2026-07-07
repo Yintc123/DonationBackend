@@ -16,12 +16,15 @@ cd ../infra && cp .env.example .env  # 填密碼;或直接用 example 的預設
 docker compose up -d
 
 # 2. 設定 backend env
-cd ../backend && cp .env.example .env  # 直接用預設值即可跑起來
+cd ../backend && cp .env.example .env
+#    本機開發務必把 S3_ENDPOINT 指向 LocalStack,否則 seed 會打向真實 AWS:
+#      S3_ENDPOINT="http://localhost:4566"   (.env 內取消該行註解)
+#    其餘變數用 .env.example 預設值即可
 
 # 3. LocalStack S3 bucket bootstrap(idempotent — 重跑沒事)
 ./scripts/bootstrap-localstack.sh
 
-# 4. 套 migration + seed(16 cat + 23 charity + 39 project + 39 sale + 圖)
+# 4. 套 migration + seed(16 分類 + 30+ 公益團體,每團體多個募款專案 / 義賣商品 + 圖)
 npm install
 npm run prisma:migrate:dev   # 套 5 個 donation domain table + pg_trgm
 npm run prisma:seed          # 寫資料 + 上傳 placeholder 圖到 LocalStack
@@ -38,26 +41,26 @@ curl http://localhost:3001/health/live      | jq    # liveness
 curl http://localhost:3001/health/ready     | jq    # readiness(含 DB + Redis 探針)
 curl http://localhost:3001/health/storage   | jq    # S3 探針
 
-# 三個 tab 的列表(對應 Figma)
-curl 'http://localhost:3001/v1/donation/charities?limit=3'        | jq
-curl 'http://localhost:3001/v1/donation/donation-projects?limit=3'| jq
-curl 'http://localhost:3001/v1/donation/sale-items?limit=3'       | jq
+# 三個 tab 的列表(對應 Figma)。user-facing API 前綴為 /user/v{N}(spec 023)
+curl 'http://localhost:3001/user/v1/donation/charities?limit=3'        | jq
+curl 'http://localhost:3001/user/v1/donation/donation-projects?limit=3'| jq
+curl 'http://localhost:3001/user/v1/donation/sale-items?limit=3'       | jq
 
 # 中文搜尋
-curl 'http://localhost:3001/v1/donation/charities?q=流浪動物' | jq '.items[].name'
+curl 'http://localhost:3001/user/v1/donation/charities?q=流浪動物' | jq '.items[].name'
 
 # 英文搜尋 + locale 切換
 curl -H 'Accept-Language: en' \
-     'http://localhost:3001/v1/donation/charities?q=stray' | jq '.items[].name'
+     'http://localhost:3001/user/v1/donation/charities?q=stray' | jq '.items[].name'
 
 # Category 字典
-curl http://localhost:3001/v1/donation/categories | jq '.items | length'   # 16
+curl http://localhost:3001/user/v1/donation/categories | jq '.items | length'   # 16
 
 # 分類 filter(子表繼承)
-curl 'http://localhost:3001/v1/donation/donation-projects?category=animal_protection' | jq
+curl 'http://localhost:3001/user/v1/donation/donation-projects?category=animal_protection' | jq
 
 # Detail(用上面拿到的 id)
-curl http://localhost:3001/v1/donation/charities/<uuid> | jq
+curl http://localhost:3001/user/v1/donation/charities/<uuid> | jq
 ```
 
 ---
@@ -101,13 +104,16 @@ src/
 ├── schemas/       ← TypeBox shapes(query / response 的 wire 型別)
 ├── domain/        ← 業務規則 + Prisma I/O(不知道 HTTP)
 │   ├── lifecycle/      whereLive / whereLiveWithParent helpers(ADR 006)
-│   ├── donation-item/  Charity / Project / SaleItem 的 list / detail 服務
+│   ├── donation-item/  Charity / Project / SaleItem 的 list / detail / write 服務
+│   ├── order/          捐款訂單 domain(建立 / 查詢 / 狀態機 + §7 invariant,spec 021/022)
 │   ├── category/       Category 字典
 │   └── uploads/        Upload presign 的 entity 存在檢查
+├── services/      ← 讀取快取層(cached-* 包在 domain 讀取外,spec 019)
 ├── lib/           ← 跨 feature infra(不知道 entity)
 │   ├── s3/             AWS SDK + presigned URL + objectUrl
 │   ├── i18n/           Accept-Language 解析 + locale fallback
 │   ├── cursor/         3-segment opaque pagination cursor
+│   ├── cache/          donation 快取失效枚舉(withCache / invalidate)
 │   ├── prisma/         PrismaClient 生命週期 plugin
 │   ├── redis/          ioredis + 分區 key prefix
 │   ├── errors/         AppError + RFC 7807 errorHandler + Prisma 錯誤映射
@@ -116,8 +122,10 @@ src/
 │   ├── auth/           JWT 簽 / 驗 + password
 │   ├── auth-google/    OAuth2 + OIDC + PKCE
 │   ├── logger/         pino + child logger + redaction
-│   ├── http/           reply decorators + 分頁 envelope
+│   ├── http/           reply decorators + 分頁 envelope + API 版本
+│   ├── openapi/        OpenAPI 文件產生
 │   ├── db/             discrete DB_* → DATABASE_URL composer
+│   ├── clock.ts        可注入 clock seam(測試決定性)
 │   └── security/       helmet + cors
 ├── config/        ← env 解析(spec 001)+ post-validate cross-field 守門
 ├── app.ts         ← Fastify 組裝(plugin 註冊順序)
@@ -130,20 +138,29 @@ src/
 
 對應 [Figma](https://www.figma.com/design/0kx2Ne2rvndhfVr3uVUwad/)《所有捐款項目》三個 tab。
 
-### Donation public(spec 016 / spec 017)
+> API surface 分三塊(spec 023):`/user/v{N}/*` 公開讀取、`/cms/*` admin 寫入(過 `requireAdmin`)、`/auth/*` 認證(不版本化)。目前 user 版本為 `v1`。
+
+### Donation public — `/user/v1`(spec 016 / spec 017)
 
 | Method | Path | 用途 |
 |---|---|---|
-| GET | `/v1/donation/charities` | 公益團體列表(`?q=` `?category=` `?cursor=` `?limit=`)|
-| GET | `/v1/donation/charities/:id` | 公益團體詳情 |
-| GET | `/v1/donation/donation-projects` | 捐款專案列表(同上 +`?charityId=`)|
-| GET | `/v1/donation/donation-projects/:id` | 捐款專案詳情 |
-| GET | `/v1/donation/sale-items` | 義賣商品列表 |
-| GET | `/v1/donation/sale-items/:id` | 義賣商品詳情 |
-| GET | `/v1/donation/categories` | 分類字典(16 筆,public cache 5min) |
-| GET | `/v1/donation/uploads/presign` | S3 pre-signed PUT URL(admin 寫入用,本作業 brief out of scope) |
+| GET | `/user/v1/donation/charities` | 公益團體列表(`?q=` `?category=` `?cursor=` `?limit=`)|
+| GET | `/user/v1/donation/charities/:id` | 公益團體詳情 |
+| GET | `/user/v1/donation/donation-projects` | 捐款專案列表(同上 +`?charityId=`)|
+| GET | `/user/v1/donation/donation-projects/:id` | 捐款專案詳情 |
+| GET | `/user/v1/donation/sale-items` | 義賣商品列表 |
+| GET | `/user/v1/donation/sale-items/:id` | 義賣商品詳情 |
+| GET | `/user/v1/donation/categories` | 分類字典(16 筆,public cache 5min) |
 
-**特性**:
+### CMS admin — `/cms`(需 admin JWT,spec 018 / 020 / 022)
+
+| Method | Path | 用途 |
+|---|---|---|
+| POST | `/cms/uploads/presign` | S3 pre-signed PUT URL(admin 寫入用)|
+
+> 註:CMS 另有 charity / project / sale-item / category 的寫入端點與 `/cms/orders` 訂單管理(spec 020 / 022),完整清單見各 spec。
+
+**公開讀取特性**:
 - Cursor 分頁(3-segment opaque token)+ `hasMore` flag
 - `Accept-Language: zh-TW / en`(預設 zh-TW;英文缺翻譯時 fallback;`Vary: Accept-Language`)
 - Lifecycle filter + cascading visibility(Charity 合約過期 → 子表自動消失;續約自動恢復)
@@ -157,8 +174,8 @@ src/
 | POST | `/auth/login` | email+password 登入 |
 | POST | `/auth/password/change` | 改密碼(需 access JWT) |
 | POST | `/auth/password/set` | OAuth 用戶加密碼 |
-| GET | `/auth/google/authorize` | 啟動 Google OIDC flow |
-| POST | `/auth/google/token` | OAuth code → JWT(BFF 呼叫) |
+| POST | `/auth/google/authorize-init` | 啟動 Google OIDC flow(產 state / nonce / PKCE) |
+| POST | `/auth/google/exchange` | OAuth code → JWT(BFF 呼叫) |
 
 ### Health(spec 011)
 
@@ -185,7 +202,7 @@ src/
 ## 測試
 
 ```bash
-npm test                  # 整套(unit + integration + e2e),559 tests
+npm test                  # 整套(unit + integration + e2e),88 個測試檔
 npm run test:unit         # 純函式單元測試
 npm run test:integration  # 真實 testcontainer(PostgreSQL + Redis + LocalStack)
 npm run test:e2e          # full HTTP flow

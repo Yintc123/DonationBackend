@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.3 |
+| 版本 | 0.4 |
 | 日期 | 2026-06-15 |
 | 適用範圍 | `backend/src/lib/cache/`、`backend/src/services/cached-*/`(新)、`backend/src/routes/v1/donation/**/*.ts`(改) |
 | 相關 ADR | `docs/decisions/011-cache-strategy.md`(adapter 層 + cache-aside + 熱門白名單 + TTL 表 + stampede 暫不啟用 + 失效 API 預留)|
@@ -283,9 +283,11 @@ spec 006 §9.2 明禁。`getCharityById` 找不到 → throw `NOT_FOUND` → hel
 
 ## 8. 失效策略
 
-### 8.1 現階段:純 TTL 兜底
+### 8.1 現階段:TTL 兜底 + 寫入即時失效(v0.4 — 已實作)
 
-本作業目前**無** admin 寫入路由;cache invalidation 完全依賴 TTL 自然過期。最壞延遲為 §5.1 的 TTL 值。
+> **v0.4 — 同步實作**:原文寫「純 TTL 兜底、僅預留 invalidation API」已過時。spec 020 admin 寫入路由落地後,失效**已完整實作**於 `src/lib/cache/invalidate-donation.ts`:每次 admin write(create / update / 4 個 lifecycle action)呼叫 `invalidateDonationEntity()`,由純函式 `donationCacheKeysFor()`(`invalidate-donation.ts:66-166`)**枚舉**該筆寫入影響的所有 cache key,再以單一 Redis pipeline `DEL`(無 SCAN,對齊 spec 006 §4.3)。枚舉來源即 §8.3 的 cascading 表(規約權威在 spec 020 §8.1)。失效失敗只 log warn 不 throw(spec 019 §9.1),cache 服務 stale 至 TTL。
+
+TTL 仍是最終兜底:未接寫入路徑的 key(如 category 寫入對每筆 detail 的 cascade)靠 §5.1 的 TTL 自然過期。
 
 ### 8.2 helper 預留 invalidation API
 
@@ -302,14 +304,16 @@ export async function invalidate(
 - `DEL key`;拋錯 → log warn,**不** throw(失效失敗不阻擋寫入路徑)
 - **嚴禁** `SET 新值`(spec 006 §9.2)
 
-### 8.3 未來 admin 寫入接點(本 spec 不實作,規範形狀)
+### 8.3 admin 寫入接點(v0.4 — 已實作於 `invalidate-donation.ts`)
+
+失效枚舉的實作權威在 spec 020 §8.1,由 `donationCacheKeysFor()`(`src/lib/cache/invalidate-donation.ts:66-166`)產出。形狀:
 
 | 寫入操作 | 應失效的 key |
 |---|---|
-| `PATCH /admin/charities/:id` | `cache:char:detail:v1:{id}:zh-TW` + `:en`;以及所有 `cache:char:list:v1:*` 與 `cache:proj:list:v1:*`(因 cascading visibility) |
-| `PATCH /admin/donation-projects/:id` | `cache:proj:detail:v1:{id}:{*}`;以及 `cache:proj:list:v1:*` |
-| `PATCH /admin/sale-items/:id` | 同上邏輯 |
-| `PATCH /admin/categories/:id` | `cache:cat:list:v1:zh-TW` + `:en` |
+| Charity write（`/cms` create / update / lifecycle）| `cache:char:detail:v1:{id}:{zh-TW,en}`;所有 `cache:char:list:v1:{categoryOrAll}:{locale}`;以及 cascading 的 `cache:proj:list:v1:*` **與 `cache:sale:list:v1:*`**(scope 為 `{id, ALL}` × 每個 category × locale)—— v0.4 補上 sale list(`invalidate-donation.ts:86-93` charity 分支同時枚舉 proj + sale list,因 cascading visibility 讓 charity lifecycle 變動同時影響旗下 project **與** sale-item 的列表可見性) |
+| Project write | `cache:proj:detail:v1:{id}:{zh-TW,en}`;以及 `cache:proj:list:v1:*`（scope `{parentCharityId, ALL}`）|
+| SaleItem write | `cache:sale:detail:v1:{id}:{zh-TW,en}`;以及 `cache:sale:list:v1:*`（同上邏輯）|
+| Category write | `cache:cat:list:v1:{zh-TW,en}`；每筆 detail 的 cascade 因量體過大留給 TTL（`invalidate-donation.ts:129-141`）|
 
 > list cache 「所有 pattern」失效**不**用 SCAN / KEYS;改為**白名單枚舉 DEL**(因為 §4.2 白名單組合數固定),或直接 schema bump。
 
@@ -445,3 +449,4 @@ spec 006 §9.3 列出三種防護(request coalescing / probabilistic early refre
 | 0.1 | 2026-06-15 | 初版 |
 | 0.2 | 2026-06-15 | §7.3 — `parseWithDates` 改名 `parseJson`(名稱誤導,實際不 reify Date);與 `src/lib/cache/json.ts` 實作對齊;補上 `withCache` deserialize 預設值的名稱對齊 |
 | 0.3 | 2026-06-16 | §1 加 spec 023 §2 URL prefix cross-ref(public read → `/user/v{N}`、admin write → `/cms`、auth → `/auth`);本 spec endpoint path 列為 surface 內相對路徑,實際 client URL 由 surface prefix 拼成。完整 URL mapping 表見 spec 023 §2.4。對應 backend code/test 已 cutover 至新結構 |
+| 0.4 | 2026-07-07 | 與實作同步(不改 code):(1) §8.1 標題 / 內文更新 —— 原「純 TTL 兜底、僅預留 invalidation API」已過時,spec 020 寫入路由落地後失效已完整實作於 `src/lib/cache/invalidate-donation.ts`(`donationCacheKeysFor()` 枚舉 + pipeline `DEL`,無 SCAN),加 cross-ref;(2) §8.3 標題改「已實作」,Charity write cascading 補上 `cache:sale:list:v1:*`(`invalidate-donation.ts:86-93` charity 分支同時枚舉 proj + sale list,cascading visibility 同時影響旗下 project 與 sale-item 列表可見性)|

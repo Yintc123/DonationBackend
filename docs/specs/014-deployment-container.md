@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.1 |
+| 版本 | 0.2 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/Dockerfile`、`backend/.dockerignore`、部署平台 runtime 設定、build pipeline |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`(Fastify)、`docs/decisions/004-auth-token-strategy.md`(Redis AOF) |
@@ -109,6 +109,13 @@ EXPOSE 3001
 CMD ["node", "dist/server.js"]
 ```
 
+> **v0.2 — 同步實作**:實際 `backend/Dockerfile` 的 stage 命名 / 結構與上方草案不同(草案為 `deps → build → runtime` 三段流水線;實作為 **`build → deps-prod → runtime`**):
+>
+> - **`build`**:full deps + `apk add openssl` + `prisma generate` + `npm run build`
+> - **`deps-prod`**:`npm ci --omit=dev`(不重跑 `prisma generate`;runtime 改由 `COPY --from=build /app/node_modules/.prisma` 還原被 `--omit=dev` 抹掉的 client artifacts)
+> - **`runtime`**:`COPY` package.json + prisma + `deps-prod` 的 node_modules + build 的 `.prisma` + `dist/`,並**額外 `COPY --from=build /app/src ./src`**——`prisma db seed`(一次性 ECS task,ADR 010)以 `tsx` 跑 `prisma/seed.ts`、其 import 解析到 `/app/src/*.js`,故 source tree 需隨 `dist/` 一起 ship(應用本身 `node dist/server.js` 不觸及 `/app/src`)
+> - 三個 stage 皆顯式 `RUN apk add --no-cache openssl`(見 §3.2 備註)
+
 ### 3.2 為何 alpine
 
 | 角度 | alpine | distroless | slim(debian) |
@@ -116,7 +123,7 @@ CMD ["node", "dist/server.js"]
 | Image size | ~50MB | ~80MB | ~120MB |
 | Debug 友善 | ✅ `sh` / `apk add` | ❌ 無 shell | ✅ |
 | libc | musl(部分 native module 雷區) | glibc | glibc |
-| Prisma engine | 已內建必要 binary;`openssl` 在 node:20-alpine 已備 | 開箱即用 | 開箱即用 |
+| Prisma engine | 已內建必要 binary(v0.2 — 同步實作:`openssl` **並非開箱可用**,Dockerfile 三個 stage 皆顯式 `RUN apk add --no-cache openssl`,否則 `prisma generate` libssl 偵測失敗、runtime `migrate` 會嘗試下載引擎並在非 root `node` user 下失敗)| 開箱即用 | 開箱即用 |
 
 選 **alpine** 主因:size + debug 友善;Prisma 在 alpine 的 native binary 已穩定。若未來引入需要 glibc 的 native module(`canvas` / `sharp` 等),改 `node:20-slim`。
 
@@ -193,19 +200,21 @@ T=2s     Wait readiness grace period(讓 LB 從 pool 移除)
          │       ├─ prisma.$disconnect()
          │       └─ redis.quit()
          │
-         │  └─ in-flight 超過 SHUTDOWN_DRAIN_TIMEOUT 強制中止
+         │  └─ 守備計時器:force-exit 28s(FORCE_EXIT_MS,寫死常數)
          │
          ▼
-T≤30s    process.exit(0)
+T≤28s    process.exit(0)
 ```
+
+> **v0.2 — 同步實作**:`src/server.ts:19-20` 用**寫死常數** `SHUTDOWN_DRAIN_GRACE_MS = 2_000` + `FORCE_EXIT_MS = 28_000`,**非** env。§5.2 舊圖引用的 `SHUTDOWN_DRAIN_TIMEOUT` 環境變數**不存在**。實際序列:翻 readiness gate → 等 2s drain grace → `app.close()`(內含 onClose disconnect/quit)→ 成功則 `exit(0)`;另有 28s force-exit `.unref()` 守備(`server.ts:53-56`)。
 
 ### 5.3 Timeout 設定
 
 | 名稱 | 預設 | 範圍 / 規則 |
 |---|---|---|
-| Readiness drain grace | 2s | 1-5s,需大於 LB probe interval |
-| Fastify in-flight timeout | 25s | 須小於 K8s `terminationGracePeriodSeconds`(預設 30s) |
-| Force exit | 28s | 比 fastify timeout 多 3s 緩衝 |
+| Readiness drain grace | 2s | 1-5s,需大於 LB probe interval(`server.ts:19` `SHUTDOWN_DRAIN_GRACE_MS`,寫死常數) |
+| Fastify in-flight timeout | 25s(**未實作**) | v0.2 — 同步實作:`app.close()` **未**設 in-flight 上限,靠下方 28s force-exit 兜底;若要精確 25s 需另接 `closeGracefulTimeout` / 自訂計時器 |
+| Force exit | 28s | `server.ts:20` `FORCE_EXIT_MS`(寫死),`setTimeout(...).unref()` 守備;比 K8s grace(30s)少 2s 緩衝 |
 | K8s `terminationGracePeriodSeconds` | 30s | 由 deployment manifest 設定 |
 
 ### 5.4 實作位置
@@ -350,4 +359,5 @@ Prisma 預設連線數 = `num_physical_cpus * 2 + 1`。在 K8s 內**容器看到
 
 | 版本 | 日期 | 變更 |
 |---|---|---|
+| 0.2 | 2026-07-07 | **同步實作**:§5.3「Fastify in-flight timeout 25s」標**未實作**(`app.close()` 無 in-flight 上限,靠 28s force-exit 兜底);§5.2 移除不存在的 `SHUTDOWN_DRAIN_TIMEOUT` env,改記寫死常數 `SHUTDOWN_DRAIN_GRACE_MS=2s` / `FORCE_EXIT_MS=28s`(`src/server.ts:19-20`);§3.2 更正 `openssl` **非**開箱可用、三 stage 皆 `apk add openssl`;§3.1 補實際 Dockerfile stage 結構(`build → deps-prod → runtime` + runtime `COPY src/` 供 seed)|
 | 0.1 | 2026-06-13 | 初版 |

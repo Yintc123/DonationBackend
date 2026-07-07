@@ -3,9 +3,9 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.2 |
+| 版本 | 0.3 |
 | 日期 | 2026-06-13 |
-| 適用範圍 | `backend/src/lib/db`、`backend/prisma/` |
+| 適用範圍 | `backend/src/lib/prisma`、`backend/src/lib/db`、`backend/prisma/` |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`(Fastify)、`docs/decisions/003-database-postgresql.md`(PostgreSQL) |
 | 相關 spec | `001-environment-config.md`(`DATABASE_URL`)、`005-error-handling.md`(交易 throw 後的 rollback 行為) |
 
@@ -43,6 +43,8 @@
 
 ## 3. 檔案結構與位置
 
+*(v0.3 — 同步實作:模組落在 `src/lib/prisma/`,無 `src/plugins/` 目錄;`client.ts` 未存在,PrismaClient 由 plugin 直接建立;error mapper 移到 `src/lib/errors/prisma.ts`,由 spec 005 擁有)*
+
 ```
 backend/
 ├── prisma/
@@ -50,19 +52,22 @@ backend/
 │   ├── migrations/            # 版控
 │   └── seed.ts                # dev seed(可選)
 └── src/
-    ├── lib/
-    │   └── db/
-    │       ├── client.ts      # PrismaClient instance / 工廠
-    │       ├── errors.ts      # Prisma error → AppError 映射
-    │       └── index.ts       # 對外 re-export
-    └── plugins/
-        └── prisma.ts          # Fastify plugin,注入 fastify.prisma
+    └── lib/
+        ├── prisma/
+        │   ├── plugin.ts      # Fastify plugin,注入 fastify.prisma(eager $connect / onClose $disconnect)
+        │   ├── options.ts     # buildPrismaClientOptions(config) → { datasourceUrl }
+        │   └── index.ts       # 對外 re-export(prismaPlugin、buildPrismaClientOptions)
+        ├── db/
+        │   └── compose-database-url.ts  # 由離散 DB_* 組出 datasourceUrl(spec 001 §3.2)
+        └── errors/
+            └── prisma.ts      # Prisma error → AppError 映射(mapPrismaError;由 spec 005 擁有)
 ```
 
 理由:
 
 - `prisma/` 為 Prisma CLI 約定位置,不改
-- `src/lib/db/` 集中所有與 ORM 邊界相關的邏輯,業務代碼不直接 `import { PrismaClient }`,而是用 `fastify.prisma` decorator 或 `lib/db` 的工廠
+- `src/lib/prisma/` 集中 PrismaClient 生命週期(plugin + options),業務代碼不直接 `import { PrismaClient }`,而是用 `fastify.prisma` decorator
+- Prisma error → `AppError` 的映射**不**放 `src/lib/db/`,而在 `src/lib/errors/prisma.ts`,因為映射邏輯由 spec 005 擁有(spec 003 §8.2 明示 defer 給 spec 005)
 
 ---
 
@@ -73,7 +78,7 @@ backend/
 採用 **Fastify plugin + `fastify.decorate`** 模式:
 
 ```ts
-// src/plugins/prisma.ts(草案)
+// src/lib/prisma/plugin.ts
 import fp from 'fastify-plugin'
 import { PrismaClient } from '@prisma/client'
 
@@ -83,12 +88,8 @@ declare module 'fastify' {
   }
 }
 
-export default fp(async (fastify) => {
-  const prisma = new PrismaClient({
-    log: fastify.config.NODE_ENV === 'development'
-      ? ['query', 'warn', 'error']
-      : ['warn', 'error'],
-  })
+export const prismaPlugin = fp(async (fastify) => {
+  const prisma = new PrismaClient(buildPrismaClientOptions(fastify.config))
   await prisma.$connect()
   fastify.decorate('prisma', prisma)
   fastify.addHook('onClose', async () => {
@@ -98,6 +99,8 @@ export default fp(async (fastify) => {
 ```
 
 使用端:`request.server.prisma.<modelName>.findUnique(...)`
+
+> **v0.3 — 同步實作**:實際 plugin 位於 `src/lib/prisma/plugin.ts`(非 `src/plugins/prisma.ts`),options 由 `buildPrismaClientOptions(config)` 產生(`src/lib/prisma/options.ts:21-25`)。**`log` 選項尚未實作**:目前 `options.ts` 只回 `{ datasourceUrl }`,不依 `NODE_ENV` 傳 `log:[...]`。下方 §12.4 / §10.1(spec 004)所述的 query / error 事件轉發到 pino 屬**規劃中**,實作後需回填 `options.ts`。`$connect` 失敗會 log `db_connect_failed` 並 re-throw(fail-fast)。
 
 ### 4.2 規則
 
@@ -202,8 +205,8 @@ Fastify route schema (TypeBox)  →  request 型別
 
 ### 8.2 實作位置
 
-- 集中於 `src/lib/db/errors.ts`:`mapPrismaError(err): AppError | undefined`(spec 005 §7.2 草案)
-- 由 Fastify 全域 `setErrorHandler` 在 cause chain 中辨識 Prisma error 並呼叫 mapper
+- *(v0.3 — 同步實作)* 集中於 `src/lib/errors/prisma.ts`:`mapPrismaError(err): AppError | undefined`(`src/lib/errors/prisma.ts:21`;非 `src/lib/db/errors.ts`,因映射邏輯由 spec 005 擁有)
+- 由 Fastify 全域 `setErrorHandler` 辨識 Prisma error 並呼叫 mapper(`src/lib/errors/plugin.ts:78-79`)
 - **不在 route handler 內逐個 `try/catch` 比對 code**,避免重複
 
 ### 8.3 訊息規則
@@ -344,7 +347,7 @@ export async function setupTestDb() {
 ## 13. 觀測性
 
 - Prisma metrics(`prisma.$metrics`)留作未來;目前以 `pino` log 覆蓋足夠
-- 健康檢查:`GET /health` 不查 DB(避免雪崩),另設 `GET /health/db` 跑 `SELECT 1`
+- 健康檢查(*v0.3 — 同步實作*):DB 探針由 **spec 011** 擁有並實作於 `src/lib/health/plugin.ts`。`/health/db` 端點**存在**(`plugin.ts:170`)並直接跑 `app.prisma.$queryRaw\`SELECT 1\``;readiness(`/health/ready`)與診斷用 `/health` 也各自呼叫**記憶化**的 DB 探針(同樣 `SELECT 1`,1s TTL,避免對 DB 施加持續負載)。細節見 spec 011
 
 ---
 
@@ -363,3 +366,4 @@ export async function setupTestDb() {
 |---|---|---|
 | 0.1 | 2026-06-13 | 初版 |
 | 0.2 | 2026-06-13 | 移除業務領域詞彙(`User` / `Donation` / `balance` / `point` / `admin user` / `project`),範例改用 `Foo` / `SomeModel` / `entity` / `relatedEntity` 等抽象名;`enum` 範例改為 `Visibility { PUBLIC, PRIVATE, INTERNAL }`;§5 命名表加註腳明示「範例僅示範格式」;§9 交易條件改為形式描述;§11.1 dev seed 內容改為「最小 happy-path」;§14 audit 措辭改通用 |
+| 0.3 | 2026-06-13 | **同步實作**:§3 檔案結構圖改為實際的 `src/lib/prisma/{plugin,options,index}.ts` + `src/lib/db/compose-database-url.ts`(移除不存在的 `src/plugins/prisma.ts` 與 `client.ts`);§4.1 plugin 路徑更正 + 標註 `log` 選項**尚未實作**(`options.ts` 僅回 `{ datasourceUrl }`);§8.2 error mapper 路徑由 `src/lib/db/errors.ts` 更正為 `src/lib/errors/prisma.ts:21`(由 spec 005 擁有);§13 健康檢查更正為交叉引用 spec 011(`/health/db` 端點存在、`/health` 亦跑記憶化 `SELECT 1`) |

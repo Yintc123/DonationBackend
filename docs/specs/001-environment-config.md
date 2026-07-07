@@ -3,8 +3,8 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.4 |
-| 日期 | 2026-06-16 |
+| 版本 | 0.5 |
+| 日期 | 2026-07-07 |
 | 適用範圍 | `backend/` |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`、`docs/decisions/003-database-postgresql.md`、`docs/decisions/004-auth-token-strategy.md` |
 | 相關 spec | 007/008(JWT、OIDC、Password)、010(Rate limit)、012(CORS、HSTS)、018(S3 storage) |
@@ -90,7 +90,7 @@ Prisma 內部採用 dotenv-expand,`${VAR}` 語法原生支援。
 
 #### 3.2.2 App 端使用
 
-- `@fastify/env`/TypeBox schema 於啟動時**個別驗證**拆分參數(`DB_HOST` 為字串、`DB_PORT` 為 number 等);`DATABASE_URL` **不在 schema** — 是衍生值,不屬 single source of truth(v0.4)
+- TypeBox schema(`src/config/schema.ts`,由 loader 的 Ajv 於啟動時驗證)**個別驗證**拆分參數(`DB_HOST` 為字串、`DB_PORT` 為 number 等);`DATABASE_URL` **不在 schema** — 是衍生值,不屬 single source of truth(v0.4;載入機制 v0.5 — 同步實作)
 - `PrismaClient` 由 `prismaPlugin` 用 `composeDatabaseUrl(DB_*)` 結果以 `datasourceUrl` 注入,不從 `process.env.DATABASE_URL` 讀(避免 dotenv 與 schema 兩個來源不同步)
 - Prisma CLI(`prisma migrate` 等)仍認 `process.env.DATABASE_URL`,因此 dev `.env` / CI / 部署啟動腳本仍要 export 該變數;這條供 CLI,不供 app
 - 統一組合於 `src/lib/db/compose-database-url.ts`,內部用 `URL` API 處理 percent-encode
@@ -194,11 +194,12 @@ Prisma 內部採用 dotenv-expand,`${VAR}` 語法原生支援。
 | `S3_PUBLIC_URL_BASE` | | (空) | CDN base URL(可選) | 寫入 entity 的 url 欄位時拼接;空字串走 spec 018 §3 預設規則 |
 | `S3_PRESIGN_TTL_SECONDS` | | `300` | `300` | presigned PUT URL 有效期(30–3600) |
 | `S3_MAX_UPLOAD_BYTES` | | `5242880`(5 MiB) | `5242880` 或更高 | 上傳大小上限,進 ContentLength SigV4 簽章 |
-| `AWS_ACCESS_KEY_ID` | | (空,dev `aws-cli` profile) | secret manager 注入 | SDK 自動讀;non-dev 必非空 |
-| `AWS_SECRET_ACCESS_KEY` | | (空) | secret manager 注入 | 同上;`post-validate` 強制兩者成對存在 |
+| `AWS_ACCESS_KEY_ID` | | (空,或 LocalStack 測試金鑰) | **必須留空**(ECS task role) | SDK credential chain 自動取用;non-dev 非空即啟動失敗(v0.5 — 同步實作) |
+| `AWS_SECRET_ACCESS_KEY` | | (空) | **必須留空**(ECS task role) | 同上;`post-validate` 另強制兩者「同空或同非空」(v0.5 — 同步實作) |
 
 規則:
-- `AWS_ACCESS_KEY_ID` 與 `AWS_SECRET_ACCESS_KEY` 必須成對(`post-validate` v0.4 強制),`stage` / `prod` 不允許空字串
+- `stage` / `prod` **必須留空** `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`,憑證改由 ECS task role 提供(`post-validate` v0.5 強制:non-dev 任一非空即 `throw`,避免 env 蓋掉 task role、留下長期金鑰;見 ADR 008 / spec 018 §4.1)(v0.5 — 同步實作)
+- 任一環境下,兩者必須「同時為空」或「同時非空」;半組憑證會在首次 SDK 呼叫深處才失敗,故啟動即擋(v0.5 — 同步實作)
 - `S3_FORCE_PATH_STYLE` 用 strict `'true'` 字串比對(spec 018 §4)
 
 ### 3.8 CORS 與 Security Headers(spec 012)
@@ -217,20 +218,19 @@ Prisma 內部採用 dotenv-expand,`${VAR}` 語法原生支援。
 
 ## 4. 設定載入機制
 
-採用 **[`@fastify/env`](https://github.com/fastify/fastify-env)** 搭配 JSON Schema 驗證。
+採用**自寫 loader**(`src/config/load.ts`):[`@sinclair/typebox`](https://github.com/sinclairzx81/typebox) 定義 schema,[Ajv](https://ajv.js.org/) 於啟動時驗證 + coerce + 套預設,`dotenv` / `dotenv-expand` 讀 `.env`(v0.5 — 同步實作,原規劃的 `@fastify/env` 未採用)。
 
 ### 4.1 理由
 
-- 與 Fastify 一致的 schema-driven 風格(呼應 ADR 002)
-- 啟動時驗證,缺漏立即 fail-fast,錯誤訊息指明缺哪個 key
-- 型別自動推導至 `fastify.config`,使用端 TS 完整
-- 內建 `dotenv: true` 選項,dev 模式自動讀 `.env`
+- schema(給 Ajv runtime 驗證)與 `Config` 型別(compile-time)共用單一 TypeBox 來源(`src/config/schema.ts`),drift 即 bug
+- 在 **Fastify 建構前**呼叫(`src/server.ts` `main()` 內 `loadConfig()`,再 `buildApp(config)`),讓 logger(spec 004)能吃到已驗證的 `Config`;`@fastify/env` 於 plugin 註冊階段(建構後)才跑,會逼成兩段式 bootstrap(v0.5 — 同步實作)
+- 缺漏 / 型別錯誤立即 fail-fast,`ConfigLoadError` 列出每個違規欄位路徑
+- `dotenv-expand` 讓 `.env` 內 `DATABASE_URL="...${DB_*}..."` 正確展開供 Prisma CLI
 
 ### 4.2 替代方案(已評估,不採用)
 
-- `dotenv` + 手寫 validate:需自行寫驗證碼,易遺漏
-- `@sinclair/typebox` + 自寫 loader:功能等價但 boilerplate 多
-- `zod` + `dotenv`:與 Fastify schema 風格不一致
+- **`@fastify/env` plugin**:schema-driven 且型別自動推導,但只能在 plugin 註冊(Fastify 建構後)才驗證,logger 無法於建構期取用 `Config`,會逼成兩段式 bootstrap(v0.5 — 改採自寫 loader)
+- `zod` + `dotenv`:驗證能力足夠,但與已選的 TypeBox schema 風格不一致
 
 ### 4.3 結構草案
 
@@ -283,8 +283,8 @@ export const configSchema = {
     // === Google OAuth / OIDC ===
     GOOGLE_CLIENT_ID:     { type: 'string', minLength: 1 },
     GOOGLE_CLIENT_SECRET: { type: 'string', minLength: 1 },
-    GOOGLE_CALLBACK_URL:  { type: 'string', format: 'uri' },
-    OIDC_DISCOVERY_URL:   { type: 'string', format: 'uri', default: 'https://accounts.google.com/.well-known/openid-configuration' },
+    GOOGLE_CALLBACK_URL:  { type: 'string', minLength: 1 },  // v0.5 — 實作為 minLength,非 format:'uri'
+    OIDC_DISCOVERY_URL:   { type: 'string', default: 'https://accounts.google.com/.well-known/openid-configuration' },  // v0.5 — 無 format 限制,僅預設值
 
     // === Password(spec 008)===
     PASSWORD_HASH_MEMORY_COST: { type: 'number', default: 19456 },
@@ -317,40 +317,39 @@ export const configSchema = {
     S3_FORCE_PATH_STYLE:       { type: 'string', default: 'false' },  // strict 'true' opt-in
     S3_PUBLIC_URL_BASE:        { type: 'string', default: '' },
     S3_PRESIGN_TTL_SECONDS:    { type: 'number', default: 300, minimum: 30, maximum: 3600 },
-    S3_MAX_UPLOAD_BYTES:       { type: 'number', default: 5_242_880, maximum: 5_368_709_120 },
+    S3_MAX_UPLOAD_BYTES:       { type: 'number', default: 5_242_880, minimum: 1, maximum: 5_368_709_120 },  // v0.5 — 加 minimum: 1
     AWS_ACCESS_KEY_ID:         { type: 'string', default: '' },
     AWS_SECRET_ACCESS_KEY:     { type: 'string', default: '' },
   },
 } as const
 
-// src/app.ts(片段)
-await app.register(fastifyEnv, {
-  schema: configSchema,
-  dotenv: true,         // dev 從 .env 讀
-  confKey: 'config',    // app.config.JWT_ACCESS_SECRET 取用
-})
+// src/server.ts(片段)— v0.5:於 Fastify 建構前載入,logger 才能吃到 config
+const config = loadConfig()          // Ajv 驗證 + coerce + dotenv/-expand + postValidate
+const app = await buildApp(config)   // config decorate 進 app.config,並餵給 createLogger
 ```
 
 ### 4.4 額外語意驗證(JSON Schema 表達不了的)
 
-在 `register` 完成後立刻執行:
+在 `loadConfig()` schema 驗證通過後、於 `postValidate(config)` 內執行(v0.5 — 同步實作):
 
 ```ts
-// src/config/post-validate.ts
+// src/config/post-validate.ts — 失敗時 throw ConfigValidationError
 if (config.NODE_ENV !== 'development' && config.RATE_LIMIT_TRUSTED_PROXIES === '') {
-  throw new Error('RATE_LIMIT_TRUSTED_PROXIES must be non-empty in staging/production')
+  throw new ConfigValidationError('RATE_LIMIT_TRUSTED_PROXIES must be non-empty in staging/production')
 }
 if (config.JWT_ACCESS_SECRET === config.JWT_REFRESH_SECRET) {
-  throw new Error('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must differ')
+  throw new ConfigValidationError('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must differ')
 }
-// v0.4 — AWS keys must be both empty (dev IAM profile) or both non-empty
-// (non-dev). Avoids "key present, secret missing" silent S3 failures.
-if (config.NODE_ENV !== 'development') {
-  const hasKey = config.AWS_ACCESS_KEY_ID !== ''
-  const hasSec = config.AWS_SECRET_ACCESS_KEY !== ''
-  if (hasKey !== hasSec) {
-    throw new Error('AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set together')
-  }
+// v0.5 — non-dev 跑在 ECS Fargate,憑證只能來自 task role;env 金鑰會蓋掉
+// task role(SDK credential chain 偏好 env),故 non-dev 任一非空即拒絕。
+const awsIdSet = config.AWS_ACCESS_KEY_ID !== ''
+const awsSecretSet = config.AWS_SECRET_ACCESS_KEY !== ''
+if (config.NODE_ENV !== 'development' && (awsIdSet || awsSecretSet)) {
+  throw new ConfigValidationError('AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY must be empty in staging/production (use the ECS task role)')
+}
+// 半組憑證會在首次 SDK 呼叫深處才失敗,故不分 NODE_ENV 一律於啟動擋下。
+if (awsIdSet !== awsSecretSet) {
+  throw new ConfigValidationError('AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must both be set or both be empty')
 }
 ```
 
@@ -393,8 +392,8 @@ if (config.NODE_ENV !== 'development') {
 
 | 階段 | 行為 | 失敗動作 |
 |---|---|---|
-| `register(fastifyEnv)` | JSON Schema 驗證 | throw,server 不啟動 |
-| 額外語意驗證 | 例:`prod` 環境下 `CORS_ORIGIN` 不可含 `localhost` | `process.exit(1)` 並 log 缺漏 key 名稱 |
+| `loadConfig()`(Ajv schema 驗證) | 型別 / 必填 / range 驗證,`.env` 由 dotenv 讀入 | throw `ConfigLoadError`(列出各違規欄位路徑),server 不啟動(v0.5 — 同步實作) |
+| `postValidate()` 語意驗證 | 跨欄位 invariant(`RATE_LIMIT_TRUSTED_PROXIES` 非空、access ≠ refresh、AWS keys 成對且 non-dev 留空) | throw `ConfigValidationError`;冒泡至 `server.ts` bootstrap `catch` → `console.error` + `process.exit(1)`(v0.5 — 同步實作;無專屬「缺漏 key」列印,語意錯誤屬跨欄位而非缺 key) |
 | Smoke | `GET /health` 回 200 | 部署 pipeline 視為失敗 |
 
 錯誤訊息需指明:
@@ -434,3 +433,4 @@ if (config.NODE_ENV !== 'development') {
 | 0.2 | 2026-06-13 | §3.2 Database 改為多參數拆分(`DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` / `DB_SCHEMA` / `DB_SSL_MODE` / `DB_CONNECTION_LIMIT` / `DB_POOL_TIMEOUT`),`DATABASE_URL` 改為 dotenv-expand 衍生;§4.3 schema 範例同步;§8 同步缺漏清單 |
 | 0.3 | 2026-06-13 | §3.4 JWT 拆 access + refresh(ADR 004);§3.5 加 `OIDC_DISCOVERY_URL`;新增 §3.6 Password(Argon2 / login lock);新增 §3.7 Rate Limit;§3.8 CORS 擴含 HSTS;§4.3 schema 全量同步,加入 §4.4 跨欄位語意驗證(`RATE_LIMIT_TRUSTED_PROXIES` 在 prod 必填、access ≠ refresh secret);§5.2 安全等級表重排;§8 對應 `.env.example` 差距更新 |
 | 0.4 | 2026-06-16 | §3.2 `DATABASE_URL` 改為衍生(不在 schema)— app 由 `composeDatabaseUrl(DB_*)` 注入 `datasourceUrl`,Prisma CLI 走 env;§3.3 Redis 拆分 `REDIS_URL` → `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD`(對齊 §3.2 DB_* 模式,免 percent-encode);§3.7 新增 `RATE_LIMIT_DISABLED` kill switch;新增 §3.9 S3 Storage(spec 018)— `S3_BUCKET` / `S3_REGION` / `S3_ENDPOINT` / `S3_FORCE_PATH_STYLE` / `S3_PUBLIC_URL_BASE` / `S3_PRESIGN_TTL_SECONDS` / `S3_MAX_UPLOAD_BYTES` / `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`;§4.3 schema 範例同步;§4.4 加 AWS keys 成對驗證;§8 對應 `.env.example` 差距同步 |
+| 0.5 | 2026-07-07 | 同步實作:§3.9 / §4.4 AWS 憑證規則改為「non-dev **必須留空**、用 ECS task role」(原文與 `post-validate.ts` 語意相反),並補「任一環境同空/同非空」規則;§4 載入機制由 `@fastify/env` 更正為自寫 loader(TypeBox schema + Ajv,`src/config/load.ts`,於 Fastify 建構前 `loadConfig()` 呼叫),§4.2 將 `@fastify/env` 移入未採用方案,§4.3 register 範例改為 `loadConfig()`;§4.3 `GOOGLE_CALLBACK_URL` / `OIDC_DISCOVERY_URL` 由 `format:'uri'` 更正為 `minLength:1` / 無 format;§4.3 `S3_MAX_UPLOAD_BYTES` 補 `minimum:1`;§7 驗證表更正為 `ConfigLoadError` / `ConfigValidationError`(語意錯誤冒泡至 bootstrap catch 才 `process.exit(1)`,無專屬缺漏 key 列印) |

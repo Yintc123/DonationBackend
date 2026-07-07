@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.5 |
+| 版本 | 0.6 |
 | 日期 | 2026-06-13 |
 | 適用範圍 | `backend/src/routes/auth/*`、`backend/src/lib/auth/*` |
 | 相關 ADR | `docs/decisions/002-backend-framework.md`(BFF 邊界)、`docs/decisions/004-auth-token-strategy.md`(access + refresh) |
@@ -669,10 +669,10 @@ export type RoleValue = (typeof Role)[keyof typeof Role]
 
 | 觸發 | 寫入規則 |
 |---|---|
-| `POST /auth/register`(spec 008) | 預設 `role = USER`(=1) |
-| `POST /auth/google/exchange` login intent — new-account 分支 | 預設 `role = USER` |
+| `POST /auth/register`(spec 008) | `role` 由 client / BFF body 帶入(`0=ADMIN` / `1=USER`),未帶 → DB 預設 `USER`(=1)(v0.6 — 同步實作;spec 008 v0.7 demo 策略,`src/lib/auth/service.ts:170` `role: input.role`) |
+| `POST /auth/google/exchange` login intent — new-account 分支 | **預設 `role = ADMIN`(=0)**(v0.6 — 同步實作;**demo-only**:讓新 Google 帳號直接進 CMS 後台,`src/lib/auth-google/service.ts:347` 寫死 `role: Role.ADMIN`。**正式環境應改回 `USER`(=1)** 並改走 admin-only 升權流程) |
 | Bootstrap 第一筆 admin | 透過 prisma seed 寫死 / 一次性 script(本期落地;spec 020 §14 OQ #10) |
-| Admin 端點「升降權」 | 本期 **不**提供 — 改 role 需走 DB 直連或未來 admin API |
+| Admin 端點「升降權」 | 本期 **不**提供專用 admin API — role 於註冊時由 client / BFF 帶入(見上),事後改 role 需走 DB 直連或未來 admin API(v0.6 — 同步實作) |
 
 #### JWT 中的 role claim
 
@@ -942,3 +942,4 @@ jkod:auth:blacklist:{jti}          STRING "1"
 | 0.3 | 2026-06-15 | §10 加 §10.8 `Account.lastLoginAt` / `lastLoginType` 兩個 audit 欄位(nullable + `LoginType` enum `PASSWORD` / `GOOGLE`);明文寫入 / 不寫入規則 — register / login 成功 / Google exchange login intent 兩條路徑寫入,link intent / change-password / set-password / refresh / logout / 失敗登入皆不寫入。新增 Prisma migration `add_account_last_login` + service 層 `account.update / create` 對應 2 處(`auth/service.ts` register + login,`auth-google/service.ts` existing-account login + new-account 分支)。spec 008 §5.4 同步引用 |
 | 0.4 | 2026-06-15 | §10.1 改寫:`username` 為新主鍵,`email` 變 optional(兩者皆 nullable + unique,應用層強制「至少一個」);§10.2 帳密 sign-in 改用單一 `identifier` 欄位 + `@` sniff;新增 §10.9 Account lifecycle policy(`displayOrder` / `archivedAt` / `deletedAt`,任一 lifecycle stamp 非 null 即 disabled,login / refresh / Google exchange 全 401 `AUTH_ACCOUNT_DISABLED`,refresh 觸發 `revokeAll`);3 個新 error code(`AUTH_USERNAME_TAKEN` / `AUTH_IDENTIFIER_REQUIRED` / `AUTH_ACCOUNT_DISABLED`);Prisma migration `account_username_and_lifecycle`。spec 008 §3.4 / §4 / §5 同步引用 |
 | 0.5 | 2026-06-15 | §10.1 Account ER box 加 `role`(Int @default(1));新增 §10.10「Account.role 與後台授權」 — 引入 `src/lib/auth/role.ts` const(`ADMIN=0` / `USER=1`)、寫入時機、`requireAdmin` preHandler 規約;§11.1 access JWT claims 加 `role`,refresh path 重新從 DB 讀(避免「中途降權但 access TTL 內仍有效」);後台 = spec 020 §3 的 23 個寫入端點 + spec 018 presign。spec 008 §4.2 同步寫 register 預設 `role=1`;spec 020 §2.3 / §11 / §14 OQ #1 收束 |
+| 0.6 | 2026-07-07 | §10.10「Account.role 寫入時機」表同步實作:(1) **Google exchange login intent new-account 分支預設 `role = ADMIN`(=0)**(demo-only,`src/lib/auth-google/service.ts:347` 寫死,讓新 Google 帳號直接進 CMS;正式環境應改回 USER);(2) register 改記載 `role` 由 client / BFF body 帶入、未帶才套 DB 預設 USER(對齊 spec 008 v0.7 / `src/lib/auth/service.ts:170`);(3)「升降權本期不提供」改為註冊時可由 client 帶入。純文件對齊,無 code 變更 |

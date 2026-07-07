@@ -3,7 +3,7 @@
 | 欄位 | 內容 |
 |---|---|
 | 狀態 | Draft |
-| 版本 | 0.10 |
+| 版本 | 0.11 |
 | 日期 | 2026-06-14 |
 | 適用範圍 | `backend/prisma/schema.prisma`、`backend/prisma/seed.ts`、`backend/src/domain/donation-item/*`、`backend/src/domain/category/*` |
 | 相關 ADR | `../../docs/decisions/003-database-postgresql.md`(專案級)、`../../docs/decisions/007-orm-prisma.md`(專案級)、`../decisions/001-donation-item-relations.md`(backend 級 — 三 entity 1:N NOT NULL FK)、`../decisions/002-charity-category-model.md`(backend 級 — Charity-Category M:N + 子表繼承)、`../decisions/004-i18n-storage-model.md`(backend 級 — 多語系 suffix columns 設計)、`../decisions/006-lifecycle-fields-and-cascading-visibility.md`(backend 級 — soft delete / archive / 上下架時間 / cascading visibility,**v0.9 起 schema 加 5 欄**)|
@@ -211,6 +211,8 @@ model CharityOnCategory {
   @@map("charity_categories")
 }
 ```
+
+> **v0.11 — orderLines 反向關聯(同步實作)**:實際 `schema.prisma` 中 Charity / DonationProject / SaleItem 各多一條 `orderLines OrderLine[]` 反向關聯(`schema.prisma:153` / `191` / `232`),對應 spec 021 訂單模型的 `OrderLine.charityId` / `donationProjectId` / `saleItemId` FK(`onDelete: Restrict`)。此為純 Prisma-client 概念(**不**產生額外 SQL DDL)。FK 的 `Restrict` 語意與本 spec §3.4「被 OrderLine 引用時不可 hard delete」一致 —— 有交易紀錄引用的捐款項目不得物理刪除,只能 soft delete(`deletedAt`)。欄位細節見 spec 021 §3.1。上方 §3 model 定義為聚焦本 spec scope 未列此反向關聯。
 
 ### 3.1 三 entity 共用欄位字典(Charity / DonationProject / SaleItem)
 
@@ -626,7 +628,7 @@ ADR `002-charity-category-model.md` §理由 2。摘要:
 | `Category` | `categories` |
 | `CharityOnCategory` | `charity_categories` |
 
-- 欄位 Prisma `camelCase` → DB `snake_case`(`logo_url`、`charity_id`、`category_id`、`display_order`、`assigned_at`、`created_at`、`updated_at`)
+- 欄位 Prisma `camelCase` → DB `snake_case`(`logo_key`、`charity_id`、`category_id`、`display_order`、`assigned_at`、`created_at`、`updated_at`)（v0.11 — 同步實作:v0.8 已把 `logoUrl`/`logo_url` 改為 `logoKey`/`logo_key`,此對照表殘留舊欄名已更正)
 - Prisma client 出口:`prisma.charity.*`、`prisma.donationProject.*`、`prisma.saleItem.*`、`prisma.category.*`、`prisma.charityOnCategory.*`
 
 ---
@@ -751,4 +753,5 @@ DROP TABLE IF EXISTS categories;
 | 0.7 | 2026-06-14 | 引入雙語系儲存(backend ADR 004 — Pattern A suffix columns):(1) Charity / Project / SaleItem 加 `nameEn` / `descriptionEn` nullable;Project / SaleItem 加 `contentEn` nullable;Category 加 `displayNameEn` nullable;(2) §4.2 trgm GIN index 補英文 6 個(中文 6 個 + 英文 6 個);(3) §6.4 seed 約束新增英文 ≥ 30% backfill + Category 100% backfill;(4) §7.1 Category 表加 displayNameEn 範例;(5) §11 補 3 個 i18n 相關 integration test;(6) §12 收束 i18n 相關開放問題 |
 | 0.8 | 2026-06-14 | 引入 S3 物件儲存(spec 018):(1) `logoUrl String? @db.VarChar(2048)` → `logoKey String? @db.VarChar(512)`,同樣對 `coverImageUrl` → `coverImageKey`;DB 不再存完整 URL,改存 S3 key,**API 層用 `objectUrl(key)` 拼**(env 解耦、CDN 切換 config-only);(2) §3.3 驗證規則改為對 key pattern regex 而非 http(s) 驗證;(3) §6.4 seed 改為「先上傳圖檔到 LocalStack 再寫 key 進 DB」;(4) §11 unit test 改 regex 驗證;(5) ER 圖 `logoUrl?` → `logoKey?`。下游 spec 016 v0.10 + spec 017 v0.4 對齊 |
 | 0.9 | 2026-06-14 | 引入 Entity lifecycle 統一模式(**backend ADR 006**):(1) 三主 entity(Charity / Project / SaleItem)各加 5 個欄位 — `displayOrder Int default 0` + `archivedAt DateTime?` + `deletedAt DateTime?` + `publishStartAt DateTime?` + `publishEndAt DateTime?`;Category 加 `archivedAt` / `deletedAt`(無 publish 時間);CharityOnCategory **不加**(join 表刪列即 unassign);(2) §3 約束 新增 lifecycle 區段:`whereLive` 4 條件 + Cascading visibility(Project / SaleItem public 必須通過 parent Charity 的 `whereLive`)+ 預設排序 `display_order ASC, created_at DESC, id DESC`;(3) §3.4 onDelete 改寫:soft delete 是業務動作不觸發 FK cascade,Restrict 仍正解 hard delete;(4) §4.1 索引重劃 — composite `(displayOrder, createdAt DESC, id DESC)` + `(publishEndAt)` + admin 全量 fallback;§4.1.1 partial index 列為「實測再加」;(5) §6.4 seed 加 archived / deleted / 三態 publish + cascading visibility demo(過期合約 Charity 含子表)+ displayOrder 置頂示範;(6) §11 補 8 個 lifecycle 相關 integration test(whereLive 4 條件、Cascading visibility 正反向、displayOrder 排序、FK Restrict 仍生效);(7) §12 關閉 3 個歷史開放問題(status 欄位、displayOrder、soft delete),新增 4 個(admin helper 位置、過期 sweep、S3 object 解耦);(8) Charity 的 publishStartAt / publishEndAt 對應「合作合約期限」,**不是**團體存在期限。下游 spec 016 / 017 同步引用 ADR 006 §2 / §3 |
+| 0.11 | 2026-07-07 | 與實作同步(不改 schema,只補文件落差):(1) §3 model 定義後補 note 揭露實際 `schema.prisma` 三主 entity 各有 `orderLines OrderLine[]` 反向關聯(對應 spec 021 訂單模型 FK,`onDelete: Restrict`,語意與 §3.4「被引用不可 hard delete」一致);(2) §8 命名對照表殘留舊欄名 `logo_url` → `logo_key`(v0.8 已改 `logoKey`/`logo_key`)|
 | 0.10 | 2026-06-15 | §6.4 Charity logo 改 **featured-only**:30 個 complete charity 中**只有** `taiwan-stray-animal` 帶 `logoKey`,圖檔走 `prisma/assets/charity-placeholder.png`(從 frontend `public/figma/charity-placeholder.png` 複製,~165 KB);其餘 29 筆 `logoKey = null`,frontend 走預設 avatar。理由:1×1 透明 placeholder 跟「沒圖」在 UI 上等價,徒增 S3 / cache / bandwidth 成本。`seed.ts` post-condition 同步:`completeCharities` 由 9 欄位降為 8(去掉 `logoKey`)+ 新增 `charitiesWithRealLogo === slugLogos.size` 嚴格檢查。Project / SaleItem cover 暫不變(維持 1×1 placeholder)。Prod S3 orphan 一次性清理走 `backend/scripts/cleanup-orphan-charity-logos.ts`(需 admin creds,backend ECS role 無 `s3:DeleteObject` 遵守 spec 018 §5 least privilege)|
